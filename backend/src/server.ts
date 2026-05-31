@@ -5,6 +5,9 @@ import fastifyStatic from '@fastify/static';
 import { config } from './config';
 import { getDb, closeDb } from './db';
 import { healthRoutes } from './routes/health';
+import { categoryRoutes } from './routes/categories';
+import { eventRoutes } from './routes/events';
+import { dinnerRoutes } from './routes/dinners';
 
 async function main(): Promise<void> {
   // Open DB + run migrations before serving any traffic.
@@ -36,6 +39,9 @@ async function main(): Promise<void> {
   });
 
   await app.register(healthRoutes);
+  await app.register(categoryRoutes);
+  await app.register(eventRoutes);
+  await app.register(dinnerRoutes);
 
   // Serve the built frontend from the same origin (no CORS). Optional in dev.
   if (config.staticDir && fs.existsSync(config.staticDir)) {
