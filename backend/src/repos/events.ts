@@ -73,7 +73,13 @@ export function listOccurrences(startIso: string, endIso: string): EventOccurren
   const recurring = db.prepare('SELECT * FROM events WHERE rrule IS NOT NULL').all() as MasterRow[];
   for (const r of recurring) {
     if (out.length >= MAX_OCCURRENCES * 4) break;
-    out.push(...expandEvent(toMaster(r), exceptionsFor(r.id), startIso, endIso));
+    // Second layer behind expandEvent's own guard: one unexpandable master must never
+    // take down the whole window. Skip it; the rest of the calendar still renders.
+    try {
+      out.push(...expandEvent(toMaster(r), exceptionsFor(r.id), startIso, endIso));
+    } catch {
+      /* skip a single bad series rather than blank the wall */
+    }
   }
 
   out.sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));

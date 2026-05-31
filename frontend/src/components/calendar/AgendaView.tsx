@@ -8,6 +8,8 @@ interface Props {
   categories: Map<string, Category>;
   now: DateTime;
   density?: 'wall' | 'phone';
+  /** Cold load (no cached data yet) → show "Loading…" instead of "Nothing scheduled". */
+  loading?: boolean;
   onTap?: (occ: EventOccurrence) => void;
 }
 
@@ -22,7 +24,7 @@ function headerFor(key: string, now: DateTime): { label: string; sub: string; ac
 
 /** Custom default wall view: grouped-by-day, full-width rows, distance-legible.
  *  density='phone' tightens the type scale + padding for the phone Agenda tab. */
-export function AgendaView({ occurrences, categories, now, density = 'wall', onTap }: Props) {
+export function AgendaView({ occurrences, categories, now, density = 'wall', loading = false, onTap }: Props) {
   const wall = density === 'wall';
   const groups = new Map<string, EventOccurrence[]>();
   for (const occ of occurrences) {
@@ -34,7 +36,7 @@ export function AgendaView({ occurrences, categories, now, density = 'wall', onT
   if (keys.length === 0) {
     return (
       <div className="flex-1 grid place-items-center text-text-muted" style={{ fontSize: wall ? 28 : 17 }}>
-        Nothing scheduled
+        {loading ? 'Loading today…' : 'Nothing scheduled'}
       </div>
     );
   }

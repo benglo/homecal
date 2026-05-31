@@ -71,6 +71,19 @@ export function updateCategory(id: string, patch: CategoryUpdate): Category {
   return getCategory(id)!;
 }
 
+/** Move every event from one category to another. Returns the number moved.
+ *  Used by the "reassign to Uncategorized & delete" flow when a delete hits 409. */
+export function reassignEvents(fromId: string, toId: string): number {
+  const db = getDb();
+  if (!getCategory(fromId)) throw httpError(404, 'NOT_FOUND', 'Source category not found');
+  if (!getCategory(toId)) throw httpError(400, 'INVALID_CATEGORY', 'Target category does not exist');
+  if (fromId === toId) throw httpError(400, 'BAD_REQUEST', 'Cannot reassign a category to itself');
+  const info = db
+    .prepare('UPDATE events SET category_id = ?, updated_at = ? WHERE category_id = ?')
+    .run(toId, now(), fromId);
+  return info.changes;
+}
+
 export function deleteCategory(id: string): void {
   const db = getDb();
   if (!getCategory(id)) throw httpError(404, 'NOT_FOUND', 'Category not found');

@@ -39,14 +39,22 @@ export function expandEvent(
   }
 
   const exByDate = new Map(exceptions.map((e) => [e.occurrenceDate, e]));
-  const rule = rrulestr(master.rrule, { dtstart: new Date(master.start) });
 
-  // Widen the lower bound by the duration to catch occurrences straddling windowStart.
-  const from = new Date(ws - duration);
-  const to = new Date(we);
+  // Defensive: a stored rule is validated on write, but a manual DB edit, a migration,
+  // or an rrule upgrade could yield a string that parses on write yet throws on expand.
+  // Degrade to "this one series is missing", never "the whole window 500s and the wall
+  // blanks". listOccurrences also catches per-master as a second layer.
+  let occDates: Date[];
+  try {
+    const rule = rrulestr(master.rrule, { dtstart: new Date(master.start) });
+    // Widen the lower bound by the duration to catch occurrences straddling windowStart.
+    occDates = rule.between(new Date(ws - duration), new Date(we), true);
+  } catch {
+    return [];
+  }
 
   const out: EventOccurrence[] = [];
-  for (const occDate of rule.between(from, to, true)) {
+  for (const occDate of occDates) {
     if (out.length >= MAX_OCCURRENCES) break;
 
     const occIso = isoUtc(occDate);

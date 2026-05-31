@@ -3,6 +3,7 @@ import { DateTime } from 'luxon';
 import type { EventOccurrence, WallView } from '../core/model/types';
 import { useClock } from '../core/hooks/useClock';
 import { useWallTheme } from '../core/hooks/useTheme';
+import { useIdleReset } from '../core/hooks/useIdleReset';
 import { useCategories, useDinners, useEvents, byId } from '../core/hooks/useData';
 import { eventWindow, weekDates } from '../core/util/time';
 import { HeroBand } from '../components/hero/HeroBand';
@@ -35,12 +36,26 @@ export function WallLayout() {
   const [detailDate, setDetailDate] = useState<string | null>(null);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
 
+  // Wall staleness = the worse of events + dinners (events is the primary data).
+  const oldest = Math.min(eventsQ.dataUpdatedAt || Infinity, dinnersQ.dataUpdatedAt || Infinity);
+  const dataUpdatedAt = Number.isFinite(oldest) ? oldest : 0;
+  const dataIsError = eventsQ.isError || dinnersQ.isError;
+
   const step = (dir: 1 | -1) =>
     setAnchor((a) =>
       view === 'agenda' ? a.plus({ days: 10 * dir }) : view === 'week' ? a.plus({ weeks: dir }) : a.plus({ months: dir })
     );
   const goToday = () => setAnchor(now.startOf('day'));
   const isToday = anchor.hasSame(now, 'day') && (view !== 'month' || anchor.hasSame(now, 'month'));
+
+  // Return to the default glance (Agenda + today) and dismiss sheets after inactivity,
+  // so the wall is never left stuck on a paged-away view someone walked away from.
+  useIdleReset(90_000, () => {
+    setView('agenda');
+    setAnchor(now.startOf('day'));
+    setDetailDate(null);
+    setQuickAddOpen(false);
+  });
 
   const onTap = (occ: EventOccurrence) => setDetailDate(dayKey(occ.start));
   const detailDinner = detailDate ? dinners.find((d) => d.date === detailDate)?.meal : undefined;
@@ -51,12 +66,12 @@ export function WallLayout() {
         now={now}
         weekDays={week.days}
         dinners={dinners}
-        dataUpdatedAt={dinnersQ.dataUpdatedAt}
-        isError={dinnersQ.isError}
+        dataUpdatedAt={dataUpdatedAt}
+        isError={dataIsError}
       />
 
       {view === 'agenda' ? (
-        <AgendaView occurrences={occurrences} categories={cats} now={now} onTap={onTap} />
+        <AgendaView occurrences={occurrences} categories={cats} now={now} loading={eventsQ.isPending} onTap={onTap} />
       ) : (
         <GridCalendar
           view={view}

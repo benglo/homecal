@@ -4,6 +4,41 @@ Running log of work per session. Newest first. Pair with `git log` for exact dif
 
 ---
 
+## 2026-06-01 — M3 hardening (pre-M4 persona review fixes)
+
+Ran a 2-lens check-in (principal-engineer/deploy-readiness + UX) on the built M0–M3 product;
+actioned all findings except the ones that are genuinely M4 scope (see "Deferred to M4").
+
+### Fixed
+- **Never-blank, two holes closed:** (1) `ErrorBoundary` at the top of `AppProviders` — a render
+  throw now falls back to the live clock + "Reconnecting…" (auto-retries after 4s) instead of
+  white-screening the wall. (2) **Bad stored RRULE no longer blanks the calendar** — `expandEvent`
+  wraps parse/expand and returns `[]` on failure; `listOccurrences` also try/catches per master.
+  Tests-first (recurrence test #16: malformed rule is skipped, not thrown).
+- **Wall idle reset** (`useIdleReset`, 90s) — returns to Agenda + today and dismisses sheets, so the
+  wall is never stuck on a paged-away view. (Was specced but missing.)
+- **Loading ≠ empty** — `AgendaView` shows "Loading today…" on cold load instead of "Nothing scheduled".
+- **Whole-series edit is now explicit** — `EventEditorSheet` titles "Edit series", shows a repeat banner,
+  and a Save on a recurring event asks "apply to every occurrence?" before mutating (no silent rewrite).
+- **Wall staleness covers events** (not just dinners) — `StatusDot` driven by the older/errored of both.
+- **Category delete 409 → guided recovery** — new `POST /api/categories/:id/reassign {toId}` +
+  `reassignEvents` repo; Manage offers "Move to Uncategorized & delete" in one tap, reworded as guidance.
+- **Wall touch targets to spec** — ControlBar bar 72→88px, segments/Today/nav ≥64, quick-add 72;
+  CategoryManager edit/delete 40→48.
+- **Frontend tests exist now** — added vitest (`npm --workspace frontend test`); 15 tests covering
+  `rrule` build/parse round-trip + bounded, `color` contrast/isHex6/fgForBg, and `inWindow`.
+
+Verify: backend 16/16, frontend 15/15, build clean. Playwright re-verified Edit-series title+banner+
+save-confirm, category-in-use → reassign offer, bigger wall controls. Screenshots `/tmp/m3shots/h*`.
+
+### Deferred to M4 (written down, not lost)
+`POST /api/backup` (VACUUM INTO) · SW shell cache versioning (cache-first `v1` can pin the wall to an
+old build after redeploy — fix during M4, the first redeploy over a live wall) · graceful-shutdown SSE
+socket drain + `stop_grace_period: 30s` · reverse-proxy SSE snippet (or "direct host:port" note) ·
+Fastify log level + Docker log rotation · build-on-target-arch runbook note.
+
+---
+
 ## 2026-05-31 (cont.) — M3: editing (phone + sheets + mutations + SSE)
 
 ### What was built

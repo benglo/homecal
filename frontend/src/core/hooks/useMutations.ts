@@ -26,7 +26,7 @@ function patchEventQueries(
 // The lexicographic compare is correct for Brisbane (fixed UTC+10): every event window
 // starts at 14:00 UTC of the prior calendar day, so a bare date always sorts after the
 // window-start key for the same Brisbane day. Boundary slips self-correct on the settle.
-const inWindow = (key: unknown[], startIso: string): boolean => {
+export const inWindow = (key: unknown[], startIso: string): boolean => {
   const [, ws, we] = key as [string, string, string];
   return typeof ws === 'string' && typeof we === 'string' && startIso >= ws && startIso < we;
 };
@@ -143,5 +143,11 @@ export function useCategoryMutations() {
     },
   });
 
-  return { create, update, remove };
+  // Move all events off `id` onto `toId` (e.g. Uncategorized) so the category can be deleted.
+  const reassign = useMutation({
+    mutationFn: ({ id, toId }: { id: string; toId: string }) => api.reassignCategory(id, toId),
+    onSettled: () => void qc.invalidateQueries({ queryKey: ['events'] }),
+  });
+
+  return { create, update, remove, reassign };
 }

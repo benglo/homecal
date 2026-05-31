@@ -16,7 +16,7 @@ const VIEWS: WallView[] = ['agenda', 'week', 'month'];
 
 export function ControlBar({ view, onView, onPrev, onNext, onToday, isToday, categories, onQuickAdd }: Props) {
   return (
-    <div className="flex shrink-0 items-center justify-between bg-surface-2 border-t border-border" style={{ height: 72, padding: '0 24px', gap: 16 }}>
+    <div className="flex shrink-0 items-center justify-between bg-surface-2 border-t border-border" style={{ height: 88, padding: '0 24px', gap: 16 }}>
       <div className="flex items-center gap-4">
         <div className="inline-flex bg-surface border border-border rounded-full p-1">
           {VIEWS.map((v) => (
@@ -28,8 +28,8 @@ export function ControlBar({ view, onView, onPrev, onNext, onToday, isToday, cat
               className="rounded-full font-semibold capitalize transition-colors"
               style={{
                 fontSize: 18,
-                padding: '11px 26px',
-                minHeight: 48,
+                padding: '16px 28px',
+                minHeight: 64,
                 background: v === view ? 'var(--accent)' : 'transparent',
                 color: v === view ? '#fff' : 'var(--text-muted)',
               }}
@@ -45,7 +45,7 @@ export function ControlBar({ view, onView, onPrev, onNext, onToday, isToday, cat
             onClick={onToday}
             disabled={isToday}
             className="rounded-full font-semibold"
-            style={{ fontSize: 17, padding: '10px 20px', minHeight: 48, color: isToday ? 'var(--text-faint)' : 'var(--text)' }}
+            style={{ fontSize: 17, padding: '14px 22px', minHeight: 64, color: isToday ? 'var(--text-faint)' : 'var(--text)' }}
           >
             Today
           </button>
@@ -67,9 +67,9 @@ export function ControlBar({ view, onView, onPrev, onNext, onToday, isToday, cat
         onClick={onQuickAdd}
         aria-label="Quick add"
         className="grid place-items-center rounded-full shrink-0"
-        style={{ width: 60, height: 60, background: 'var(--accent)', color: '#fff', boxShadow: 'var(--shadow)' }}
+        style={{ width: 72, height: 72, background: 'var(--accent)', color: '#fff', boxShadow: 'var(--shadow)' }}
       >
-        <Plus size={28} strokeWidth={2.4} />
+        <Plus size={32} strokeWidth={2.4} />
       </button>
     </div>
   );
@@ -82,7 +82,7 @@ function NavBtn({ onClick, ariaLabel, children }: { onClick: () => void; ariaLab
       onClick={onClick}
       aria-label={ariaLabel}
       className="grid place-items-center rounded-full text-text-muted"
-      style={{ width: 48, height: 48 }}
+      style={{ width: 64, height: 64 }}
     >
       {children}
     </button>

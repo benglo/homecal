@@ -75,7 +75,7 @@ export function PhoneLayout() {
                 </span>
               </span>
             </button>
-            <AgendaView occurrences={occurrences} categories={cats} now={now} density="phone" onTap={(occ) => setEventTarget({ occ })} />
+            <AgendaView occurrences={occurrences} categories={cats} now={now} density="phone" loading={eventsQ.isPending} onTap={(occ) => setEventTarget({ occ })} />
           </>
         )}
 

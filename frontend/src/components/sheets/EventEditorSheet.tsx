@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Repeat } from 'lucide-react';
 import type { Category, EventOccurrence } from '../../core/model/types';
 import { useEventMaster } from '../../core/hooks/useData';
 import { useEventMutations } from '../../core/hooks/useMutations';
@@ -111,6 +112,7 @@ function EventForm({
   const [until, setUntil] = useState(init.until);
   const [error, setError] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmSeries, setConfirmSeries] = useState(false);
 
   const isRecurring = !!occurrence?.isRecurring;
 
@@ -133,12 +135,7 @@ function EventForm({
     return '';
   };
 
-  const save = () => {
-    const v = validate();
-    if (v) {
-      setError(v);
-      return;
-    }
+  const performSave = () => {
     const rrule = buildRRule(freq, until);
     const body = {
       categoryId,
@@ -161,6 +158,22 @@ function EventForm({
     } else {
       create.mutate(body, { onSuccess: onClose, onError });
     }
+  };
+
+  const save = () => {
+    const v = validate();
+    if (v) {
+      setError(v);
+      return;
+    }
+    // Editing a recurring series is all-or-nothing in v1 — make that an explicit choice
+    // rather than a silent whole-series rewrite (no "this & following" yet).
+    if (editing && isRecurring && !confirmSeries) {
+      setError('');
+      setConfirmSeries(true);
+      return;
+    }
+    performSave();
   };
 
   const deleteSeries = () => {
@@ -194,9 +207,22 @@ function EventForm({
     </>
   );
 
+  const title_ = editing ? (isRecurring ? 'Edit series' : 'Edit event') : 'New event';
+
   return (
-    <Sheet open onClose={onClose} title={editing ? 'Edit event' : 'New event'} actions={actions}>
+    <Sheet open onClose={onClose} title={title_} actions={actions}>
       <FormError>{error}</FormError>
+
+      {editing && isRecurring && (
+        <div
+          className="flex items-center gap-2 rounded-md"
+          style={{ background: 'var(--accent-weak)', color: 'var(--accent-ink)', padding: '10px 12px', marginBottom: 16, fontSize: 14 }}
+          role="note"
+        >
+          <Repeat size={16} className="shrink-0" />
+          This event repeats — saving changes <strong>every</strong> occurrence.
+        </div>
+      )}
 
       <Field label="Title">
         <TextInput value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What's happening?" autoFocus />
@@ -298,6 +324,22 @@ function EventForm({
             )}
             <Button variant="ghost" onClick={() => setConfirmDelete(false)}>
               Keep
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {confirmSeries && (
+        <div className="rounded-md border" style={{ borderColor: 'var(--accent)', padding: 14, marginTop: 4 }}>
+          <p className="font-medium text-text" style={{ marginBottom: 12 }}>
+            Apply these changes to <strong>every</strong> occurrence of this series?
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="primary" onClick={performSave} disabled={busy}>
+              Save whole series
+            </Button>
+            <Button variant="ghost" onClick={() => setConfirmSeries(false)}>
+              Cancel
             </Button>
           </div>
         </div>

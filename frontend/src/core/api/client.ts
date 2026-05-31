@@ -84,4 +84,6 @@ export const api = {
   createCategory: (body: CategoryInput) => send<Category>('POST', '/api/categories', body),
   updateCategory: (id: string, body: Partial<CategoryInput>) => send<Category>('PUT', `/api/categories/${id}`, body),
   deleteCategory: (id: string) => send<void>('DELETE', `/api/categories/${id}`),
+  reassignCategory: (id: string, toId: string) =>
+    send<{ moved: number }>('POST', `/api/categories/${id}/reassign`, { toId }),
 };

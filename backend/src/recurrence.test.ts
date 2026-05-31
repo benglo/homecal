@@ -22,6 +22,15 @@ function master(overrides: Partial<EventMaster>): EventMaster {
 
 const starts = (occ: { start: string }[]) => occ.map((o) => o.start);
 
+test('a malformed stored RRULE is skipped, not thrown (never blanks the wall)', () => {
+  const m = master({ rrule: 'this is not a valid rrule' });
+  let result: { start: string }[] = [];
+  assert.doesNotThrow(() => {
+    result = expandEvent(m, [], '2026-06-01T00:00:00Z', '2026-06-30T00:00:00Z');
+  });
+  assert.deepEqual(result, []);
+});
+
 test('non-recurring: included only when it overlaps the window', () => {
   const m = master({ start: '2026-06-10T02:00:00Z', end: '2026-06-10T03:00:00Z' });
   assert.equal(expandEvent(m, [], '2026-06-09T00:00:00Z', '2026-06-11T00:00:00Z').length, 1);
