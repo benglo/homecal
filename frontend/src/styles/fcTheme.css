@@ -1,0 +1,63 @@
+/* FullCalendar restyled to our tokens (docs/frontend-components.md §6). */
+.fc {
+  --fc-border-color: var(--border);
+  --fc-page-bg-color: transparent;
+  --fc-neutral-bg-color: var(--surface-2);
+  --fc-today-bg-color: var(--accent-weak);
+  --fc-now-indicator-color: var(--accent);
+  --fc-event-border-color: transparent;
+  height: 100%;
+  font-family: 'Geist', system-ui, sans-serif;
+}
+.fc .fc-col-header-cell-cushion,
+.fc .fc-daygrid-day-number {
+  color: var(--text);
+  text-decoration: none;
+  font-weight: 600;
+}
+.fc .fc-col-header-cell-cushion {
+  font-size: 16px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  padding: 10px 4px;
+}
+.fc .fc-daygrid-day-number {
+  font-size: 18px;
+  padding: 6px 8px;
+}
+.fc .fc-day-today .fc-daygrid-day-number {
+  background: var(--accent);
+  color: #fff;
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  margin: 2px;
+}
+.fc .fc-timegrid-slot,
+.fc .fc-timegrid-axis-cushion,
+.fc .fc-timegrid-slot-label-cushion {
+  font-family: 'Geist Mono', monospace;
+  font-size: 13px;
+  color: var(--text-faint);
+}
+.fc-theme-standard td,
+.fc-theme-standard th {
+  border-color: var(--border);
+}
+.fc .fc-event,
+.fc .fc-event:hover {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+.fc .fc-daygrid-event {
+  white-space: nowrap;
+}
+.fc .fc-more-link {
+  color: var(--text-faint);
+  font-weight: 600;
+  font-size: 13px;
+}
