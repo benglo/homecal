@@ -61,8 +61,23 @@ docker compose up -d --build             # the supported deploy path
 - **M0** scaffold + container — done (`f419063`)
 - **M1** data + API — done (`24d7651`), 10/10 recurrence tests
 - **M2** wall UI — done (`5b3d5ed`), all 3 views verified via screenshot
-- **M3** editing (phone + sheets + mutations) — **next**
-- **M4** deploy + kiosk + backup — after M3
+- **M3** editing (phone + sheets + mutations + SSE) — done, 15/15 backend tests; phone↔wall
+  sync + cancel-one-occurrence verified via Playwright
+- **M4** deploy + kiosk + backup — **next**
+
+### M3 notes
+- **Realtime:** in-process `broker` (`backend/src/realtime.ts`) + `GET /api/stream` SSE; every
+  event/dinner/category mutation `poke()`s. Client `useRealtime` invalidates the matching query family;
+  the 30s poll is the backstop. SSE holds connections open → use `waitUntil:'load'` (NOT `networkidle`)
+  in any browser automation or `goto` times out.
+- **Forms:** plain controlled React state + lightweight client validation (NOT react-hook-form/zod — kept
+  off the frontend to avoid deps; the API Zod schema is authoritative and `ApiError.code` drives UX such
+  as the 409 `CATEGORY_IN_USE`).
+- **Recurrence editing (M3 scope):** edits apply to the **whole series** (PUT master); delete offers
+  **This occurrence** (cancel → EXDATE) vs **All**. "This-and-following" + modified-occurrence overrides
+  are v2 (no backend route yet).
+- **Backend test glob fixed:** `find src -name '*.test.ts'` (npm's `sh` lacks globstar, so the old
+  `src/**/*.test.ts` matched nothing — tests silently never ran).
 
 ## Gotchas
 - `better-sqlite3` is native — compiled for the **server's** arch inside the Docker build; `.dockerignore`

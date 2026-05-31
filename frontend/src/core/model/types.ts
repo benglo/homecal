@@ -20,6 +20,47 @@ export interface EventOccurrence {
   occurrenceDate?: string;
 }
 
+/** GET /api/events/:id — the underlying master, for editing a series. */
+export interface EventMaster {
+  id: string;
+  categoryId: string;
+  title: string;
+  start: string; // ISO-8601 UTC
+  end: string;
+  allDay: boolean;
+  location: string | null;
+  rrule: string | null;
+  updatedAt: string;
+}
+
+/** Body for POST /api/events. `undefined` fields are omitted by the client. */
+export interface EventCreateInput {
+  categoryId: string;
+  title: string;
+  start: string;
+  end: string;
+  allDay: boolean;
+  location?: string;
+  rrule?: string;
+}
+
+/** Body for PUT /api/events/:id. `location`/`rrule` accept null to clear. */
+export type EventUpdateInput = Partial<{
+  categoryId: string;
+  title: string;
+  start: string;
+  end: string;
+  allDay: boolean;
+  location: string | null;
+  rrule: string | null;
+}>;
+
+export interface CategoryInput {
+  name: string;
+  color: string;
+  icon?: string;
+}
+
 export interface Dinner {
   date: string; // YYYY-MM-DD
   meal: string;

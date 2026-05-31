@@ -4,6 +4,55 @@ Running log of work per session. Newest first. Pair with `git log` for exact dif
 
 ---
 
+## 2026-05-31 (cont.) — M3: editing (phone + sheets + mutations + SSE)
+
+### What was built
+- **Backend realtime:** `realtime.ts` in-process pub/sub `broker` (tests-first, 5/5) + `GET /api/stream`
+  SSE route (hijacked raw socket, `retry`/heartbeat, double-cleanup guard). Every event/dinner/category
+  mutation route now `poke()`s. Also fixed the test script glob (`find src -name '*.test.ts'`) — the old
+  `src/**/*.test.ts` matched nothing under npm's `sh`, so tests had been silently not running.
+- **Frontend data layer:** `api/client.ts` gained POST/PUT/DELETE + a typed `ApiError` (carries
+  `code`/`status`). `useMutations.ts` — event/dinner/category mutations (optimistic create + cache patch,
+  invalidate-on-settle). `useRealtime.ts` — SSE → invalidate matching query family; reconnect refetches.
+  `useEventMaster` hook. `usePhoneTheme` (OS scheme).
+- **Sheets:** `Sheet` primitive (portal, focus, Esc/tap-out, scroll-lock, slide-up). `EventEditorSheet`
+  (full fields, repeat→bounded RRULE via `util/rrule.ts` build/parse, delete scope This/All),
+  `QuickAddSheet` (wall fast path, optimistic/quiet), `DayDetailSheet` (wall read), `DinnerEditorSheet`,
+  `CategoryEditorSheet` (Okabe–Ito presets + hex + icon + AA-contrast warning via `contrastRatio`).
+- **Phone:** `PhoneLayout` (Agenda/Week/Manage tabs) + `PhoneHeader` + `TabBar` + `Fab`; `CategoryManager`
+  (edit/delete → 409 surfaced) + `DinnerWeekEditor`. `AgendaView`/`EventRow` gained a `phone` density.
+  `ModeRouter` now renders `PhoneLayout` unless `?mode=wall`.
+- **Wall wiring:** event tap → `DayDetailSheet`; quick-add → `QuickAddSheet`.
+
+### Decisions / deviations
+- Forms use plain controlled state + light client validation, **not** react-hook-form/zod (avoid deps;
+  API Zod is authoritative; `ApiError.code` drives UX). Recorded in CLAUDE.md.
+- M3 recurrence editing = whole-series edit + This/All delete only; following-split + modified overrides
+  are v2 (no backend route).
+
+### Verify
+```bash
+npm --workspace backend test          # 15/15 (10 recurrence + 5 broker)
+npm run build                         # tsc both workspaces + vite
+rm -rf /tmp/d && DATA_DIR=/tmp/d STATIC_DIR=frontend/dist PORT=8793 node backend/dist/server.js &
+# phone: http://<ip>:8793/   ·   wall: http://<ip>:8793/?mode=wall
+```
+Playwright (cached chromium, `waitUntil:'load'`) verified: phone adds weekly event → appears on a fresh
+wall (recurrence expanded 31 May + 7 Jun); delete "This event only" → cancels just that instance (server
+left with only 7 Jun; UI converges to 1). Screenshots in `/tmp/m3shots`.
+
+### Post-build code review (HIGH/MED fixed)
+EventEditorSheet now shows an error state on master-load failure (was stuck on "Loading…"); phone agenda
+chip shows icon+**label** (was icon-only, breaking the "colour-never-alone" rule); SSE cleanup guarded;
+QuickAddSheet fully resets on close; dropped the unused `RecurrenceScope` `'following'`.
+
+### Carried forward
+- Bundle ~565KB (FullCalendar) — fine for LAN; code-split in M4 polish if wanted.
+- No frontend test runner yet; `util/rrule.ts` + `color.ts` contrast were validated via the live flow,
+  not unit tests. Consider vitest in M4 for those pure helpers.
+
+---
+
 ## 2026-05-31 — Spec review → design sign-off → M0/M1/M2
 
 ### What happened (in order)

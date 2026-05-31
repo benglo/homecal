@@ -9,6 +9,7 @@ import {
   updateEvent,
 } from '../repos/events';
 import { httpError } from '../util/errors';
+import { broker } from '../realtime';
 import { parseBody } from './helpers';
 
 export async function eventRoutes(app: FastifyInstance): Promise<void> {
@@ -25,16 +26,20 @@ export async function eventRoutes(app: FastifyInstance): Promise<void> {
 
   app.post('/api/events', async (req, reply) => {
     const ev = createEvent(parseBody(eventCreate, req.body));
+    broker.poke('events');
     reply.status(201);
     return ev;
   });
 
-  app.put<{ Params: { id: string } }>('/api/events/:id', async (req) =>
-    updateEvent(req.params.id, parseBody(eventUpdate, req.body))
-  );
+  app.put<{ Params: { id: string } }>('/api/events/:id', async (req) => {
+    const ev = updateEvent(req.params.id, parseBody(eventUpdate, req.body));
+    broker.poke('events');
+    return ev;
+  });
 
   app.delete<{ Params: { id: string } }>('/api/events/:id', async (req, reply) => {
     deleteEvent(req.params.id);
+    broker.poke('events');
     reply.status(204);
   });
 
@@ -42,6 +47,7 @@ export async function eventRoutes(app: FastifyInstance): Promise<void> {
     '/api/events/:id/occurrences/:date',
     async (req, reply) => {
       cancelOccurrence(req.params.id, req.params.date);
+      broker.poke('events');
       reply.status(204);
     }
   );

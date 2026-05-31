@@ -1,6 +1,6 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
-import type { Category, Dinner, EventOccurrence } from '../model/types';
+import type { Category, Dinner, EventMaster, EventOccurrence } from '../model/types';
 
 export function useCategories() {
   return useQuery({
@@ -15,6 +15,16 @@ export function useEvents(startIso: string, endIso: string) {
     queryKey: ['events', startIso, endIso],
     queryFn: () => api.events(startIso, endIso),
     placeholderData: keepPreviousData,
+  });
+}
+
+/** The underlying master for a series — fetched only while a series editor is open. */
+export function useEventMaster(id: string | null) {
+  return useQuery<EventMaster>({
+    queryKey: ['eventMaster', id],
+    queryFn: () => api.eventMaster(id!),
+    enabled: !!id,
+    staleTime: 0,
   });
 }
 

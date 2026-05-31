@@ -9,6 +9,9 @@ import { HeroBand } from '../components/hero/HeroBand';
 import { AgendaView } from '../components/calendar/AgendaView';
 import { GridCalendar } from '../components/calendar/GridCalendar';
 import { ControlBar } from '../components/controls/ControlBar';
+import { DayDetailSheet } from '../components/sheets/DayDetailSheet';
+import { QuickAddSheet } from '../components/sheets/QuickAddSheet';
+import { dayKey } from '../core/util/time';
 
 /** The wall: hero band (200) · calendar surface (flex) · control bar (72). */
 export function WallLayout() {
@@ -27,6 +30,10 @@ export function WallLayout() {
 
   const cats = byId(categoriesQ.data);
   const occurrences = eventsQ.data ?? [];
+  const dinners = dinnersQ.data ?? [];
+
+  const [detailDate, setDetailDate] = useState<string | null>(null);
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
 
   const step = (dir: 1 | -1) =>
     setAnchor((a) =>
@@ -35,16 +42,15 @@ export function WallLayout() {
   const goToday = () => setAnchor(now.startOf('day'));
   const isToday = anchor.hasSame(now, 'day') && (view !== 'month' || anchor.hasSame(now, 'month'));
 
-  const onTap = (_occ: EventOccurrence) => {
-    /* Day-detail sheet / editor wired in M3. */
-  };
+  const onTap = (occ: EventOccurrence) => setDetailDate(dayKey(occ.start));
+  const detailDinner = detailDate ? dinners.find((d) => d.date === detailDate)?.meal : undefined;
 
   return (
     <div className="flex flex-col h-full overflow-hidden" style={{ filter: 'brightness(var(--kiosk-brightness))' }}>
       <HeroBand
         now={now}
         weekDays={week.days}
-        dinners={dinnersQ.data ?? []}
+        dinners={dinners}
         dataUpdatedAt={dinnersQ.dataUpdatedAt}
         isError={dinnersQ.isError}
       />
@@ -69,10 +75,18 @@ export function WallLayout() {
         onToday={goToday}
         isToday={isToday}
         categories={categoriesQ.data ?? []}
-        onQuickAdd={() => {
-          /* QuickAddSheet in M3 */
-        }}
+        onQuickAdd={() => setQuickAddOpen(true)}
       />
+
+      <DayDetailSheet
+        open={detailDate !== null}
+        onClose={() => setDetailDate(null)}
+        date={detailDate}
+        occurrences={occurrences}
+        categories={cats}
+        dinner={detailDinner}
+      />
+      <QuickAddSheet open={quickAddOpen} onClose={() => setQuickAddOpen(false)} categories={categoriesQ.data ?? []} />
     </div>
   );
 }

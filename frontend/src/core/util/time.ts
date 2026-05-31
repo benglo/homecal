@@ -46,3 +46,21 @@ export function weekDates(anchor: DateTime): { start: string; end: string; days:
   const days = Array.from({ length: 7 }, (_, i) => mon.plus({ days: i }).toFormat('yyyy-LL-dd'));
   return { start: days[0], end: days[6], days };
 }
+
+/* ---- editor <input> ↔ UTC-ISO bridges (all local values are Brisbane) ---- */
+
+/** UTC ISO → value for <input type="datetime-local"> (Brisbane wall time). */
+export const toInputDateTime = (iso: string): string => toBne(iso).toFormat("yyyy-LL-dd'T'HH:mm");
+
+/** UTC ISO → value for <input type="date"> (Brisbane calendar day). */
+export const toInputDate = (iso: string): string => toBne(iso).toFormat('yyyy-LL-dd');
+
+/** <input type="datetime-local"> value (Brisbane) → UTC ISO for the API. */
+export const fromInputDateTime = (local: string): string =>
+  DateTime.fromISO(local, { zone: ZONE }).toUTC().toISO({ suppressMilliseconds: true })!;
+
+/** Round a DateTime up to the next 30-minute slot (sensible default for new events). */
+export function nextHalfHour(dt: DateTime): DateTime {
+  const m = dt.minute;
+  return dt.set({ minute: m < 30 ? 30 : 0, second: 0, millisecond: 0 }).plus(m < 30 ? {} : { hours: 1 });
+}
