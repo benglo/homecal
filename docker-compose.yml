@@ -6,6 +6,7 @@ services:
     image: homecal:latest
     container_name: homecal
     restart: unless-stopped
+    stop_grace_period: 30s
     ports:
       # host:container — change the host port to suit your LAN / reverse proxy.
       - "${HOMECAL_PORT:-8787}:8787"
@@ -13,8 +14,14 @@ services:
       # Host bind-mount of the DATA DIRECTORY (not a single file) so the
       # SQLite .db + -wal + -shm all persist and ride the server's backups.
       - ${HOMECAL_DATA_DIR:-./data}:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       - PORT=8787
       - HOST=0.0.0.0
       - DATA_DIR=/data
       - STATIC_DIR=/app/frontend/dist
+      - NODE_ENV=production

@@ -4,6 +4,50 @@ Running log of work per session. Newest first. Pair with `git log` for exact dif
 
 ---
 
+## 2026-06-01 — M4: deploy + kiosk + backup
+
+### What was built
+- **`POST /api/backup`** — `VACUUM INTO` creates a timestamped standalone `.db` in the data dir.
+  Auto-prunes to 10 most recent. Tests-first (3/3 in `backup.test.ts`): path format, round-trip
+  integrity, and prune behaviour.
+- **Graceful SSE shutdown** — `drainSSE()` tracks all hijacked SSE `ServerResponse` objects in a
+  module-level `Set`; the SIGTERM handler calls `drainSSE()` → `.end()` on every open connection
+  before `app.close()` + WAL checkpoint. `stop_grace_period: 30s` in compose so Docker waits for
+  the drain instead of SIGKILL-ing.
+- **SW cache versioning** — shell cache name now includes a build-time ID (`__BUILD_ID__` via Vite
+  `define`); SW registration passes `?v=${buildId}` so the browser byte-compares and activates a
+  new worker after each redeploy. Navigation switched from cache-first to **network-first with
+  cache fallback** — the wall always gets the latest `index.html` when the server is up, but still
+  renders last-good when it's down. On activate, old shell caches are evicted.
+- **Prod logging** — Fastify logger level set to `warn` when `NODE_ENV=production` (overridable
+  via `LOG_LEVEL`). Docker compose adds `json-file` log driver with `max-size: 10m`, `max-file: 3`.
+- **Kiosk launcher** — `kiosk/launch.sh`: polls `/api/health` until 200 (up to 5 min), then
+  launches Chromium in kiosk mode with Wayland flags. Falls back to launching anyway after timeout
+  (SW may have a cached shell).
+- **Deploy guide** — `docs/deploy.md` covers: Docker build-on-target-arch, config env vars,
+  backup endpoint usage, reverse-proxy SSE snippets (nginx + Caddy), Pi kiosk setup (labwc
+  autostart + systemd alternative), screen blanking, and chaos-test checklist.
+
+### Verify
+```bash
+npm --workspace backend test          # 19/19 (16 recurrence/broker + 3 backup)
+npm --workspace frontend test         # 15/15 (rrule + color + time)
+npm run build                         # tsc both workspaces + vite (clean)
+rm -rf /tmp/d && DATA_DIR=/tmp/d STATIC_DIR=frontend/dist PORT=8794 node backend/dist/server.js &
+curl -s localhost:8794/api/health     # {"ok":true,...}
+curl -s -X POST localhost:8794/api/backup  # {"ok":true,"file":"backup-...","sizeBytes":...}
+ls /tmp/d/backup-*                    # standalone .db, no -wal/-shm
+kill %1                               # SIGTERM → drainSSE → WAL checkpoint → exit
+```
+
+### State at end
+- All M0–M4 milestones complete. Backend 19/19 tests, frontend 15/15 tests, build clean.
+- Tree clean (no uncommitted changes yet — ready for commit).
+- M4 acceptance criteria from the spec: backup endpoint works, SW serves fresh assets after
+  rebuild, kiosk launcher + deploy docs written, graceful shutdown drains SSE.
+
+---
+
 ## 2026-06-01 — M3 hardening (pre-M4 persona review fixes)
 
 Ran a 2-lens check-in (principal-engineer/deploy-readiness + UX) on the built M0–M3 product;

@@ -63,19 +63,21 @@ docker compose up -d --build             # the supported deploy path
 - **M2** wall UI — done (`5b3d5ed`), all 3 views verified via screenshot
 - **M3** editing (phone + sheets + mutations + SSE) — done; hardened after a pre-M4 review.
   Backend 16/16, frontend 15/15 (vitest), phone↔wall sync + cancel-one-occurrence verified.
-- **M4** deploy + kiosk + backup — **next**
+- **M4** deploy + kiosk + backup — done. Backend 19/19, frontend 15/15, backup + SW cache + SSE drain
+  verified. Kiosk launcher + deploy guide in `kiosk/launch.sh` and `docs/deploy.md`.
 
-### M4 must-do (carried from the pre-M4 review — see SESSION-LOG 2026-06-01)
-- **`POST /api/backup`** (`VACUUM INTO` a timestamped snapshot in the data dir) — named deliverable.
-- **SW shell cache versioning:** `frontend/public/sw.js` caches the shell cache-first under a static
-  `v1`; after a redeploy the wall can keep serving the OLD bundle. Version the cache per build (or make
-  navigation network-first-with-cache-fallback). M4 is the first redeploy over a live wall, so fix here.
-- **Graceful shutdown drains SSE:** `/api/stream` hijacks the raw socket, so `app.close()` doesn't own
-  it — track open SSE sockets and `.end()` them on SIGTERM, and set `stop_grace_period: 30s` in compose,
-  else a busy restart can SIGKILL before the WAL checkpoint.
-- Reverse-proxy SSE snippet (buffering off + long read timeout) or document "direct host:port, no proxy".
-- Fastify `logger: { level: 'warn' }` + Docker `max-size`/`max-file` log rotation (always-on box).
-- Build the image **on the target arch** (Pi/server) — better-sqlite3 is native; cross-arch = crash-loop.
+### M4 notes
+- **`POST /api/backup`** — `VACUUM INTO` a timestamped standalone `.db`; auto-prunes to 10. Test-first
+  (3 tests in `backend/src/routes/backup.test.ts`).
+- **SW cache versioning** — shell cache keyed to `__BUILD_ID__` (Vite `define`); navigation is
+  network-first with cache fallback; old caches evicted on activate.
+- **Graceful shutdown** — `drainSSE()` `.end()`s all tracked connections before `app.close()`;
+  `stop_grace_period: 30s` in compose so the WAL checkpoint completes.
+- **Logging** — Fastify `level: 'warn'` when `NODE_ENV=production`; Docker `json-file` driver with
+  `max-size: 10m`, `max-file: 3`.
+- **Deploy docs** — `docs/deploy.md` covers server (Docker), reverse-proxy SSE (nginx/Caddy),
+  Pi kiosk (labwc/Wayland, two-layer auto-retry), chaos test steps.
+- **Build on target arch** — documented in deploy guide; `.dockerignore` excludes host `node_modules`.
 
 ### M3 notes
 - **Realtime:** in-process `broker` (`backend/src/realtime.ts`) + `GET /api/stream` SSE; every

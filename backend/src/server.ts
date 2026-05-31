@@ -8,13 +8,16 @@ import { healthRoutes } from './routes/health';
 import { categoryRoutes } from './routes/categories';
 import { eventRoutes } from './routes/events';
 import { dinnerRoutes } from './routes/dinners';
-import { streamRoutes } from './routes/stream';
+import { streamRoutes, drainSSE } from './routes/stream';
+import { backupRoutes } from './routes/backup';
 
 async function main(): Promise<void> {
   // Open DB + run migrations before serving any traffic.
   getDb();
 
-  const app = Fastify({ logger: true });
+  const app = Fastify({
+    logger: { level: process.env.LOG_LEVEL ?? (process.env.NODE_ENV === 'production' ? 'warn' : 'info') },
+  });
 
   // Consistent error envelope: { error: { code, message } } (spec §0).
   app.setErrorHandler((err, _req, reply) => {
@@ -44,6 +47,7 @@ async function main(): Promise<void> {
   await app.register(eventRoutes);
   await app.register(dinnerRoutes);
   await app.register(streamRoutes);
+  await app.register(backupRoutes);
 
   // Serve the built frontend from the same origin (no CORS). Optional in dev.
   if (config.staticDir && fs.existsSync(config.staticDir)) {
@@ -58,6 +62,7 @@ async function main(): Promise<void> {
 
   const shutdown = async (signal: string) => {
     app.log.info(`${signal} received, shutting down`);
+    drainSSE();
     await app.close();
     closeDb();
     process.exit(0);
