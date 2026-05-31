@@ -1,0 +1,17 @@
+node_modules/
+dist/
+build/
+*.log
+.DS_Store
+.env
+.env.local
+
+# SQLite data (host-mounted at runtime; never commit)
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# editor
+.vscode/
+.idea/

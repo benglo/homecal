@@ -1,0 +1,24 @@
+{
+  "name": "homecal",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Self-hosted family calendar — wall kiosk + phone, LAN-only. Backend serves API + built frontend from one origin.",
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "dev:backend": "npm --workspace backend run dev",
+    "dev:frontend": "npm --workspace frontend run dev",
+    "build": "npm --workspace frontend run build && npm --workspace backend run build",
+    "build:frontend": "npm --workspace frontend run build",
+    "build:backend": "npm --workspace backend run build",
+    "start": "npm --workspace backend run start",
+    "docker:up": "docker compose up -d --build",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

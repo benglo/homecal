@@ -1,0 +1,17 @@
+# Never copy host node_modules — better-sqlite3 is a native module and must be
+# compiled for the SERVER's architecture inside the build stage (spec gotcha).
+**/node_modules
+**/dist
+**/build
+
+.git
+.gitignore
+*.md
+docs
+data
+*.db
+*.db-wal
+*.db-shm
+.env
+.env.local
+.DS_Store
