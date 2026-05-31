@@ -15,3 +15,6 @@ data/
 # editor
 .vscode/
 .idea/
+
+# harness
+.claude/
