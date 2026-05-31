@@ -12,10 +12,6 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   </React.StrictMode>
 );
 
-// Never-blank: service worker caches the app shell + last-good API responses,
-// so a reload while the server is down still renders (spec §0).
-declare const __BUILD_ID__: string;
-
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register(`/sw.js?v=${__BUILD_ID__}`).catch(() => {

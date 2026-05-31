@@ -7,6 +7,8 @@ import { config } from '../config';
 
 export const MAX_BACKUPS = 10;
 
+let backupInProgress = false;
+
 export function buildBackupPath(dataDir: string): string {
   const ts = new Date().toISOString().replace(/[:.]/g, '-').replace(/-\d{3}Z$/, 'Z');
   return path.join(dataDir, `backup-${ts}.db`);
@@ -36,14 +38,24 @@ function pruneOldBackups(dataDir: string): void {
 }
 
 export async function backupRoutes(app: FastifyInstance): Promise<void> {
-  app.post('/api/backup', async () => {
-    const db = getDb();
-    const dest = performBackup(db, config.dataDir);
-    const stat = fs.statSync(dest);
-    return {
-      ok: true,
-      file: path.basename(dest),
-      sizeBytes: stat.size,
-    };
+  app.post('/api/backup', async (_req, reply) => {
+    if (backupInProgress) {
+      return reply.status(409).send({
+        error: { code: 'BACKUP_IN_PROGRESS', message: 'A backup is already running' },
+      });
+    }
+    backupInProgress = true;
+    try {
+      const db = getDb();
+      const dest = performBackup(db, config.dataDir);
+      const stat = fs.statSync(dest);
+      return {
+        ok: true,
+        file: path.basename(dest),
+        sizeBytes: stat.size,
+      };
+    } finally {
+      backupInProgress = false;
+    }
   });
 }

@@ -4,7 +4,7 @@ import react from '@vitejs/plugin-react';
 // Backend dev server (for API proxy during `npm run dev:frontend`).
 const API_TARGET = process.env.VITE_API_TARGET ?? 'http://localhost:8787';
 
-const buildId = process.env.BUILD_ID ?? Date.now().toString(36);
+const buildId = process.env.BUILD_ID ?? (process.env.NODE_ENV === 'production' ? Date.now().toString(36) : 'dev');
 
 export default defineConfig({
   plugins: [react()],
