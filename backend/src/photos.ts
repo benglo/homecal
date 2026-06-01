@@ -102,7 +102,7 @@ export async function savePhoto(
   }
 
   // --- resize + convert ---
-  let pipeline = sharp(buffer, {
+  const pipeline = sharp(buffer, {
     sequentialRead: true,
     limitInputPixels: SHARP_PIXEL_LIMIT,
   })
