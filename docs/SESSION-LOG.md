@@ -4,6 +4,90 @@ Running log of work per session. Newest first. Pair with `git log` for exact dif
 
 ---
 
+## 2026-06-01 (cont.) — Kiosk UX overhaul: keyboard, FAB flow, modals
+
+### Virtual keyboard improvements
+- **Bigger keys** — 56px tall buttons, 18px font, day/night themed via CSS custom properties
+  (`keyboard.css` overrides react-simple-keyboard defaults).
+- **Done button** — accent-colored toolbar bar above the keyboard to dismiss.
+- **Scroll into view** — `--kb-height` CSS variable broadcast by the keyboard; Sheet and modal
+  containers use it to shrink above the keyboard. Input scrolls into view after layout settles
+  (double-rAF measurement to avoid reading 0 on Pi).
+- **Shift auto-reset** — Shift reverts to lowercase after one character (Caps Lock still toggles
+  sticky). Was latching permanently before.
+
+### FAB → AddChooser → category-specific form
+- **AddChooser overlay** — FAB now opens a centered chooser dialog ("What are you adding?") with
+  large colored category tiles in a grid. Dinner separated below a divider.
+- **Category tap → QuickAddSheet** — pre-selected category shown as a read-only chip; form has
+  only Title + When (no in-form category picker needed).
+- **Dinner tap → DinnerEditorSheet** — "Dinner · Monday 1 June" title, single "What's for dinner?"
+  input. Creates the correct dinner entity (not an event with Dinner category).
+- Dinner filtered by stable id (`cat-dinner`) not display name. Color/icon looked up from the
+  categories API response, not hardcoded.
+
+### Sheet → Modal conversion
+- Sheet component gained `variant` prop: `'modal'` (centered, 640px wide, default) vs `'sheet'`
+  (bottom-anchored, full-width).
+- All editor sheets (QuickAdd, Dinner, EventEditor, CategoryEditor) render as centered modals —
+  better for a 10" fridge-mounted screen at eye level.
+- DayDetailSheet stays as a bottom sheet (read-only glance, `variant="sheet"`).
+
+### Kiosk touch target sizing (UX persona review)
+- Close button 40→48px with visible `bg-surface-2` background.
+- Footer buttons 44→52px min-height, 17px font.
+- Field labels 13→14px, more margin below.
+- Input padding 11/13→12/14px.
+- All Day / Repeat buttons 40→48px.
+- DayDetail event rows: padding increased, color strip 4→6px, time/location text 13→14px.
+
+### Removed left border from calendar chips
+- Week/month view event chips no longer have `borderLeft: 4px solid` — the tinted background fill
+  + icon + label already carry the category signal (per the colourblind-safe spec).
+
+### Code review fixes (8 findings)
+1. **Modal + keyboard overlap** — `paddingBottom: var(--kb-height)` on backdrop so modals sit above
+   the keyboard (was only applied to sheet variant).
+2. **maxHeight constant** — 156→168px to match enlarged header (80px) + footer (84px).
+3. **Shift auto-reset** — non-modifier keypress reverts shift to lowercase.
+4. **--kb-height race** — measurement moved inside double-rAF so layout is settled before reading.
+5. **AddChooser id-based filter** — `c.id !== 'cat-dinner'` instead of fragile `c.name !== 'Dinner'`.
+6. **AddChooser dynamic color** — looks up Dinner category color/icon from API, not hardcoded.
+7. **AddChooser a11y** — added Escape key, body scroll lock, focus management (matching Sheet).
+8. **Overlay mutual exclusion** — opening any overlay calls `dismissAll()` first; no more stacking.
+
+### Files changed
+- `frontend/src/components/keyboard/VirtualKeyboard.tsx` — Done bar, theming, shift reset, rAF fix
+- `frontend/src/components/keyboard/keyboard.css` — new, kiosk key overrides
+- `frontend/src/components/controls/AddChooser.tsx` — new, category chooser overlay
+- `frontend/src/components/sheets/Sheet.tsx` — modal/sheet variant, kb-height, maxHeight fix
+- `frontend/src/components/sheets/QuickAddSheet.tsx` — pre-selected category, no CategoryPicker
+- `frontend/src/components/sheets/DayDetailSheet.tsx` — variant="sheet", enlarged rows
+- `frontend/src/components/sheets/EventEditorSheet.tsx` — 48px touch targets
+- `frontend/src/components/sheets/fields.tsx` — label/input sizing
+- `frontend/src/components/primitives/Button.tsx` — 52px min-height
+- `frontend/src/components/calendar/renderChip.tsx` — removed borderLeft
+- `frontend/src/layouts/WallLayout.tsx` — AddChooser flow, overlay mutual exclusion
+
+### Verify
+```bash
+npm --workspace backend test          # 19/19
+npm --workspace frontend test         # 15/15
+npm run build                         # clean
+docker compose up -d --build          # deploy
+bash kiosk/reload.sh                  # reload Pi
+# FAB → chooser → Sport → modal with keyboard
+# FAB → chooser → Dinner → "What's for dinner?" modal
+# Tap event → bottom sheet (DayDetailSheet)
+```
+
+### State at end
+- All changes uncommitted, ready to commit.
+- Backend 19/19, frontend 15/15, build clean.
+- Deployed and tested on Pi kiosk (192.168.1.135) via CDP screenshots.
+
+---
+
 ## 2026-06-01 (cont.) — M4 post-deploy fixes + kiosk tuning
 
 ### Code review fixes (from high-effort 7-angle review)

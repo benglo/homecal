@@ -20,7 +20,7 @@ export function Button({ variant = 'ghost', children, style, ...rest }: Props) {
     <button
       type="button"
       className={BASE}
-      style={{ minHeight: 44, padding: '11px 18px', fontSize: 16, ...variantStyle[variant], ...style }}
+      style={{ minHeight: 52, padding: '14px 24px', fontSize: 17, ...variantStyle[variant], ...style }}
       {...rest}
     >
       {children}

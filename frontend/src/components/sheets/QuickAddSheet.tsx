@@ -3,39 +3,41 @@ import { DateTime } from 'luxon';
 import type { Category } from '../../core/model/types';
 import { useEventMutations } from '../../core/hooks/useMutations';
 import { fromInputDateTime, nextHalfHour, nowBne, toInputDate } from '../../core/util/time';
+import { chipFill } from '../../core/util/color';
+import { iconFor } from '../../core/util/icons';
 import { Sheet } from './Sheet';
 import { Button } from '../primitives/Button';
-import { CategoryPicker, Field, TextInput } from './fields';
+import { Field, TextInput } from './fields';
 
 interface Props {
   open: boolean;
   onClose: () => void;
   categories: Category[];
+  /** Pre-selected category from the AddChooser. */
+  defaultCategoryId?: string;
   /** Optional prefilled day (yyyy-MM-dd, Brisbane) from a grid tap. */
   defaultDate?: string;
 }
 
-/** The wall's fast create path: title · category · day · time. No recurrence/location
- *  (richer edits say "do it on your phone"). Optimistic; a failed create never throws
- *  a red error on the wall — we just close and let reconciliation correct it. */
-export function QuickAddSheet({ open, onClose, categories, defaultDate }: Props) {
+export function QuickAddSheet({ open, onClose, categories, defaultCategoryId, defaultDate }: Props) {
   const { create } = useEventMutations();
   const today = defaultDate ?? toInputDate(nowBne().toUTC().toISO()!);
+  const catId = defaultCategoryId ?? categories[0]?.id ?? '';
   const [title, setTitle] = useState('');
-  const [categoryId, setCategoryId] = useState(categories[0]?.id ?? '');
   const [date, setDate] = useState(today);
   const [allDay, setAllDay] = useState(false);
   const [time, setTime] = useState(() => nextHalfHour(nowBne()).toFormat('HH:mm'));
 
   if (!open) return null;
 
-  // WallLayout keeps this sheet mounted, so reset every field on close.
+  const category = categories.find((c) => c.id === catId);
+  const CatIcon = iconFor(category?.icon);
+
   const reset = () => {
     setTitle('');
     setDate(today);
     setAllDay(false);
     setTime(nextHalfHour(nowBne()).toFormat('HH:mm'));
-    setCategoryId(categories[0]?.id ?? '');
   };
   const close = () => {
     reset();
@@ -43,7 +45,7 @@ export function QuickAddSheet({ open, onClose, categories, defaultDate }: Props)
   };
 
   const submit = () => {
-    if (!title.trim() || !categoryId) return;
+    if (!title.trim() || !catId) return;
     let start: string;
     let end: string;
     if (allDay) {
@@ -53,8 +55,7 @@ export function QuickAddSheet({ open, onClose, categories, defaultDate }: Props)
       start = fromInputDateTime(`${date}T${time}`);
       end = DateTime.fromISO(start, { zone: 'utc' }).plus({ hours: 1 }).toISO({ suppressMilliseconds: true })!;
     }
-    // Optimistic + quiet: fire and close. No error surfaced on the wall.
-    create.mutate({ categoryId, title: title.trim(), start, end, allDay });
+    create.mutate({ categoryId: catId, title: title.trim(), start, end, allDay });
     close();
   };
 
@@ -71,11 +72,24 @@ export function QuickAddSheet({ open, onClose, categories, defaultDate }: Props)
 
   return (
     <Sheet open onClose={close} title="Quick add" actions={actions}>
+      {category && (
+        <div
+          className="inline-flex items-center gap-2 rounded-md font-semibold"
+          style={{
+            padding: '8px 14px',
+            marginBottom: 18,
+            fontSize: 15,
+            background: chipFill(category.color, 0.18),
+            color: category.color,
+          }}
+        >
+          <CatIcon size={18} strokeWidth={2} />
+          {category.name}
+        </div>
+      )}
+
       <Field label="Title">
         <TextInput value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What's happening?" autoFocus />
-      </Field>
-      <Field label="Category">
-        <CategoryPicker categories={categories} value={categoryId} onChange={setCategoryId} />
       </Field>
       <Field label="When">
         <div className="flex flex-wrap items-center gap-2">

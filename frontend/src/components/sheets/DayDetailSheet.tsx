@@ -26,7 +26,7 @@ export function DayDetailSheet({ open, onClose, date, occurrences, categories, d
   const pretty = DateTime.fromISO(date, { zone: ZONE }).toFormat('cccc d LLLL');
 
   return (
-    <Sheet open onClose={onClose} title={pretty}>
+    <Sheet open onClose={onClose} title={pretty} variant="sheet">
       {dinner && (
         <div className="rounded-md" style={{ background: 'var(--accent-weak)', color: 'var(--accent-ink)', padding: '12px 14px', marginBottom: 16, fontSize: 15 }}>
           🍽 Dinner — {dinner}
@@ -44,25 +44,25 @@ export function DayDetailSheet({ open, onClose, date, occurrences, categories, d
                 <Row
                   {...(onEdit ? { type: 'button' as const, onClick: () => onEdit(o) } : {})}
                   className="flex items-start gap-3 w-full text-left rounded-md border border-border"
-                  style={{ padding: '12px 14px', background: 'var(--surface)' }}
+                  style={{ padding: '14px 16px', minHeight: onEdit ? 56 : undefined, background: 'var(--surface)' }}
                 >
                   <span
                     className="rounded-full shrink-0"
-                    style={{ width: 4, alignSelf: 'stretch', background: categories.get(o.categoryId)?.color ?? 'var(--c-uncat)' }}
+                    style={{ width: 6, alignSelf: 'stretch', background: categories.get(o.categoryId)?.color ?? 'var(--c-uncat)' }}
                   />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2" style={{ marginBottom: 4 }}>
-                      <span className="font-mono text-text-muted" style={{ fontSize: 13 }}>
+                      <span className="font-mono text-text-muted" style={{ fontSize: 14 }}>
                         {fmtTime(o.start, o.allDay)}
                       </span>
-                      {o.isRecurring && <Repeat size={13} className="text-text-faint" />}
+                      {o.isRecurring && <Repeat size={14} className="text-text-faint" />}
                     </div>
                     <div className="font-semibold text-text" style={{ fontSize: 16 }}>
                       {o.title}
                     </div>
                     {o.location && (
-                      <div className="flex items-center gap-1 text-text-muted" style={{ fontSize: 13, marginTop: 3 }}>
-                        <MapPin size={12} /> {o.location}
+                      <div className="flex items-center gap-1 text-text-muted" style={{ fontSize: 14, marginTop: 3 }}>
+                        <MapPin size={13} /> {o.location}
                       </div>
                     )}
                   </div>

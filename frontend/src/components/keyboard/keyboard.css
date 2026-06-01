@@ -1,0 +1,43 @@
+/* Override react-simple-keyboard for kiosk touch targets + day/night theming. */
+
+.simple-keyboard.wall-keyboard {
+  background: var(--surface-2);
+  border-top: 1px solid var(--border);
+  padding: 6px 4px 8px;
+  font-family: 'Geist', system-ui, sans-serif;
+}
+
+.simple-keyboard.wall-keyboard .hg-row {
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.simple-keyboard.wall-keyboard .hg-button {
+  height: 56px;
+  min-width: 36px;
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 500;
+}
+
+.simple-keyboard.wall-keyboard .hg-button:active {
+  background: var(--accent-weak);
+  color: var(--accent-ink);
+}
+
+.simple-keyboard.wall-keyboard .hg-button-space {
+  min-width: 200px;
+}
+
+.simple-keyboard.wall-keyboard .hg-button-bksp,
+.simple-keyboard.wall-keyboard .hg-button-shift,
+.simple-keyboard.wall-keyboard .hg-button-lock,
+.simple-keyboard.wall-keyboard .hg-button-enter,
+.simple-keyboard.wall-keyboard .hg-button-tab {
+  background: var(--surface-2);
+  font-size: 20px;
+}

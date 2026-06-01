@@ -7,7 +7,7 @@ import { iconFor } from '../../core/util/icons';
 export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
   return (
     <label className="block" style={{ marginBottom: 18 }}>
-      <span className="block font-medium text-text-muted" style={{ fontSize: 13, marginBottom: 7, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+      <span className="block font-medium text-text-muted" style={{ fontSize: 14, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.4 }}>
         {label}
       </span>
       {children}
@@ -23,7 +23,7 @@ export function Field({ label, children, hint }: { label: string; children: Reac
 const INPUT_STYLE: React.CSSProperties = {
   width: '100%',
   minHeight: 46,
-  padding: '11px 13px',
+  padding: '12px 14px',
   fontSize: 16,
   borderRadius: 'var(--r-sm)',
   border: '1px solid var(--border)',

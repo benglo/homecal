@@ -239,7 +239,7 @@ function EventForm({
           aria-pressed={allDay}
           className="inline-flex items-center gap-2 rounded-md border font-medium"
           style={{
-            minHeight: 40,
+            minHeight: 48,
             padding: '8px 14px',
             marginBottom: 12,
             fontSize: 14,
@@ -276,7 +276,7 @@ function EventForm({
               aria-pressed={f === freq}
               className="rounded-md border font-medium"
               style={{
-                minHeight: 40,
+                minHeight: 48,
                 padding: '8px 13px',
                 fontSize: 14,
                 background: f === freq ? 'var(--accent)' : 'var(--surface)',

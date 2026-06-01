@@ -12,7 +12,7 @@ export function makeRenderChip(categories: Map<string, Category>) {
     return (
       <div
         className="flex items-center gap-1.5 overflow-hidden rounded-md"
-        style={{ padding: '3px 6px', background: chipFill(color, 0.16), borderLeft: `4px solid ${color}` }}
+        style={{ padding: '3px 8px', background: chipFill(color, 0.16) }}
       >
         <Icon size={12} strokeWidth={2.2} style={{ color, flex: 'none' }} />
         {arg.timeText && <span className="font-mono shrink-0" style={{ fontSize: 11, opacity: 0.85 }}>{arg.timeText}</span>}

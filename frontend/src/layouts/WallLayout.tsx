@@ -5,13 +5,15 @@ import { useClock } from '../core/hooks/useClock';
 import { useWallTheme } from '../core/hooks/useTheme';
 import { useIdleReset } from '../core/hooks/useIdleReset';
 import { useCategories, useDinners, useEvents, byId } from '../core/hooks/useData';
-import { eventWindow, weekDates } from '../core/util/time';
+import { eventWindow, weekDates, nowBne, toInputDate } from '../core/util/time';
 import { HeroBand } from '../components/hero/HeroBand';
 import { AgendaView } from '../components/calendar/AgendaView';
 import { GridCalendar } from '../components/calendar/GridCalendar';
 import { ControlBar } from '../components/controls/ControlBar';
+import { AddChooser } from '../components/controls/AddChooser';
 import { DayDetailSheet } from '../components/sheets/DayDetailSheet';
 import { QuickAddSheet } from '../components/sheets/QuickAddSheet';
+import { DinnerEditorSheet } from '../components/sheets/DinnerEditorSheet';
 import { dayKey } from '../core/util/time';
 import { VirtualKeyboard } from '../components/keyboard/VirtualKeyboard';
 
@@ -35,7 +37,9 @@ export function WallLayout() {
   const dinners = dinnersQ.data ?? [];
 
   const [detailDate, setDetailDate] = useState<string | null>(null);
-  const [quickAddOpen, setQuickAddOpen] = useState(false);
+  const [chooserOpen, setChooserOpen] = useState(false);
+  const [quickAddCategoryId, setQuickAddCategoryId] = useState<string | null>(null);
+  const [dinnerEditorOpen, setDinnerEditorOpen] = useState(false);
 
   // Wall staleness = the worse of events + dinners (events is the primary data).
   const oldest = Math.min(eventsQ.dataUpdatedAt || Infinity, dinnersQ.dataUpdatedAt || Infinity);
@@ -49,17 +53,33 @@ export function WallLayout() {
   const goToday = () => setAnchor(now.startOf('day'));
   const isToday = anchor.hasSame(now, 'day') && (view !== 'month' || anchor.hasSame(now, 'month'));
 
-  // Return to the default glance (Agenda + today) and dismiss sheets after inactivity,
-  // so the wall is never left stuck on a paged-away view someone walked away from.
+  const dismissAll = () => {
+    setChooserOpen(false);
+    setQuickAddCategoryId(null);
+    setDinnerEditorOpen(false);
+    setDetailDate(null);
+  };
+
   useIdleReset(90_000, () => {
     setView('agenda');
     setAnchor(now.startOf('day'));
-    setDetailDate(null);
-    setQuickAddOpen(false);
+    dismissAll();
   });
 
-  const onTap = (occ: EventOccurrence) => setDetailDate(dayKey(occ.start));
+  const openDetail = (date: string) => {
+    dismissAll();
+    setDetailDate(date);
+  };
+  const openChooser = () => {
+    dismissAll();
+    setChooserOpen(true);
+  };
+
+  const onTap = (occ: EventOccurrence) => openDetail(dayKey(occ.start));
   const detailDinner = detailDate ? dinners.find((d) => d.date === detailDate)?.meal : undefined;
+
+  const todayStr = toInputDate(nowBne().toUTC().toISO()!);
+  const todayMeal = dinners.find((d) => d.date === todayStr)?.meal ?? '';
 
   return (
     <div className="flex flex-col h-full overflow-hidden" style={{ filter: 'brightness(var(--kiosk-brightness))' }}>
@@ -91,7 +111,21 @@ export function WallLayout() {
         onToday={goToday}
         isToday={isToday}
         categories={categoriesQ.data ?? []}
-        onQuickAdd={() => setQuickAddOpen(true)}
+        onQuickAdd={openChooser}
+      />
+
+      <AddChooser
+        open={chooserOpen}
+        onClose={() => setChooserOpen(false)}
+        categories={categoriesQ.data ?? []}
+        onCategory={(id) => {
+          dismissAll();
+          setQuickAddCategoryId(id);
+        }}
+        onDinner={() => {
+          dismissAll();
+          setDinnerEditorOpen(true);
+        }}
       />
 
       <DayDetailSheet
@@ -102,7 +136,21 @@ export function WallLayout() {
         categories={cats}
         dinner={detailDinner}
       />
-      <QuickAddSheet open={quickAddOpen} onClose={() => setQuickAddOpen(false)} categories={categoriesQ.data ?? []} />
+
+      <QuickAddSheet
+        open={quickAddCategoryId !== null}
+        onClose={() => setQuickAddCategoryId(null)}
+        categories={categoriesQ.data ?? []}
+        defaultCategoryId={quickAddCategoryId ?? undefined}
+      />
+
+      <DinnerEditorSheet
+        open={dinnerEditorOpen}
+        onClose={() => setDinnerEditorOpen(false)}
+        date={todayStr}
+        currentMeal={todayMeal}
+      />
+
       <VirtualKeyboard />
     </div>
   );
