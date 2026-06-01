@@ -17,6 +17,10 @@ export const config = {
   // Empty string disables static serving (e.g. when running API standalone in dev).
   staticDir: process.env.STATIC_DIR ?? '',
 
+  // Photo storage — flat directory of UUIDv7-named JPEGs inside dataDir.
+  photosDir: path.join(process.env.DATA_DIR ?? path.resolve(process.cwd(), 'data'), 'photos'),
+  maxPhotoCount: Number(process.env.MAX_PHOTO_COUNT ?? 500),
+
   timezone: 'Australia/Brisbane',
 } as const;
 
