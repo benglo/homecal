@@ -45,6 +45,13 @@ Running log of work per session. Newest first. Pair with `git log` for exact dif
 - **Upload** — native file picker (multiple, accept JPEG/PNG/WebP/HEIC). XHR with per-file progress bar.
 - **Delete** — tap thumbnail → preview overlay → Delete button (two-tap protection).
 
+#### Remote kiosk shutdown
+- **`POST /api/kiosk/shutdown`** — server proxies to a tiny socat-based HTTP listener on the Pi
+  (port 8788). Requires `KIOSK_HOST` env var. Returns 503 if not configured, 502 if Pi unreachable.
+- **Pi service** — `kiosk/shutdown-service.sh` + `homecal-shutdown.service` systemd unit. Listens
+  for `POST /shutdown`, responds 200, then runs `sudo shutdown -h +0`.
+- **Phone UI** — "Shutdown display" button at bottom of Manage tab with confirmation step.
+
 ### Design process
 - 3-persona review (UX/kiosk, backend/infra, security) of the screensaver spec before implementation.
 - Key findings addressed: GPU compositing hints, clock sizing for 1-2m viewing, portrait photo handling,
@@ -59,7 +66,7 @@ Running log of work per session. Newest first. Pair with `git log` for exact dif
 
 ### Files changed
 - `backend/package.json` — added `sharp`, `@fastify/multipart@8`, `@types/sharp`
-- `backend/src/config.ts` — added `photosDir`, `maxPhotoCount`
+- `backend/src/config.ts` — added `photosDir`, `maxPhotoCount`, `kioskHost`, `kioskPort`
 - `backend/src/photos.ts` — new: storage module (init, list, save, softDelete, purgeTrash, photoPath)
 - `backend/src/routes/photos.ts` — new: photo API routes
 - `backend/src/routes/photos.test.ts` — new: 18 tests
@@ -75,7 +82,11 @@ Running log of work per session. Newest first. Pair with `git log` for exact dif
 - `frontend/src/components/manage/PhotoManager.tsx` — new: phone photo manager
 - `frontend/src/components/controls/ControlBar.tsx` — redesigned: centered period label
 - `frontend/src/layouts/WallLayout.tsx` — mounted Screensaver, passed anchor to ControlBar
-- `frontend/src/layouts/PhoneLayout.tsx` — added PhotoManager to Manage tab
+- `frontend/src/components/manage/KioskShutdown.tsx` — new: shutdown button with confirmation
+- `frontend/src/layouts/PhoneLayout.tsx` — added PhotoManager + KioskShutdown to Manage tab
+- `backend/src/routes/kiosk.ts` — new: kiosk shutdown proxy route
+- `kiosk/shutdown-service.sh` — new: Pi-side socat HTTP listener
+- `kiosk/homecal-shutdown.service` — new: systemd unit for the shutdown listener
 
 ### Verify
 ```bash
