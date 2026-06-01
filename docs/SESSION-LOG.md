@@ -4,6 +4,44 @@ Running log of work per session. Newest first. Pair with `git log` for exact dif
 
 ---
 
+## 2026-06-01 (cont.) — M4 post-deploy fixes + kiosk tuning
+
+### Code review fixes (from high-effort 7-angle review)
+- **SW undefined fallback** — API/static handlers now return a 503 Response on cache-miss +
+  network-failure instead of undefined (TypeError).
+- **SW fire-and-forget cache write** — navigation cache write wrapped in `event.waitUntil()`.
+- **Backup concurrency guard** — 409 `BACKUP_IN_PROGRESS` prevents concurrent `VACUUM INTO`.
+- **Dev buildId** — defaults to `'dev'` instead of `Date.now()` to avoid stale cache accumulation.
+- **`__BUILD_ID__` declare** — moved from inline in main.tsx to `vite-env.d.ts`.
+
+### Sheet focus steal fix
+- `Sheet.tsx` effect depended on `[open, onClose]` — since `onClose` was a new arrow each render
+  (from SSE-triggered re-renders in WallLayout), the effect re-fired and yanked focus from inputs
+  to the panel div after ~2-3s. Fixed with a stable ref pattern (`onCloseRef` + `useCallback`).
+
+### Kiosk deployment
+- Pi autostart: `~/.config/labwc/autostart` with Chromium Wayland kiosk flags pointed at
+  `http://192.168.1.94:8787/?mode=wall`.
+- **Remote debugging:** `--remote-debugging-port=9222` on Chromium (binds localhost only on
+  Bookworm); `socat` on port 9223 forwards from LAN. Reload script at `kiosk/reload.sh`.
+- **On-screen keyboard:** Wayland virtual keyboard (wvkbd/squeekboard) failed to trigger from
+  Chromium kiosk. Solved with `react-simple-keyboard` — JS keyboard portaled to `document.body`
+  (z-index 200, above Sheet portal at z-50), wall-only (mounted in `WallLayout`, not phone).
+  Activates on text/search input focus, ignores date/time/checkbox. `useIsWall` hook extracted
+  from `ModeRouter` for shared wall-mode detection.
+
+### Deploy docs updated
+- Remote debugging section with `socat` workaround and reload one-liner.
+- `kiosk/launch.sh` updated with `--remote-debugging-port=9222`.
+
+### Pi details (for reference)
+- Pi IP: `192.168.1.135`, server IP: `192.168.1.94`
+- Pi user: `hbadmin`, hostname: `homebuddy`
+- Chromium 142.0.7444.175, labwc 0.9.2, Bookworm (trixie)
+- `socat` required (`sudo apt install socat`) for LAN debug access
+
+---
+
 ## 2026-06-01 — M4: deploy + kiosk + backup
 
 ### What was built

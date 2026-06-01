@@ -38,4 +38,5 @@ exec chromium-browser \
   --hide-scrollbars \
   --autoplay-policy=no-user-gesture-required \
   --check-for-update-interval=31536000 \
-  --disable-features=Translate
+  --disable-features=Translate \
+  --remote-debugging-port=9222

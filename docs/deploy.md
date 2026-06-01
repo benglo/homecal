@@ -110,6 +110,26 @@ Add to `~/.config/labwc/autostart`:
 ~/launch.sh &
 ```
 
+### Remote debugging (recommended)
+
+Add `--remote-debugging-port=9222` to the Chromium flags in your autostart.
+This lets you reload, inspect, and screenshot the wall from any device on the
+LAN without rebooting the Pi.
+
+**Force a reload from the server:**
+
+```bash
+# One-liner: reload the active tab
+curl -X POST "http://<pi-ip>:9222/json/reload/$(curl -s http://<pi-ip>:9222/json | python3 -c 'import sys,json;print(json.load(sys.stdin)[0]["id"])')"
+```
+
+**Take a screenshot:**
+
+```bash
+# Requires websocat or a CDP client; simplest via browser at:
+# http://<pi-ip>:9222
+```
+
 ### Disable screen blanking
 
 ```bash

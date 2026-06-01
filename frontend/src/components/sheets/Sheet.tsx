@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
@@ -16,22 +16,25 @@ interface Props {
  *  preserves the background context underneath (it stays visible, dimmed). */
 export function Sheet({ open, onClose, title, actions, children }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  const stableClose = useCallback(() => onCloseRef.current(), []);
 
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') stableClose();
     };
     document.addEventListener('keydown', onKey);
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    // Move focus into the sheet for keyboard/screen-reader users.
     panelRef.current?.focus();
     return () => {
       document.removeEventListener('keydown', onKey);
       document.body.style.overflow = prevOverflow;
     };
-  }, [open, onClose]);
+  }, [open, stableClose]);
 
   if (!open) return null;
 
@@ -40,7 +43,7 @@ export function Sheet({ open, onClose, title, actions, children }: Props) {
       className="fixed inset-0 z-50 flex flex-col justify-end"
       style={{ background: 'rgba(12,10,9,0.45)' }}
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget) stableClose();
       }}
     >
       <div

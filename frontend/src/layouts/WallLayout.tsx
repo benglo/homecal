@@ -13,6 +13,7 @@ import { ControlBar } from '../components/controls/ControlBar';
 import { DayDetailSheet } from '../components/sheets/DayDetailSheet';
 import { QuickAddSheet } from '../components/sheets/QuickAddSheet';
 import { dayKey } from '../core/util/time';
+import { VirtualKeyboard } from '../components/keyboard/VirtualKeyboard';
 
 /** The wall: hero band (200) · calendar surface (flex) · control bar (72). */
 export function WallLayout() {
@@ -102,6 +103,7 @@ export function WallLayout() {
         dinner={detailDinner}
       />
       <QuickAddSheet open={quickAddOpen} onClose={() => setQuickAddOpen(false)} categories={categoriesQ.data ?? []} />
+      <VirtualKeyboard />
     </div>
   );
 }
