@@ -25,10 +25,9 @@ const SHARP_PIXEL_LIMIT = 100_000_000; // 100 MP
 // ---------------------------------------------------------------------------
 
 export interface PhotoMeta {
+  id: string;
   filename: string;
-  width: number;
-  height: number;
-  sizeBytes: number;
+  url: string;
   createdAt: string; // ISO-8601
 }
 
@@ -60,13 +59,11 @@ export function listPhotos(photosDir: string): PhotoMeta[] {
 
   return entries
     .map((filename) => {
-      const stat = fs.statSync(path.join(photosDir, filename));
       const id = filename.replace('.jpg', '');
       return {
+        id,
         filename,
-        width: 0, // not stored — cheap listing; full metadata only on save
-        height: 0,
-        sizeBytes: stat.size,
+        url: `/api/photos/${filename}`,
         createdAt: uuidv7ToDate(id).toISOString(),
       };
     })
@@ -116,19 +113,16 @@ export async function savePhoto(
     .jpeg({ quality: JPEG_QUALITY })
     .timeout({ seconds: SHARP_TIMEOUT / 1000 });
 
-  const outputBuffer = await pipeline.toBuffer({ resolveWithObject: true });
-
   const id = newId();
   const filename = `${id}.jpg`;
   const dest = path.join(photosDir, filename);
 
-  fs.writeFileSync(dest, outputBuffer.data);
+  await pipeline.toFile(dest);
 
   return {
+    id,
     filename,
-    width: outputBuffer.info.width,
-    height: outputBuffer.info.height,
-    sizeBytes: outputBuffer.data.length,
+    url: `/api/photos/${filename}`,
     createdAt: uuidv7ToDate(id).toISOString(),
   };
 }

@@ -6,6 +6,7 @@ import type {
   EventMaster,
   EventOccurrence,
   EventUpdateInput,
+  Photo,
 } from '../model/types';
 
 /** Carries the server's error envelope so the UI can branch on `code`
@@ -86,4 +87,10 @@ export const api = {
   deleteCategory: (id: string) => send<void>('DELETE', `/api/categories/${id}`),
   reassignCategory: (id: string, toId: string) =>
     send<{ moved: number }>('POST', `/api/categories/${id}/reassign`, { toId }),
+
+  // photo reads
+  photos: () => get<{ data: Photo[] }>('/api/photos').then((r) => r.data),
+
+  // photo writes
+  deletePhoto: (id: string) => send<void>('DELETE', `/api/photos/${id}`),
 };

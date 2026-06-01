@@ -11,10 +11,16 @@ import { dinnerRoutes } from './routes/dinners';
 import { streamRoutes, drainSSE } from './routes/stream';
 import { backupRoutes } from './routes/backup';
 import { feedRoutes } from './routes/feed';
+import { photoRoutes } from './routes/photos';
+import { initPhotos, purgeTrash } from './photos';
 
 async function main(): Promise<void> {
   // Open DB + run migrations before serving any traffic.
   getDb();
+
+  // Ensure photo directories exist and purge stale trash.
+  initPhotos(config.photosDir);
+  purgeTrash(path.join(config.photosDir, '.trash'), 7);
 
   const app = Fastify({
     logger: { level: process.env.LOG_LEVEL ?? (process.env.NODE_ENV === 'production' ? 'warn' : 'info') },
@@ -50,6 +56,7 @@ async function main(): Promise<void> {
   await app.register(streamRoutes);
   await app.register(backupRoutes);
   await app.register(feedRoutes);
+  await app.register(photoRoutes);
 
   // Serve the built frontend from the same origin (no CORS). Optional in dev.
   if (config.staticDir && fs.existsSync(config.staticDir)) {

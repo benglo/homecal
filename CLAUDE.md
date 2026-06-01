@@ -79,6 +79,17 @@ docker compose up -d --build             # the supported deploy path
   Pi kiosk (labwc/Wayland, two-layer auto-retry), chaos test steps.
 - **Build on target arch** — documented in deploy guide; `.dockerignore` excludes host `node_modules`.
 
+### v2 partial: Photo screensaver
+- **Photo upload/manage/serve API** — `POST /api/photos` (multipart → sharp resize to 1920px, JPEG q80),
+  `GET /api/photos` (filesystem listing, newest-first), `DELETE /api/photos/:id` (soft-delete to `.trash/`),
+  `GET /api/photos/:filename` (serve with immutable cache headers + nosniff).
+- **Screensaver** — wall overlay activates after 5 min idle. Dual-buffer Ken Burns crossfade (10s per photo,
+  1.5s fade), Fisher-Yates shuffle, gradient scrim + clock overlay. Touch to dismiss.
+- **Phone PhotoManager** — Manage tab section with 3-column grid, XHR upload with progress, tap-to-preview
+  + delete. Accepts JPEG/PNG/WebP/HEIC, max 500 photos (configurable via `MAX_PHOTO_COUNT`).
+- **Dependencies:** `sharp` (backend, ARM prebuilt), `@fastify/multipart@8` (Fastify 4.x compatible).
+- Backend 48/48 tests (18 new photo tests), frontend 19/19 tests (4 new shuffle tests).
+
 ### v2 partial: iCal feed
 - **`GET /api/feed.ics`** — read-only iCalendar subscription feed. Returns all events (with native
   RRULE + EXDATE for cancelled exceptions) and dinners as all-day VEVENTs. Phones subscribe to

@@ -13,6 +13,7 @@ import { TabBar, type PhoneTab } from '../components/controls/TabBar';
 import { Fab } from '../components/controls/Fab';
 import { CategoryManager } from '../components/manage/CategoryManager';
 import { DinnerWeekEditor } from '../components/manage/DinnerWeekEditor';
+import { PhotoManager } from '../components/manage/PhotoManager';
 import { EventEditorSheet } from '../components/sheets/EventEditorSheet';
 import { CategoryEditorSheet } from '../components/sheets/CategoryEditorSheet';
 import { DinnerEditorSheet } from '../components/sheets/DinnerEditorSheet';
@@ -105,6 +106,7 @@ export function PhoneLayout() {
               onTapDay={(date, meal) => setDinnerTarget({ date, meal })}
             />
             <CategoryManager categories={categories} onEdit={(cat) => setCategoryTarget({ cat })} />
+            <PhotoManager />
           </div>
         )}
       </main>

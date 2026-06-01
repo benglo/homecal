@@ -68,3 +68,10 @@ export interface Dinner {
 }
 
 export type WallView = 'agenda' | 'week' | 'month';
+
+export interface Photo {
+  id: string;
+  filename: string;
+  url: string;
+  createdAt: string;
+}

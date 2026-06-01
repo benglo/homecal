@@ -4,7 +4,9 @@ import type { EventOccurrence, WallView } from '../core/model/types';
 import { useClock } from '../core/hooks/useClock';
 import { useWallTheme } from '../core/hooks/useTheme';
 import { useIdleReset } from '../core/hooks/useIdleReset';
-import { useCategories, useDinners, useEvents, byId } from '../core/hooks/useData';
+import { useCategories, useDinners, useEvents, usePhotos, byId } from '../core/hooks/useData';
+import { useScreensaver } from '../components/screensaver/useScreensaver';
+import { Screensaver } from '../components/screensaver/Screensaver';
 import { eventWindow, weekDates, nowBne, toInputDate } from '../core/util/time';
 import { HeroBand } from '../components/hero/HeroBand';
 import { AgendaView } from '../components/calendar/AgendaView';
@@ -31,6 +33,9 @@ export function WallLayout() {
   const categoriesQ = useCategories();
   const eventsQ = useEvents(win.startIso, win.endIso);
   const dinnersQ = useDinners(week.start, week.end);
+
+  const photosQ = usePhotos();
+  const screensaver = useScreensaver(photosQ.data);
 
   const cats = byId(categoriesQ.data);
   const occurrences = eventsQ.data ?? [];
@@ -105,12 +110,12 @@ export function WallLayout() {
 
       <ControlBar
         view={view}
+        anchor={anchor}
         onView={setView}
         onPrev={() => step(-1)}
         onNext={() => step(1)}
         onToday={goToday}
         isToday={isToday}
-        categories={categoriesQ.data ?? []}
         onQuickAdd={openChooser}
       />
 
@@ -152,6 +157,16 @@ export function WallLayout() {
       />
 
       <VirtualKeyboard />
+
+      {screensaver.active && screensaver.queue.length > 0 && (
+        <Screensaver
+          queue={screensaver.queue}
+          index={screensaver.index}
+          advance={screensaver.advance}
+          skipPhoto={screensaver.skipPhoto}
+          dismiss={screensaver.dismiss}
+        />
+      )}
     </div>
   );
 }

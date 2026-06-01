@@ -1,6 +1,6 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
-import type { Category, Dinner, EventMaster, EventOccurrence } from '../model/types';
+import type { Category, Dinner, EventMaster, EventOccurrence, Photo } from '../model/types';
 
 export function useCategories() {
   return useQuery({
@@ -33,6 +33,14 @@ export function useDinners(start: string, end: string) {
     queryKey: ['dinners', start, end],
     queryFn: () => api.dinners(start, end),
     placeholderData: keepPreviousData,
+  });
+}
+
+export function usePhotos() {
+  return useQuery<Photo[]>({
+    queryKey: ['photos'],
+    queryFn: api.photos,
+    staleTime: 5 * 60_000,
   });
 }
 

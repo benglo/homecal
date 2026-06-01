@@ -4,6 +4,98 @@ Running log of work per session. Newest first. Pair with `git log` for exact dif
 
 ---
 
+## 2026-06-01 (cont.) — v2: Photo screensaver + ControlBar redesign
+
+### What was built
+
+#### ControlBar redesign
+- **Centered period label** — `‹ Jun 1 – 10 ›` between circular nav buttons (was static "Today" label).
+  Adapts to view: "Jun 1 – 10" (agenda), "Jun 1 – 7" (week), "June 2026" (month).
+  Handles cross-month ranges ("May 26 – Jun 1").
+- View switcher pill left, Today chip + FAB right. Category legend removed.
+
+#### Photo screensaver backend
+- **`POST /api/photos`** — multipart upload via `@fastify/multipart`. `sharp` resizes to max 1920px
+  long edge, strips EXIF, converts to JPEG q80. `sequentialRead`, 100MP pixel limit, 10s timeout.
+  Accepts JPEG/PNG/WebP/HEIC only. 500 photo cap (configurable via `MAX_PHOTO_COUNT`).
+- **`GET /api/photos`** — filesystem listing (no DB table), newest-first via UUIDv7 sort.
+  Returns `{ data: [{ id, filename, url, createdAt }] }`.
+- **`DELETE /api/photos/:id`** — soft-delete to `DATA_DIR/photos/.trash/`. Auto-purge after 7 days
+  on server startup.
+- **`GET /api/photos/:filename`** — serves resized JPEG. Strict UUIDv7 regex + path traversal guard.
+  Headers: `image/jpeg`, `nosniff`, `immutable` cache.
+- **Security:** FILENAME_RE validation, `startsWith` path check, format validation via `sharp.metadata()`,
+  original buffer never written to disk.
+
+#### Photo screensaver frontend (wall)
+- **5-minute idle timer** — independent of the 90s idle reset. Resets on `pointerdown`/`touchstart` only.
+- **Dual-buffer Ken Burns slideshow** — two `<img>` elements with GPU-composited `scale3d`/`translate3d`.
+  10s per photo (20s for ≤3, 30s for 1), 1.5s crossfade. Outgoing buffer frozen during transition.
+- **Portrait-aware** — detects via `naturalWidth`/`naturalHeight`, reduces pan range.
+- **Fisher-Yates shuffle** — no repeats until exhausted, then reshuffle. List refreshed from API each
+  activation. Broken images skipped via `skipPhoto()` (removed from queue). 8s load timeout.
+- **Clock overlay** — bottom-left, 48px time (weight 300), 16px date (uppercase), tabular-nums.
+  Gradient scrim (25%, rgba(0,0,0,0.55)) + text-shadow safety net.
+- **Reduced motion** — `prefers-reduced-motion: reduce` disables Ken Burns, keeps simple crossfade.
+- **Dismiss** — any touch fades out (300ms), re-arms timer, invalidates TanStack Query cache.
+
+#### Photo manager (phone)
+- **Manage tab section** — below Categories. Header with count badge ("5 photos · max 500").
+- **3-column square grid** — thumbnails with `object-fit: cover`, lazy loading.
+- **Upload** — native file picker (multiple, accept JPEG/PNG/WebP/HEIC). XHR with per-file progress bar.
+- **Delete** — tap thumbnail → preview overlay → Delete button (two-tap protection).
+
+### Design process
+- 3-persona review (UX/kiosk, backend/infra, security) of the screensaver spec before implementation.
+- Key findings addressed: GPU compositing hints, clock sizing for 1-2m viewing, portrait photo handling,
+  `@fastify/multipart` streaming, strict filename regex, soft-delete for recovery, photo count cap,
+  format restriction (no SVG/TIFF/GIF).
+
+### Tests
+- 18 new backend tests in `photos.test.ts`: initPhotos, FILENAME_RE, savePhoto (write/convert/cap/resize),
+  listPhotos (sort/exclude), softDelete (move/idempotent), purgeTrash, photoPath (valid/traversal/invalid).
+- 4 new frontend tests: Fisher-Yates shuffle (completeness, immutability, single, empty).
+- Backend 48/48, frontend 19/19, build clean.
+
+### Files changed
+- `backend/package.json` — added `sharp`, `@fastify/multipart@8`, `@types/sharp`
+- `backend/src/config.ts` — added `photosDir`, `maxPhotoCount`
+- `backend/src/photos.ts` — new: storage module (init, list, save, softDelete, purgeTrash, photoPath)
+- `backend/src/routes/photos.ts` — new: photo API routes
+- `backend/src/routes/photos.test.ts` — new: 18 tests
+- `backend/src/server.ts` — registered photoRoutes, initPhotos, purgeTrash at startup
+- `backend/src/realtime.ts` — added 'photos' to PokeKind
+- `frontend/src/core/model/types.ts` — added Photo type
+- `frontend/src/core/api/client.ts` — added photos/deletePhoto to api object
+- `frontend/src/core/hooks/useData.ts` — added usePhotos() hook
+- `frontend/src/core/hooks/useMutations.ts` — added usePhotoMutations() hook
+- `frontend/src/components/screensaver/useScreensaver.ts` — new: idle timer + shuffle hook
+- `frontend/src/components/screensaver/Screensaver.tsx` — new: Ken Burns slideshow component
+- `frontend/src/components/screensaver/useScreensaver.test.ts` — new: 4 shuffle tests
+- `frontend/src/components/manage/PhotoManager.tsx` — new: phone photo manager
+- `frontend/src/components/controls/ControlBar.tsx` — redesigned: centered period label
+- `frontend/src/layouts/WallLayout.tsx` — mounted Screensaver, passed anchor to ControlBar
+- `frontend/src/layouts/PhoneLayout.tsx` — added PhotoManager to Manage tab
+
+### Verify
+```bash
+npm --workspace backend test          # 48/48
+npm --workspace frontend test         # 19/19
+npm run build                         # clean
+rm -rf /tmp/d && DATA_DIR=/tmp/d STATIC_DIR=frontend/dist PORT=8799 node backend/dist/server.js &
+sleep 2
+# Upload
+node -e "require('sharp')({create:{width:800,height:600,channels:3,background:{r:200,g:50,b:50}}}).jpeg().toFile('/tmp/test.jpg')"
+curl -s -X POST -F "file=@/tmp/test.jpg" localhost:8799/api/photos | jq .
+curl -s localhost:8799/api/photos | jq '.data | length'  # 1
+curl -sI localhost:8799/api/photos/$(curl -s localhost:8799/api/photos | jq -r '.data[0].filename') | grep content-type
+kill %1
+# Wall screensaver: open ?mode=wall, wait 5 min (or temporarily set IDLE_MS=10000), touch to dismiss
+# Phone: open /, tap Manage tab, upload/delete photos
+```
+
+---
+
 ## 2026-06-01 (cont.) — v2: iCal subscription feed
 
 ### What was built

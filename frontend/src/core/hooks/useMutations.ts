@@ -151,3 +151,15 @@ export function useCategoryMutations() {
 
   return { create, update, remove, reassign };
 }
+
+export function usePhotoMutations() {
+  const qc = useQueryClient();
+  const settle = () => void qc.invalidateQueries({ queryKey: ['photos'] });
+
+  const remove = useMutation({
+    mutationFn: (id: string) => api.deletePhoto(id),
+    onSettled: settle,
+  });
+
+  return { remove };
+}

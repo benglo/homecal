@@ -91,10 +91,9 @@ test('savePhoto writes a JPEG and returns metadata', async () => {
   const buf = await tinyJpeg();
   const meta = await savePhoto(photosDir, buf, 500);
 
+  assert.ok(meta.id);
   assert.ok(FILENAME_RE.test(meta.filename));
-  assert.ok(meta.width > 0);
-  assert.ok(meta.height > 0);
-  assert.ok(meta.sizeBytes > 0);
+  assert.ok(meta.url.startsWith('/api/photos/'));
   assert.ok(typeof meta.createdAt === 'string');
   assert.ok(fs.existsSync(path.join(photosDir, meta.filename)));
 });
@@ -139,11 +138,12 @@ test('savePhoto resizes large images to max 1920px long edge', async () => {
     .toBuffer();
 
   const meta = await savePhoto(photosDir, buf, 500);
-  assert.ok(meta.width <= 1920);
-  assert.ok(meta.height <= 1920);
-  // aspect ratio preserved: 3000:2000 → 1920:1280
-  assert.equal(meta.width, 1920);
-  assert.equal(meta.height, 1280);
+  // Verify the file on disk was resized
+  const info = await sharp(path.join(photosDir, meta.filename)).metadata();
+  assert.ok(info.width! <= 1920);
+  assert.ok(info.height! <= 1920);
+  assert.equal(info.width, 1920);
+  assert.equal(info.height, 1280);
 });
 
 // ---------------------------------------------------------------------------
