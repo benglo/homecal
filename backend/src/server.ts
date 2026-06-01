@@ -12,6 +12,7 @@ import { streamRoutes, drainSSE } from './routes/stream';
 import { backupRoutes } from './routes/backup';
 import { feedRoutes } from './routes/feed';
 import { photoRoutes } from './routes/photos';
+import { kioskRoutes } from './routes/kiosk';
 import { initPhotos, purgeTrash } from './photos';
 
 async function main(): Promise<void> {
@@ -57,6 +58,7 @@ async function main(): Promise<void> {
   await app.register(backupRoutes);
   await app.register(feedRoutes);
   await app.register(photoRoutes);
+  await app.register(kioskRoutes);
 
   // Serve the built frontend from the same origin (no CORS). Optional in dev.
   if (config.staticDir && fs.existsSync(config.staticDir)) {

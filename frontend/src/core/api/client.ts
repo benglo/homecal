@@ -93,4 +93,7 @@ export const api = {
 
   // photo writes
   deletePhoto: (id: string) => send<void>('DELETE', `/api/photos/${id}`),
+
+  // kiosk
+  shutdownKiosk: () => send<{ ok: boolean; message: string }>('POST', '/api/kiosk/shutdown'),
 };

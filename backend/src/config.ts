@@ -21,6 +21,11 @@ export const config = {
   photosDir: path.join(process.env.DATA_DIR ?? path.resolve(process.cwd(), 'data'), 'photos'),
   maxPhotoCount: Number(process.env.MAX_PHOTO_COUNT ?? 500),
 
+  // Kiosk Pi — set to enable remote shutdown from the phone app.
+  // The Pi runs a tiny HTTP listener (kiosk/shutdown-service.sh) on this port.
+  kioskHost: process.env.KIOSK_HOST ?? '',
+  kioskPort: Number(process.env.KIOSK_PORT ?? 8788),
+
   timezone: 'Australia/Brisbane',
 } as const;
 

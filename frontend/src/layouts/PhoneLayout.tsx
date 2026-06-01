@@ -17,6 +17,7 @@ import { PhotoManager } from '../components/manage/PhotoManager';
 import { EventEditorSheet } from '../components/sheets/EventEditorSheet';
 import { CategoryEditorSheet } from '../components/sheets/CategoryEditorSheet';
 import { DinnerEditorSheet } from '../components/sheets/DinnerEditorSheet';
+import { KioskShutdown } from '../components/manage/KioskShutdown';
 
 /** Edit-heavy phone surface: Agenda · Week · Manage tabs, Fab create, OS day/night. */
 export function PhoneLayout() {
@@ -107,6 +108,7 @@ export function PhoneLayout() {
             />
             <CategoryManager categories={categories} onEdit={(cat) => setCategoryTarget({ cat })} />
             <PhotoManager />
+            <KioskShutdown />
           </div>
         )}
       </main>
