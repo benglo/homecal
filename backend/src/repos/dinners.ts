@@ -31,3 +31,9 @@ export function deleteDinner(date: string): void {
   const info = getDb().prepare('DELETE FROM dinners WHERE date = ?').run(date);
   if (info.changes === 0) throw httpError(404, 'NOT_FOUND', 'No dinner set for that date');
 }
+
+export function listAllDinners(): Dinner[] {
+  return (
+    getDb().prepare('SELECT * FROM dinners ORDER BY date').all() as Row[]
+  ).map(toDinner);
+}

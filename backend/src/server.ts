@@ -10,6 +10,7 @@ import { eventRoutes } from './routes/events';
 import { dinnerRoutes } from './routes/dinners';
 import { streamRoutes, drainSSE } from './routes/stream';
 import { backupRoutes } from './routes/backup';
+import { feedRoutes } from './routes/feed';
 
 async function main(): Promise<void> {
   // Open DB + run migrations before serving any traffic.
@@ -48,6 +49,7 @@ async function main(): Promise<void> {
   await app.register(dinnerRoutes);
   await app.register(streamRoutes);
   await app.register(backupRoutes);
+  await app.register(feedRoutes);
 
   // Serve the built frontend from the same origin (no CORS). Optional in dev.
   if (config.staticDir && fs.existsSync(config.staticDir)) {

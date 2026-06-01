@@ -79,6 +79,14 @@ docker compose up -d --build             # the supported deploy path
   Pi kiosk (labwc/Wayland, two-layer auto-retry), chaos test steps.
 - **Build on target arch** — documented in deploy guide; `.dockerignore` excludes host `node_modules`.
 
+### v2 partial: iCal feed
+- **`GET /api/feed.ics`** — read-only iCalendar subscription feed. Returns all events (with native
+  RRULE + EXDATE for cancelled exceptions) and dinners as all-day VEVENTs. Phones subscribe to
+  `http://server:port/api/feed.ics` to get native calendar notifications.
+- Uses `ical-generator` (CJS-compatible). `buildFeed()` is a pure function tested with 11 unit tests.
+- RRULE+EXDATE uses the raw-string path: EXDATE lines appended to the RRULE string, passed through
+  verbatim by the library. VALUE=DATE for all-day, UTC datetime for timed events.
+
 ### M3 notes
 - **Realtime:** in-process `broker` (`backend/src/realtime.ts`) + `GET /api/stream` SSE; every
   event/dinner/category mutation `poke()`s. Client `useRealtime` invalidates the matching query family;

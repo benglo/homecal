@@ -4,6 +4,54 @@ Running log of work per session. Newest first. Pair with `git log` for exact dif
 
 ---
 
+## 2026-06-01 (cont.) — v2: iCal subscription feed
+
+### What was built
+- **`GET /api/feed.ics`** — read-only iCalendar (RFC 5545) subscription feed. Phones on the LAN
+  subscribe to this URL to get native calendar notifications without an account.
+- **Events → VEVENTs** with native RRULE + EXDATE (not pre-expanded). UID `{id}@homecal`, CATEGORIES
+  from category name, LOCATION when present, LAST-MODIFIED from updatedAt.
+- **Dinners → all-day VEVENTs** with `Dinner: {meal}` summary, UID `dinner-{date}@homecal`.
+- **RRULE+EXDATE** via ical-generator's raw-string path: EXDATE lines appended to the RRULE string.
+  VALUE=DATE for all-day events, UTC datetime for timed events.
+- **Per-event try/catch** — one bad record never breaks the whole feed.
+- **Calendar envelope:** PRODID `-//homecal//EN`, METHOD PUBLISH, CALSCALE GREGORIAN,
+  X-WR-TIMEZONE Australia/Brisbane.
+- **Headers:** `text/calendar; charset=utf-8`, `Content-Disposition: inline`, `Cache-Control: no-cache`.
+- New dependency: `ical-generator` (backend only, CJS-compatible via exports map).
+
+### Design process
+- 3-persona review (iCal standards, security, backend engineer) before implementation.
+- Key findings addressed: DTSTAMP = generation time (not updatedAt), EXDATE VALUE=DATE branching,
+  CALSCALE:GREGORIAN, CRLF injection test, per-event resilience, flat queries (no N+1).
+
+### Tests
+- 11 new tests in `feed.test.ts`: empty calendar, timed event, all-day, RRULE, EXDATE (timed + all-day),
+  dinner, CRLF injection, bad RRULE resilience, metadata, LAST-MODIFIED.
+- Backend 30/30 (19 existing + 11 new), frontend 15/15, build clean.
+
+### Files changed
+- `backend/package.json` — added `ical-generator`
+- `backend/src/repos/events.ts` — added `listAllMasters()`, `listAllCancelledExceptions()`
+- `backend/src/repos/dinners.ts` — added `listAllDinners()`
+- `backend/src/routes/feed.ts` — new: buildFeed() pure function + feedRoutes plugin
+- `backend/src/routes/feed.test.ts` — new: 11 tests
+- `backend/src/server.ts` — registered feedRoutes
+
+### Verify
+```bash
+npm --workspace backend test          # 30/30
+npm --workspace frontend test         # 15/15
+npm run build                         # clean
+rm -rf /tmp/d && DATA_DIR=/tmp/d STATIC_DIR=frontend/dist PORT=8795 node backend/dist/server.js &
+curl -s localhost:8795/api/feed.ics   # valid VCALENDAR
+curl -sI localhost:8795/api/feed.ics | grep content-type  # text/calendar
+kill %1
+# Subscribe on phone: Settings → Calendar → Add Account → Other → URL: http://server:port/api/feed.ics
+```
+
+---
+
 ## 2026-06-01 (cont.) — Kiosk UX overhaul: keyboard, FAB flow, modals
 
 ### Virtual keyboard improvements

@@ -86,6 +86,23 @@ export function listOccurrences(startIso: string, endIso: string): EventOccurren
   return out;
 }
 
+export function listAllMasters(): EventMaster[] {
+  return (getDb().prepare('SELECT * FROM events ORDER BY start').all() as MasterRow[]).map(toMaster);
+}
+
+export interface CancelledEx {
+  eventId: string;
+  occurrenceDate: string;
+}
+
+export function listAllCancelledExceptions(): CancelledEx[] {
+  return (
+    getDb()
+      .prepare("SELECT event_id, occurrence_date FROM event_exceptions WHERE kind = 'cancelled'")
+      .all() as Array<{ event_id: string; occurrence_date: string }>
+  ).map((r) => ({ eventId: r.event_id, occurrenceDate: r.occurrence_date }));
+}
+
 export function createEvent(input: EventCreate): EventMaster {
   const db = getDb();
   if (!categoryExists(db, input.categoryId)) {
