@@ -1,49 +1,27 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import path from 'node:path';
-import os from 'node:os';
-import Fastify, { type FastifyInstance } from 'fastify';
+import type { FastifyInstance } from 'fastify';
+import { setupIsolatedDb, createTestApp } from '../test/util/bootstrap';
 
-// Isolate the DB per-test-file: set DATA_DIR BEFORE the db/config modules
-// are loaded. Because ESM hoists static imports, we MUST use dynamic
-// `await import(...)` inside before() for any module that reads
-// `process.env.DATA_DIR` at load time (config.ts → db/index.ts).
-const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'homecal-choretest-'));
-process.env.DATA_DIR = tmpDir;
+// MUST run before any module that reads process.env.DATA_DIR at load time.
+// See bootstrap.ts for the full rationale.
+setupIsolatedDb('choretest');
 
 let app: FastifyInstance;
 let memberId: string;
 let todayBrisbane: () => string;
 
 before(async () => {
-  // Dynamic import after DATA_DIR is set.
+  // Dynamic import: route + util modules transitively load db/config.
   const familyRoutes = await import('./familyMembers');
   const choreRoutesMod = await import('./chores');
   const time = await import('../util/time');
   todayBrisbane = time.todayBrisbane;
 
-  app = Fastify({ logger: false });
-  app.setErrorHandler((err, _req, reply) => {
-    const status = (err as { statusCode?: number }).statusCode ?? 500;
-    reply.status(status).send({
-      error: {
-        code: (err as { code?: string }).code ?? (status >= 500 ? 'INTERNAL' : 'BAD_REQUEST'),
-        message: status >= 500 ? 'Internal server error' : err.message,
-      },
-    });
-  });
-  app.setNotFoundHandler((_req, reply) => {
-    reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Not found' } });
-  });
-  await app.register(familyRoutes.familyMemberRoutes);
-  await app.register(choreRoutesMod.choreRoutes);
-  await app.ready();
+  app = await createTestApp(familyRoutes.familyMemberRoutes, choreRoutesMod.choreRoutes);
 
   // Seed a family member dedicated to this test file. Use a name unlikely
-  // to collide with other test files that may share the DB singleton (node
-  // --test on Node 20 runs all *.test.ts in the same process; the
-  // config/db module is module-cached so DATA_DIR from the first file wins).
+  // to collide with other test files that may share the DB singleton.
   const seedName = `ChoreTestSeed-${Date.now()}`;
   const m = await app.inject({
     method: 'POST',
@@ -56,10 +34,7 @@ before(async () => {
 
 after(async () => {
   await app.close();
-  // Do NOT closeDb() or rmSync(tmpDir) — node:test (Node 20) runs all
-  // *.test.ts in the same process, and the db/config module is cached.
-  // Other test files in the same run may still hold a reference to the
-  // singleton DB pointing at this directory. The OS reclaims /tmp.
+  // Do NOT closeDb() or rmSync(tmpDir) — see bootstrap.ts.
 });
 
 interface Envelope {

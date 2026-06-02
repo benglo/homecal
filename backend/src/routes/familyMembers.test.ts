@@ -1,50 +1,26 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import path from 'node:path';
-import os from 'node:os';
-import Fastify, { type FastifyInstance } from 'fastify';
+import type { FastifyInstance } from 'fastify';
+import { setupIsolatedDb, createTestApp } from '../test/util/bootstrap';
 
-// Isolate the DB per-test-file: set DATA_DIR BEFORE the db/config modules
-// are loaded. Because ESM hoists static imports, we MUST use dynamic
-// `await import(...)` for any module that reads `process.env.DATA_DIR`
-// at load time (config.ts → db/index.ts → repos/*).
-const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'homecal-fmtest-'));
-process.env.DATA_DIR = tmpDir;
+// MUST run before any module that reads process.env.DATA_DIR at load time.
+// See bootstrap.ts for the full rationale.
+setupIsolatedDb('fmtest');
 
 let app: FastifyInstance;
 
 before(async () => {
-  // Dynamic import: this is the first time db/config are touched, so they
-  // see our DATA_DIR override. node:test (Node 20) runs all *.test.ts in
-  // one process; whichever route test runs first wins the DATA_DIR.
+  // Dynamic import: route modules transitively load db/config, which read
+  // DATA_DIR at module evaluation. Static `import` would hoist above the
+  // setupIsolatedDb() call above.
   const { familyMemberRoutes } = await import('./familyMembers');
   const { choreRoutes } = await import('./chores');
-
-  app = Fastify({ logger: false });
-  // Mirror server.ts error envelope so the response shape matches production.
-  app.setErrorHandler((err, _req, reply) => {
-    const status = (err as { statusCode?: number }).statusCode ?? 500;
-    reply.status(status).send({
-      error: {
-        code: (err as { code?: string }).code ?? (status >= 500 ? 'INTERNAL' : 'BAD_REQUEST'),
-        message: status >= 500 ? 'Internal server error' : err.message,
-      },
-    });
-  });
-  app.setNotFoundHandler((_req, reply) => {
-    reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Not found' } });
-  });
-  await app.register(familyMemberRoutes);
-  await app.register(choreRoutes);
-  await app.ready();
+  app = await createTestApp(familyMemberRoutes, choreRoutes);
 });
 
 after(async () => {
   await app.close();
-  // Do NOT closeDb() or rmSync(tmpDir) — the db/config singleton is module-
-  // cached across all *.test.ts in the same process, and another test file
-  // may still hold a reference to it. The OS reclaims /tmp.
+  // Do NOT closeDb() or rmSync(tmpDir) — see bootstrap.ts.
 });
 
 interface Envelope<T> {
