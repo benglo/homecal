@@ -140,6 +140,12 @@ export interface ChoreInput {
 
 export type ChoreUpdateInput = Partial<ChoreInput>;
 
+export interface DinnerSuggestion {
+  meal: string;
+  count: number;
+  lastUsed: string;
+}
+
 export interface WeatherData {
   temperature: number | null;
   feelsLike: number | null;

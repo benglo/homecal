@@ -7,6 +7,7 @@ import type {
   ChoreInput,
   ChoreUpdateInput,
   Dinner,
+  DinnerSuggestion,
   EventCreateInput,
   EventMaster,
   EventOccurrence,
@@ -88,6 +89,8 @@ export const api = {
   // dinner writes
   setDinner: (date: string, meal: string) => send<Dinner>('PUT', `/api/dinners/${date}`, { meal }),
   deleteDinner: (date: string) => send<void>('DELETE', `/api/dinners/${date}`),
+  dinnerSuggestions: (limit = 50) =>
+    get<DinnerSuggestion[]>(`/api/dinners/suggestions?limit=${limit}`),
 
   // category writes
   createCategory: (body: CategoryInput) => send<Category>('POST', '/api/categories', body),
