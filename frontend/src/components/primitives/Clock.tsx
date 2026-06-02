@@ -4,13 +4,13 @@ import type { DateTime } from 'luxon';
 export function Clock({ now }: { now: DateTime }) {
   return (
     <div className="text-right">
-      <div className="font-mono font-semibold leading-none tabular-nums" style={{ fontSize: 64, letterSpacing: '-0.03em' }}>
+      <div className="font-mono font-semibold leading-none tabular-nums" style={{ fontSize: 56, letterSpacing: '-0.03em' }}>
         {now.toFormat('HH:mm')}
-        <span className="text-text-faint font-medium" style={{ fontSize: 30 }}>
+        <span className="text-text-faint font-medium" style={{ fontSize: 26 }}>
           {now.toFormat(':ss')}
         </span>
       </div>
-      <div className="text-text-muted font-medium mt-1.5" style={{ fontSize: 26 }}>
+      <div className="text-text-muted font-medium mt-1" style={{ fontSize: 22 }}>
         {now.toFormat('cccc d LLLL')}
       </div>
     </div>

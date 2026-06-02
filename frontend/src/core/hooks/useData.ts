@@ -1,6 +1,6 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
-import type { Category, Dinner, EventMaster, EventOccurrence, Photo } from '../model/types';
+import type { Category, Dinner, EventMaster, EventOccurrence, Photo, WeatherData } from '../model/types';
 
 export function useCategories() {
   return useQuery({
@@ -41,6 +41,17 @@ export function usePhotos() {
     queryKey: ['photos'],
     queryFn: api.photos,
     staleTime: 5 * 60_000,
+  });
+}
+
+export function useWeather() {
+  return useQuery<WeatherData>({
+    queryKey: ['weather'],
+    queryFn: api.weather,
+    staleTime: 0,
+    refetchInterval: 15 * 60_000,
+    retry: 1,
+    refetchOnWindowFocus: false,
   });
 }
 

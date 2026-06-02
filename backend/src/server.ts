@@ -13,7 +13,9 @@ import { backupRoutes } from './routes/backup';
 import { feedRoutes } from './routes/feed';
 import { photoRoutes } from './routes/photos';
 import { kioskRoutes } from './routes/kiosk';
+import { weatherRoutes } from './routes/weather';
 import { initPhotos, purgeTrash } from './photos';
+import { getCachedWeather } from './weather';
 
 async function main(): Promise<void> {
   // Open DB + run migrations before serving any traffic.
@@ -59,6 +61,7 @@ async function main(): Promise<void> {
   await app.register(feedRoutes);
   await app.register(photoRoutes);
   await app.register(kioskRoutes);
+  await app.register(weatherRoutes);
 
   // Serve the built frontend from the same origin (no CORS). Optional in dev.
   if (config.staticDir && fs.existsSync(config.staticDir)) {
@@ -82,6 +85,9 @@ async function main(): Promise<void> {
   process.on('SIGINT', () => void shutdown('SIGINT'));
 
   await app.listen({ port: config.port, host: config.host });
+
+  getCachedWeather(config.bomStationCode, config.bomStationId, config.weatherCacheTtlMs, app.log)
+    .catch(() => { /* warm-cache attempt — failure is fine, first request will retry */ });
 }
 
 main().catch((err) => {

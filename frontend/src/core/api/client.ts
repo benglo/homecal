@@ -7,6 +7,7 @@ import type {
   EventOccurrence,
   EventUpdateInput,
   Photo,
+  WeatherData,
 } from '../model/types';
 
 /** Carries the server's error envelope so the UI can branch on `code`
@@ -96,4 +97,7 @@ export const api = {
 
   // kiosk
   shutdownKiosk: () => send<{ ok: boolean; message: string }>('POST', '/api/kiosk/shutdown'),
+
+  // weather
+  weather: () => get<WeatherData>('/api/weather'),
 };

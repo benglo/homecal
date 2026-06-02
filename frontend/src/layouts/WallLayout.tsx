@@ -4,7 +4,7 @@ import type { EventOccurrence, WallView } from '../core/model/types';
 import { useClock } from '../core/hooks/useClock';
 import { useWallTheme } from '../core/hooks/useTheme';
 import { useIdleReset } from '../core/hooks/useIdleReset';
-import { useCategories, useDinners, useEvents, usePhotos, byId } from '../core/hooks/useData';
+import { useCategories, useDinners, useEvents, usePhotos, useWeather, byId } from '../core/hooks/useData';
 import { useScreensaver } from '../components/screensaver/useScreensaver';
 import { Screensaver } from '../components/screensaver/Screensaver';
 import { eventWindow, weekDates, nowBne, toInputDate } from '../core/util/time';
@@ -35,6 +35,7 @@ export function WallLayout() {
   const dinnersQ = useDinners(week.start, week.end);
 
   const photosQ = usePhotos();
+  const weatherQ = useWeather();
   const screensaver = useScreensaver(photosQ.data);
 
   const cats = byId(categoriesQ.data);
@@ -94,6 +95,7 @@ export function WallLayout() {
         dinners={dinners}
         dataUpdatedAt={dataUpdatedAt}
         isError={dataIsError}
+        weather={weatherQ.data}
       />
 
       {view === 'agenda' ? (

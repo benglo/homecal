@@ -26,6 +26,12 @@ export const config = {
   kioskHost: process.env.KIOSK_HOST ?? '',
   kioskPort: Number(process.env.KIOSK_PORT ?? 8788),
 
+  // BOM weather station — defaults to Brisbane.
+  bomStationCode: process.env.BOM_STATION_CODE ?? 'IDQ60901',
+  bomStationId: process.env.BOM_STATION_ID ?? '94576',
+  bomStationName: process.env.BOM_STATION_NAME ?? 'Brisbane',
+  weatherCacheTtlMs: Number(process.env.WEATHER_CACHE_TTL_MS ?? 900_000),
+
   timezone: 'Australia/Brisbane',
 } as const;
 

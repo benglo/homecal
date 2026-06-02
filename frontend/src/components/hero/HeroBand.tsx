@@ -1,8 +1,9 @@
 import type { DateTime } from 'luxon';
 import { Utensils } from 'lucide-react';
-import type { Dinner } from '../../core/model/types';
+import type { Dinner, WeatherData } from '../../core/model/types';
 import { Clock } from '../primitives/Clock';
 import { StatusDot } from '../primitives/StatusDot';
+import { WeatherSidebar } from '../weather/WeatherSidebar';
 
 interface Props {
   now: DateTime;
@@ -10,12 +11,13 @@ interface Props {
   dinners: Dinner[];
   dataUpdatedAt: number;
   isError: boolean;
+  weather?: WeatherData;
 }
 
 const WEEKDAY = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 /** Hero band: Tonight dinner (rolls to tomorrow after 20:00) + week strip + clock. */
-export function HeroBand({ now, weekDays, dinners, dataUpdatedAt, isError }: Props) {
+export function HeroBand({ now, weekDays, dinners, dataUpdatedAt, isError, weather }: Props) {
   const byDate = new Map(dinners.map((d) => [d.date, d.meal]));
   const todayKey = now.toFormat('yyyy-LL-dd');
   const rollToTomorrow = now.hour >= 20;
@@ -68,8 +70,9 @@ export function HeroBand({ now, weekDays, dinners, dataUpdatedAt, isError }: Pro
           })}
         </div>
       </div>
-      <div className="shrink-0 border-l border-border flex flex-col items-end justify-between" style={{ width: 340, padding: '30px 36px' }}>
+      <div className="shrink-0 border-l border-border flex flex-col items-end justify-between" style={{ width: 340, padding: '24px 36px' }}>
         <Clock now={now} />
+        <WeatherSidebar weather={weather} isNight={now.hour < 6 || now.hour >= 20} />
         <StatusDot dataUpdatedAt={dataUpdatedAt} isError={isError} />
       </div>
     </div>

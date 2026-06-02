@@ -75,3 +75,18 @@ export interface Photo {
   url: string;
   createdAt: string;
 }
+
+export interface WeatherData {
+  temperature: number | null;
+  feelsLike: number | null;
+  condition: string;
+  description: string;
+  humidity: number | null;
+  windSpeed: number | null;
+  windDirection: string;
+  pressure: number | null;
+  stationName: string;
+  observationTime: string | null;
+  fetchedAt: string;
+  stale?: boolean;
+}
