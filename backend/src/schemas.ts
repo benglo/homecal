@@ -66,7 +66,12 @@ export const windowQuery = z
     message: 'window too large (max 1 year)',
   });
 
-export const dinnerUpsert = z.object({ meal: z.string().min(1).max(256) });
+export const dinnerUpsert = z.object({ meal: z.string().trim().min(1).max(256) });
+
+export const suggestionsQuery = z.object({
+  limit: z.coerce.number().int().positive().max(200).default(50),
+});
+
 export const dateParam = z.string().regex(DATE_ONLY, 'date must be YYYY-MM-DD');
 
 export type CategoryCreate = z.infer<typeof categoryCreate>;
