@@ -35,7 +35,12 @@ export function dateOnly(iso: string): string {
 
 export const DAY_MS = 86_400_000;
 
-/** Fixed-offset Brisbane timezone (UTC+10, no DST — spec §0). */
+/**
+ * Fixed-offset Brisbane timezone (UTC+10, no DST — spec §0).
+ * The frontend uses Luxon `'Australia/Brisbane'`, which would auto-pick up DST
+ * if QLD ever adopts it; this constant would not. If that ever needs to change,
+ * also update `frontend/src/core/util/time.ts` and `useBrisbaneDate.ts` to stay in sync.
+ */
 export const BRISBANE_OFFSET_MS = 10 * 60 * 60 * 1000;
 
 /** Today's calendar date in Brisbane time, as 'YYYY-MM-DD'. */
