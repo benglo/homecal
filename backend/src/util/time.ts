@@ -31,3 +31,11 @@ export function dateOnly(iso: string): string {
 }
 
 export const DAY_MS = 86_400_000;
+
+/** Fixed-offset Brisbane timezone (UTC+10, no DST — spec §0). */
+export const BRISBANE_OFFSET_MS = 10 * 60 * 60 * 1000;
+
+/** Today's calendar date in Brisbane time, as 'YYYY-MM-DD'. */
+export function todayBrisbane(now: Date = new Date()): string {
+  return new Date(now.getTime() + BRISBANE_OFFSET_MS).toISOString().slice(0, 10);
+}

@@ -15,6 +15,7 @@ import { photoRoutes } from './routes/photos';
 import { kioskRoutes } from './routes/kiosk';
 import { weatherRoutes } from './routes/weather';
 import { familyMemberRoutes } from './routes/familyMembers';
+import { choreRoutes } from './routes/chores';
 import { initPhotos, purgeTrash } from './photos';
 import { getCachedWeather } from './weather';
 
@@ -64,6 +65,7 @@ async function main(): Promise<void> {
   await app.register(kioskRoutes);
   await app.register(weatherRoutes);
   await app.register(familyMemberRoutes);
+  await app.register(choreRoutes);
 
   // Serve the built frontend from the same origin (no CORS). Optional in dev.
   if (config.staticDir && fs.existsSync(config.staticDir)) {
