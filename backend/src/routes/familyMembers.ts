@@ -6,28 +6,19 @@ import {
   listFamilyMembers,
   updateFamilyMember,
 } from '../repos/familyMembers';
-import { broker } from '../realtime';
-import { parseBody } from './helpers';
+import { registerCrud } from './crud';
 
 export async function familyMemberRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/api/family-members', async () => listFamilyMembers());
-
-  app.post('/api/family-members', async (req, reply) => {
-    const member = createFamilyMember(parseBody(familyMemberCreate, req.body));
-    broker.poke('family-members');
-    reply.status(201);
-    return member;
-  });
-
-  app.put<{ Params: { id: string } }>('/api/family-members/:id', async (req) => {
-    const member = updateFamilyMember(req.params.id, parseBody(familyMemberUpdate, req.body));
-    broker.poke('family-members');
-    return member;
-  });
-
-  app.delete<{ Params: { id: string } }>('/api/family-members/:id', async (req, reply) => {
-    deleteFamilyMember(req.params.id);
-    broker.poke('family-members');
-    reply.status(204);
+  registerCrud(app, {
+    prefix: '/api/family-members',
+    channel: 'family-members',
+    create: familyMemberCreate,
+    update: familyMemberUpdate,
+    repo: {
+      list: listFamilyMembers,
+      create: createFamilyMember,
+      update: updateFamilyMember,
+      remove: deleteFamilyMember,
+    },
   });
 }
