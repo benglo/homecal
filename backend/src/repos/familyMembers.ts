@@ -2,7 +2,7 @@ import type Database from 'better-sqlite3';
 import { getDb } from '../db';
 import { newId } from '../util/ids';
 import { nowIso } from '../util/time';
-import { httpError } from '../util/errors';
+import { httpError, uniqueOr } from '../util/errors';
 import type { FamilyMember } from '../model/types';
 import type { FamilyMemberCreate } from '../schemas';
 
@@ -69,11 +69,4 @@ export function deleteFamilyMember(id: string): void {
 
 export function familyMemberExists(db: Database.Database, id: string): boolean {
   return !!db.prepare('SELECT 1 FROM family_members WHERE id = ?').get(id);
-}
-
-function uniqueOr(e: unknown, msg: string): Error {
-  if (e instanceof Error && /UNIQUE constraint failed/.test(e.message)) {
-    return httpError(409, 'DUPLICATE_NAME', msg);
-  }
-  return e as Error;
 }

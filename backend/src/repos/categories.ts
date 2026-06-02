@@ -2,7 +2,7 @@ import type Database from 'better-sqlite3';
 import { getDb } from '../db';
 import { newId } from '../util/ids';
 import { nowIso } from '../util/time';
-import { httpError } from '../util/errors';
+import { httpError, uniqueOr } from '../util/errors';
 import type { Category } from '../model/types';
 import type { CategoryCreate, CategoryUpdate } from '../schemas';
 
@@ -90,13 +90,6 @@ export function deleteCategory(id: string): void {
     throw httpError(409, 'CATEGORY_IN_USE', `Category has ${refs} event(s); move or delete them first`);
   }
   db.prepare('DELETE FROM categories WHERE id = ?').run(id);
-}
-
-function uniqueOr(e: unknown, msg: string): Error {
-  if (e instanceof Error && /UNIQUE constraint failed/.test(e.message)) {
-    return httpError(409, 'DUPLICATE_NAME', msg);
-  }
-  return e as Error;
 }
 
 export function categoryExists(db: Database.Database, id: string): boolean {
