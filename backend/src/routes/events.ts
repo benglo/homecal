@@ -12,6 +12,10 @@ import { httpError } from '../util/errors';
 import { broker } from '../realtime';
 import { parseBody } from './helpers';
 
+// Events don't use registerCrud: GET /api/events takes a required {start,end}
+// window (it returns expanded occurrences, not masters), so it isn't the
+// "no-arg list" shape the helper assumes. Migrating POST/PUT/DELETE alone
+// would add more wiring than it removes — kept bespoke for clarity.
 export async function eventRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/events', async (req) => {
     const { start, end } = parseBody(windowQuery, req.query);
