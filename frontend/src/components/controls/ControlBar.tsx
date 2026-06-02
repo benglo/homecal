@@ -21,13 +21,10 @@ function periodLabel(view: WallView, anchor: DateTime): string {
     const start = a.startOf('week');
     const end = start.plus({ days: 6 });
     return start.month === end.month
-      ? `${start.toFormat('LLL d')} – ${end.toFormat('d')}`
-      : `${start.toFormat('LLL d')} – ${end.toFormat('LLL d')}`;
+      ? `${start.toFormat('d')} – ${end.toFormat('d LLL')}`
+      : `${start.toFormat('d LLL')} – ${end.toFormat('d LLL')}`;
   }
-  const end = a.plus({ days: 9 });
-  return a.month === end.month
-    ? `${a.toFormat('LLL d')} – ${end.toFormat('d')}`
-    : `${a.toFormat('LLL d')} – ${end.toFormat('LLL d')}`;
+  return a.toFormat('cccc d LLL');
 }
 
 const VIEWS: WallView[] = ['agenda', 'week', 'month'];

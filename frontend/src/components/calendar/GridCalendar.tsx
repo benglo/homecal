@@ -35,11 +35,12 @@ export function GridCalendar({ view, date, occurrences, categories, onEventClick
   return (
     <div className="flex-1 overflow-hidden" style={{ padding: '12px 16px' }}>
       <FullCalendar
-        key={view}
+        key={`${view}-${date}`}
         plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
         initialView={view === 'week' ? 'timeGridWeek' : 'dayGridMonth'}
         initialDate={date}
         headerToolbar={false}
+        locale="en-au"
         firstDay={1}
         height="100%"
         expandRows

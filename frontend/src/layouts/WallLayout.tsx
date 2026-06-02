@@ -53,7 +53,7 @@ export function WallLayout() {
 
   const step = (dir: 1 | -1) =>
     setAnchor((a) =>
-      view === 'agenda' ? a.plus({ days: 10 * dir }) : view === 'week' ? a.plus({ weeks: dir }) : a.plus({ months: dir })
+      view === 'agenda' ? a.plus({ days: dir }) : view === 'week' ? a.plus({ weeks: dir }) : a.plus({ months: dir })
     );
   const goToday = () => setAnchor(now.startOf('day'));
   const isToday = anchor.hasSame(now, 'day') && (view !== 'month' || anchor.hasSame(now, 'month'));
