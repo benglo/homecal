@@ -1,7 +1,7 @@
 import { getDb } from '../db';
 import { isoUtc } from '../util/time';
 import { httpError } from '../util/errors';
-import type { Dinner } from '../model/types';
+import type { Dinner, DinnerSuggestion } from '../model/types';
 
 interface Row {
   date: string;
@@ -36,4 +36,41 @@ export function listAllDinners(): Dinner[] {
   return (
     getDb().prepare('SELECT * FROM dinners ORDER BY date').all() as Row[]
   ).map(toDinner);
+}
+
+interface SuggestionRow {
+  meal: string;
+  count: number;
+  last_used: string;
+}
+
+/** Distinct meal names ranked for typeahead, deduped case-insensitively.
+ *  Canonical casing = the spelling from the most recent usage (ties broken
+ *  by ASCII order of `meal` so the output is fully deterministic).
+ *  Uses SQLite window functions (≥3.25 — bundled with better-sqlite3).
+ *
+ *  Caveat: SQLite's default LOWER() is ASCII-only — "CAFÉ" and "café" are
+ *  NOT collapsed. Accept this for a small family table; revisit only if a
+ *  unicode-heavy meal vocabulary becomes a real issue. */
+export function listSuggestions(limit: number): DinnerSuggestion[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT meal, count, last_used
+         FROM (
+           SELECT
+             meal,
+             COUNT(*)  OVER (PARTITION BY LOWER(meal)) AS count,
+             MAX(updated_at) OVER (PARTITION BY LOWER(meal)) AS last_used,
+             ROW_NUMBER() OVER (
+               PARTITION BY LOWER(meal)
+               ORDER BY updated_at DESC, meal
+             ) AS rn
+           FROM dinners
+         )
+        WHERE rn = 1
+        ORDER BY count DESC, last_used DESC, meal
+        LIMIT ?`
+    )
+    .all(limit) as SuggestionRow[];
+  return rows.map((r) => ({ meal: r.meal, count: r.count, lastUsed: r.last_used }));
 }
