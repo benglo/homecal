@@ -4,6 +4,85 @@ Running log of work per session. Newest first. Pair with `git log` for exact dif
 
 ---
 
+## 2026-06-02 — v2: Weather sidebar + wall UI polish
+
+### What was built
+
+#### Docker fix
+- **Backend workspace node_modules** — `@fastify/multipart` was hoisted into `backend/node_modules/`
+  by npm workspaces but the Dockerfile only copied root `node_modules/`. Container was crashing on
+  startup. Fixed by adding `COPY --from=build /app/backend/node_modules ./backend/node_modules`.
+
+#### Wall UI polish
+- **Australian date formatting** — ControlBar period labels now day-first (e.g. "2 – 8 Jun" not
+  "Jun 2 – 8"). FullCalendar locale set to `en-au`. Agenda view shows single date with daily
+  stepping ("Tuesday 2 Jun") instead of a 10-day range.
+- **Week view chevron nav** — changing weeks with chevrons now updates the FullCalendar grid
+  (key includes date so FC remounts on nav).
+- **Kiosk reload command** — `/reload-kiosk` slash command + `kiosk/reload.sh` documented in CLAUDE.md.
+
+#### Weather sidebar (BOM observations)
+- **`GET /api/weather`** — proxies Australian Bureau of Meteorology JSON observations for Brisbane
+  (station IDQ60901/94576, configurable via `BOM_STATION_CODE`/`BOM_STATION_ID` env vars).
+- **In-memory cache** — 15-min TTL. On fetch failure with existing cache → returns stale data with
+  `stale: true`. On fetch failure with no cache → 503 with error envelope. No DB, no filesystem cache.
+- **Eager prefetch** — `getCachedWeather()` called fire-and-forget after `app.listen()` so the cache
+  is warm before the first request.
+- **Logging** — `warn` on fetch failure, `info` on first success and recovery after failure.
+  Avoids logging every successful 15-min fetch.
+- **No new dependencies** — uses Node 20 built-in `fetch` with `AbortSignal.timeout(10s)`.
+- **Frontend** — `WeatherSidebar` component in HeroBand right panel: condition icon (day/night aware —
+  Sun/Moon for clear, Cloud/CloudMoon at night) + 32px temperature + feels-like + humidity.
+  Clock tightened (64→56px time, 26→22px date) to make room. Stale weather rendered at 60% opacity.
+  Weather section returns null when unavailable (additive, never breaks display).
+- **TanStack Query** — `useWeather()` hook, 15-min refetch, `staleTime: 0` (backend cache is
+  authoritative), `retry: 1`, `refetchOnWindowFocus: false`.
+
+### Design process
+- 3-persona review (senior engineer, UX, SRE) of the implementation plan before coding.
+- Key findings adopted: eager prefetch, staleTime:0, fetchedAt timestamp over boolean stale,
+  drop wind (not actionable), tighten clock, 60% opacity for stale, weather out of healthcheck,
+  warn-level logging on failure.
+
+### Tests
+- 28 new backend tests in `weather.test.ts`: safeParseFloat (6), mapBomCondition (15),
+  fetchBomWeather (4: parse/non-200/bad-structure/empty), getCachedWeather (3: TTL/stale/throw).
+- Backend 76/76, frontend 19/19, build clean.
+
+### Files changed
+- `Dockerfile` — added `COPY --from=build /app/backend/node_modules`
+- `backend/src/config.ts` — added `bomStationCode`, `bomStationId`, `bomStationName`, `weatherCacheTtlMs`
+- `backend/src/weather.ts` — new: BOM fetch + in-memory cache + condition mapping
+- `backend/src/routes/weather.ts` — new: GET /api/weather route
+- `backend/src/routes/weather.test.ts` — new: 28 tests
+- `backend/src/server.ts` — registered weatherRoutes, eager prefetch
+- `frontend/src/core/model/types.ts` — added WeatherData type
+- `frontend/src/core/api/client.ts` — added weather() method
+- `frontend/src/core/hooks/useData.ts` — added useWeather() hook
+- `frontend/src/components/weather/weatherIcons.ts` — new: condition → lucide icon mapping
+- `frontend/src/components/weather/WeatherSidebar.tsx` — new: weather display component
+- `frontend/src/components/hero/HeroBand.tsx` — integrated WeatherSidebar, accepts weather prop
+- `frontend/src/components/primitives/Clock.tsx` — tightened sizing (56px/22px)
+- `frontend/src/components/controls/ControlBar.tsx` — Australian date format, daily agenda step
+- `frontend/src/components/calendar/GridCalendar.tsx` — key includes date, locale en-au
+- `frontend/src/layouts/WallLayout.tsx` — wired useWeather, daily agenda step
+
+### Verify
+```bash
+npm --workspace backend test          # 76/76
+npm --workspace frontend test         # 19/19
+npm run build                         # clean
+docker compose up -d --build
+curl -s localhost:8787/api/weather | jq .  # {"temperature":24,"condition":"Clear",...}
+bash kiosk/reload.sh                  # reload Pi
+# Wall: HeroBand shows weather icon + temp + feels-like + humidity in right panel
+# Agenda: chevrons step one day, label shows "Tuesday 2 Jun"
+# Week: chevrons update the calendar grid
+# Month: unchanged
+```
+
+---
+
 ## 2026-06-01 (cont.) — v2: Photo screensaver + ControlBar redesign
 
 ### What was built
