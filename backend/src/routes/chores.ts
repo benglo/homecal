@@ -14,33 +14,26 @@ import { httpError } from '../util/errors';
 import { broker } from '../realtime';
 import { parseBody } from './helpers';
 import { todayBrisbane } from '../util/time';
+import { registerCrud } from './crud';
 
 export async function choreRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/api/chores', async () => listChores());
+  registerCrud(app, {
+    prefix: '/api/chores',
+    channel: 'chores',
+    create: choreCreate,
+    update: choreUpdate,
+    repo: {
+      list: listChores,
+      create: createChore,
+      update: updateChore,
+      remove: deleteChore,
+    },
+  });
 
   app.get<{ Params: { id: string } }>('/api/chores/:id', async (req) => {
     const chore = getChore(req.params.id);
     if (!chore) throw httpError(404, 'NOT_FOUND', 'Chore not found');
     return chore;
-  });
-
-  app.post('/api/chores', async (req, reply) => {
-    const chore = createChore(parseBody(choreCreate, req.body));
-    broker.poke('chores');
-    reply.status(201);
-    return chore;
-  });
-
-  app.put<{ Params: { id: string } }>('/api/chores/:id', async (req) => {
-    const chore = updateChore(req.params.id, parseBody(choreUpdate, req.body));
-    broker.poke('chores');
-    return chore;
-  });
-
-  app.delete<{ Params: { id: string } }>('/api/chores/:id', async (req, reply) => {
-    deleteChore(req.params.id);
-    broker.poke('chores');
-    reply.status(204);
   });
 
   app.get('/api/chore-board', async (req) => {
