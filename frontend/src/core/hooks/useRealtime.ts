@@ -6,6 +6,7 @@ import { useQueryClient } from '@tanstack/react-query';
 const KIND_TO_KEYS: Record<string, string[]> = {
   chores: ['chores', 'chore-board'],
   'family-members': ['family-members', 'chore-board'],
+  dinners: ['dinners', 'dinner-suggestions'],
 };
 
 /** Subscribe to the backend SSE stream. Every poke invalidates the matching

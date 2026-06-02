@@ -109,7 +109,10 @@ export function useEventMutations() {
 /** Per-day meal set/clear; optimistic against the date-keyed dinner windows. */
 export function useDinnerMutations() {
   const qc = useQueryClient();
-  const settle = () => void qc.invalidateQueries({ queryKey: ['dinners'] });
+  const settle = () => {
+    void qc.invalidateQueries({ queryKey: ['dinners'] });
+    void qc.invalidateQueries({ queryKey: ['dinner-suggestions'] });
+  };
 
   const set = useMutation({
     mutationFn: ({ date, meal }: { date: string; meal: string }) => api.setDinner(date, meal),

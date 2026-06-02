@@ -5,6 +5,7 @@ import type {
   Chore,
   ChoreBoard,
   Dinner,
+  DinnerSuggestion,
   EventMaster,
   EventOccurrence,
   FamilyMember,
@@ -91,5 +92,17 @@ export function useChoreBoard(date: string) {
     queryKey: ['chore-board', date],
     queryFn: () => api.choreBoard(date),
     placeholderData: keepPreviousData,
+  });
+}
+
+/** Distinct meal history for the editor's typeahead. Invalidated locally on
+ *  every dinner mutation (useDinnerMutations.settle) AND fanned out by the
+ *  SSE 'dinners' poke (useRealtime.KIND_TO_KEYS) — the local invalidation
+ *  is the fast path; SSE is the backstop for cross-device edits. */
+export function useDinnerSuggestions() {
+  return useQuery<DinnerSuggestion[]>({
+    queryKey: ['dinner-suggestions'],
+    queryFn: () => api.dinnerSuggestions(),
+    staleTime: 60_000,
   });
 }
