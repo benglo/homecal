@@ -225,7 +225,7 @@ function EventForm({
       )}
 
       <Field label="Title">
-        <TextInput value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What's happening?" autoFocus />
+        <TextInput value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What's happening?" autoFocus maxLength={256} />
       </Field>
 
       <Field label="Category">
@@ -299,7 +299,7 @@ function EventForm({
       </Field>
 
       <Field label="Location">
-        <TextInput value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Optional" />
+        <TextInput value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Optional" maxLength={256} />
       </Field>
 
       {confirmDelete && (

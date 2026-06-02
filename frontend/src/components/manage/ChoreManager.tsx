@@ -475,6 +475,7 @@ function ChoreForm({
             onChange={(e) => setTitle(e.target.value)}
             placeholder="e.g. Make bed"
             autoFocus
+            maxLength={256}
             style={{ marginTop: 6 }}
           />
         </label>
@@ -487,6 +488,7 @@ function ChoreForm({
             value={icon}
             onChange={(e) => setIcon(e.target.value)}
             placeholder="e.g. 🛏️"
+            maxLength={16}
             style={{ marginTop: 6 }}
           />
         </label>

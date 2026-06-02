@@ -282,6 +282,7 @@ function MemberForm({
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. Mia"
             autoFocus
+            maxLength={64}
             style={{ marginTop: 6 }}
           />
         </label>
@@ -296,6 +297,7 @@ function MemberForm({
             value={icon}
             onChange={(e) => setIcon(e.target.value)}
             placeholder="e.g. 🦊 or initials"
+            maxLength={16}
             style={{ marginTop: 6 }}
           />
         </label>

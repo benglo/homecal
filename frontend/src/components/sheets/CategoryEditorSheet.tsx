@@ -86,7 +86,7 @@ export function CategoryEditorSheet({ open, onClose, category }: Props) {
       </div>
 
       <Field label="Name">
-        <TextInput value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Swimming" autoFocus />
+        <TextInput value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Swimming" autoFocus maxLength={64} />
       </Field>
 
       <Field label="Colour" hint={lowContrast ? '⚠ Low contrast on both light and dark — pick a bolder colour.' : undefined}>

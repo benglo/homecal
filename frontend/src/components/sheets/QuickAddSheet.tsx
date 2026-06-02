@@ -89,7 +89,7 @@ export function QuickAddSheet({ open, onClose, categories, defaultCategoryId, de
       )}
 
       <Field label="Title">
-        <TextInput value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What's happening?" autoFocus />
+        <TextInput value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What's happening?" autoFocus maxLength={256} />
       </Field>
       <Field label="When">
         <div className="flex flex-wrap items-center gap-2">
