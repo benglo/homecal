@@ -4,6 +4,7 @@ import type { Photo } from '../../core/model/types';
 import { usePhotos } from '../../core/hooks/useData';
 import { usePhotoMutations } from '../../core/hooks/useMutations';
 import { Button } from '../primitives/Button';
+import { SectionHeading } from './primitives/SectionHeading';
 
 interface UploadProgress {
   name: string;
@@ -80,10 +81,7 @@ export function PhotoManager() {
 
   return (
     <section style={{ marginTop: 24 }}>
-      <h2
-        className="font-semibold text-text-muted"
-        style={{ fontSize: 13, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}
-      >
+      <SectionHeading>
         Photos
         <span
           className="font-normal"
@@ -91,7 +89,7 @@ export function PhotoManager() {
         >
           {count} photos &middot; max 500
         </span>
-      </h2>
+      </SectionHeading>
 
       {/* Upload button */}
       <input
