@@ -49,6 +49,7 @@ bash kiosk/reload.sh                     # reload Pi kiosk browser via CDP (or /
 ```
 
 ## Conventions
+- **Locale is `en-au`** — day-first dates everywhere (FullCalendar locale, ControlBar labels).
 - **Many small files**, immutable patterns, errors handled explicitly, no hardcoded secrets (none needed
   — LAN, no auth in v1).
 - Backend is **CommonJS** (`module: CommonJS`); frontend is **ESM**. Don't mix.
@@ -58,64 +59,39 @@ bash kiosk/reload.sh                     # reload Pi kiosk browser via CDP (or /
   persist together. It's gitignored; `data/` may be root-owned (created by the container).
 - Tests-first for anything touching recurrence; that engine is the riskiest code (`backend/src/recurrence.ts`).
 
-## Status (2026-06-01)
+## Status (2026-06-02)
 - **M0** scaffold + container — done (`f419063`)
 - **M1** data + API — done (`24d7651`), recurrence tests
 - **M2** wall UI — done (`5b3d5ed`), all 3 views verified via screenshot
 - **M3** editing (phone + sheets + mutations + SSE) — done; hardened after a pre-M4 review.
-  Backend 16/16, frontend 15/15 (vitest), phone↔wall sync + cancel-one-occurrence verified.
-- **M4** deploy + kiosk + backup — done. Backend 19/19, frontend 15/15, backup + SW cache + SSE drain
-  verified. Kiosk launcher + deploy guide in `kiosk/launch.sh` and `docs/deploy.md`.
+- **M4** deploy + kiosk + backup — done. Deploy guide in `docs/deploy.md`.
+- **Tests:** backend 76/76, frontend 19/19, build clean.
 
-### M4 notes
-- **`POST /api/backup`** — `VACUUM INTO` a timestamped standalone `.db`; auto-prunes to 10. Test-first
-  (3 tests in `backend/src/routes/backup.test.ts`).
-- **SW cache versioning** — shell cache keyed to `__BUILD_ID__` (Vite `define`); navigation is
-  network-first with cache fallback; old caches evicted on activate.
-- **Graceful shutdown** — `drainSSE()` `.end()`s all tracked connections before `app.close()`;
-  `stop_grace_period: 30s` in compose so the WAL checkpoint completes.
-- **Logging** — Fastify `level: 'warn'` when `NODE_ENV=production`; Docker `json-file` driver with
-  `max-size: 10m`, `max-file: 3`.
-- **Deploy docs** — `docs/deploy.md` covers server (Docker), reverse-proxy SSE (nginx/Caddy),
-  Pi kiosk (labwc/Wayland, two-layer auto-retry), chaos test steps.
-- **Build on target arch** — documented in deploy guide; `.dockerignore` excludes host `node_modules`.
-
-### v2 partial: Photo screensaver
-- **Photo upload/manage/serve API** — `POST /api/photos` (multipart → sharp resize to 1920px, JPEG q80),
-  `GET /api/photos` (filesystem listing, newest-first), `DELETE /api/photos/:id` (soft-delete to `.trash/`),
-  `GET /api/photos/:filename` (serve with immutable cache headers + nosniff).
-- **Screensaver** — wall overlay activates after 5 min idle. Dual-buffer Ken Burns crossfade (10s per photo,
-  1.5s fade), Fisher-Yates shuffle, gradient scrim + clock overlay. Touch to dismiss.
-- **Phone PhotoManager** — Manage tab section with 3-column grid, XHR upload with progress, tap-to-preview
-  + delete. Accepts JPEG/PNG/WebP/HEIC, max 500 photos (configurable via `MAX_PHOTO_COUNT`).
-- **Dependencies:** `sharp` (backend, ARM prebuilt), `@fastify/multipart@8` (Fastify 4.x compatible).
-- Backend 48/48 tests (18 new photo tests), frontend 19/19 tests (4 new shuffle tests).
-
-### v2 partial: iCal feed
-- **`GET /api/feed.ics`** — read-only iCalendar subscription feed. Returns all events (with native
-  RRULE + EXDATE for cancelled exceptions) and dinners as all-day VEVENTs. Phones subscribe to
-  `http://server:port/api/feed.ics` to get native calendar notifications.
-- Uses `ical-generator` (CJS-compatible). `buildFeed()` is a pure function tested with 11 unit tests.
-- RRULE+EXDATE uses the raw-string path: EXDATE lines appended to the RRULE string, passed through
-  verbatim by the library. VALUE=DATE for all-day, UTC datetime for timed events.
-
-### M3 notes
-- **Realtime:** in-process `broker` (`backend/src/realtime.ts`) + `GET /api/stream` SSE; every
-  event/dinner/category mutation `poke()`s. Client `useRealtime` invalidates the matching query family;
-  the 30s poll is the backstop. SSE holds connections open → use `waitUntil:'load'` (NOT `networkidle`)
-  in any browser automation or `goto` times out.
-- **Forms:** plain controlled React state + lightweight client validation (NOT react-hook-form/zod — kept
-  off the frontend to avoid deps; the API Zod schema is authoritative and `ApiError.code` drives UX such
-  as the 409 `CATEGORY_IN_USE`).
-- **Recurrence editing (M3 scope):** edits apply to the **whole series** (PUT master); delete offers
-  **This occurrence** (cancel → EXDATE) vs **All**. "This-and-following" + modified-occurrence overrides
-  are v2 (no backend route yet).
-- **Backend test glob fixed:** `find src -name '*.test.ts'` (npm's `sh` lacks globstar, so the old
-  `src/**/*.test.ts` matched nothing — tests silently never ran).
+### Feature inventory (beyond core CRUD)
+- **Realtime** — in-process SSE broker (`GET /api/stream`); mutations `poke()`;
+  client `useRealtime` invalidates + 30s poll backstop.
+- **Backup** — `POST /api/backup` (`VACUUM INTO`, auto-prune to 10). 3 tests.
+- **Photo screensaver** — upload/serve/delete API (`sharp` resize, `@fastify/multipart@8`),
+  5-min idle → dual-buffer Ken Burns crossfade, phone PhotoManager. 18 backend + 4 frontend tests.
+- **iCal feed** — `GET /api/feed.ics` (`ical-generator`, native RRULE+EXDATE). 11 tests.
+- **Weather** — `GET /api/weather` (BOM proxy, 15-min in-memory cache, eager prefetch, stale fallback).
+  `WeatherSidebar` in HeroBand, day/night icons. 28 tests. No new deps (Node 20 `fetch`).
+  Configurable via `BOM_STATION_CODE`/`BOM_STATION_ID`/`BOM_STATION_NAME`.
+- **Kiosk** — `kiosk/launch.sh` (health-poll → Chromium kiosk), `kiosk/reload.sh` (CDP reload),
+  remote shutdown (`POST /api/kiosk/shutdown` → Pi socat listener). Virtual keyboard (react-simple-keyboard).
+- **SW** — network-first nav + cache fallback, shell cache keyed to `__BUILD_ID__`, old caches evicted.
+- **Graceful shutdown** — `drainSSE()` ends open connections before `app.close()` + WAL checkpoint.
+  `stop_grace_period: 30s`.
+- **Forms** — plain controlled React state, no react-hook-form/zod on frontend; API Zod is authoritative.
+- **Recurrence editing** — whole-series edit + This/All delete. "This-and-following" + modified overrides = v2.
 
 ## Gotchas
 - `better-sqlite3` is native — compiled for the **server's** arch inside the Docker build; `.dockerignore`
   excludes host `node_modules`. Never copy a host/Pi binary in.
+- **Two idle timers** on the wall: 90s `useIdleReset` (returns to Agenda+today) and 5-min screensaver
+  (`useScreensaver`). Independent — don't merge.
+- **SSE holds connections open** — use `waitUntil:'load'` (NOT `networkidle`) in any browser
+  automation or `goto` times out.
 - The sandbox tool channel in this environment intermittently drops command output — re-run/verify rather
   than trusting silence. `docker compose` may need `dangerouslyDisableSandbox`.
 - Playwright MCP wants the `chrome` channel (needs sudo); use the cached chromium at
