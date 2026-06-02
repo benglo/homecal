@@ -4,6 +4,72 @@ Running log of work per session. Newest first. Pair with `git log` for exact dif
 
 ---
 
+## 2026-06-03 — Dinner planning upgrade
+
+### What was built
+- **`GET /api/dinners/suggestions`** — derived from the dinners table via a
+  SQLite window-function query that deduplicates case-insensitively and ranks
+  by frequency then recency then meal-name (deterministic tiebreaker for
+  canonical casing). Returns `{ meal, count, lastUsed }[]`; Zod-validated
+  `?limit=` (default 50, max 200, `VALIDATION` 400 on bad input).
+- **`dinnerUpsert`** schema gained `.trim()` so `"Tacos "` and `"Tacos"`
+  collapse on write (prevents long-tail history rot).
+- **`DinnerEditorSheet`** rebuilt to own its own date + week-anchor state. A
+  new `DinnerDateStrip` (7×72px pills, 64×64 chevrons) sits at the top; the
+  sheet fetches its own `useDinners(start, end)` via the shared `weekDates`
+  util so its query key collides with the parent layouts' identical query
+  and TanStack dedupes the network call. Save no longer auto-closes — the
+  user closes with Done/X. A "Saved" pill flashes for ~2s on successful
+  save (sticky top-right of body scroll so it stays visible). Footer
+  wording is dynamic: "Cancel" while edits are unsaved, "Done" once
+  `meal === currentMeal`. A new `DinnerSuggestionsList` renders below
+  the input; `filterSuggestions` does case-insensitive contains.
+- **HeroBand day cells** are now `<button>`s. Empty cells show a `+`;
+  planned cells show a pencil (18–20px, opacity 0.75). The "— tap to add"
+  CTA in the Tonight panel is gone (cards make the affordance now).
+  WallLayout passes `onTapDay` → opens the editor pre-filled. While the
+  editor is open the wall's 90s idle dismiss is suppressed.
+- **Cache invalidation** — `useDinnerMutations.settle` now also invalidates
+  `['dinner-suggestions']` for instant local feedback; the `dinners` SSE
+  poke fans out to the same key so cross-device edits stay fresh.
+
+### Design process
+- 3-persona pre-implementation review of the plan (senior engineer, UX, DBA)
+  caught 4 blockers + ~9 strong concerns: broken test-injection pattern,
+  wrong error code, undersized chevrons, idle-reset wiping the editor,
+  broken-build commit sequence, missing Save feedback, ambiguous Cancel/Done
+  wording, non-deterministic SQL canonical casing, missing trim-on-write,
+  week-key drift between parent + modal queries. All folded into plan rev 2
+  before implementation.
+- Subagent-driven execution: fresh implementer per task, spec-compliance
+  reviewer then code-quality reviewer per task. Quality reviewer on Task 9
+  caught an Important Saved-pill scroll-with-content bug (absolute inside
+  overflow-y-auto); fix subagent made it sticky in one commit.
+
+### Tests
+- +5 backend repo tests (`listSuggestions` truth-table incl. deterministic
+  tiebreaker).
+- +5 backend route tests (default + explicit limit + non-numeric + zero +
+  trim-on-write).
+- +6 frontend unit tests (`filterSuggestions`).
+- Backend 124/124, frontend 29/29, build clean.
+- Manual Playwright verify at 1280×800: hero strip glyphs, editor open
+  pre-filled, "Matches" typeahead, Saved pulse, dynamic Done/Cancel, next
+  week chevron, end-to-end save reflected on wall via SSE.
+
+### Verify
+```bash
+npm --workspace backend test
+npm --workspace frontend test
+npm run build
+docker compose up -d --build
+bash kiosk/reload.sh
+# Wall: tap any day pill in the hero strip → editor opens with that date.
+#       chevrons in the strip step weeks; typing partial meal name → matches.
+```
+
+---
+
 ## 2026-06-02 — Chores board + whole-codebase cleanup
 
 ### What was built
