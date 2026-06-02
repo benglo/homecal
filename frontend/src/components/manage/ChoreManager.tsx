@@ -82,23 +82,32 @@ export function ChoreManager() {
     });
   };
 
-  /** Swap position with the neighbour above/below in the same member's list. */
+  /** Swap position with the neighbour above/below in the same member's list.
+   *  Chained so a partial failure (first PUT succeeds, second fails) can't leave
+   *  two chores sharing the same position silently — the second only fires once
+   *  the first has been accepted. */
   const move = (chore: Chore, group: Chore[], dir: -1 | 1) => {
     const idx = group.findIndex((c) => c.id === chore.id);
     const neighbour = group[idx + dir];
     if (!neighbour) return;
     setError(null);
+    const onReorderError = (err: unknown) =>
+      setError({
+        id: chore.id,
+        message: err instanceof ApiError ? err.message : 'Could not reorder — try again.',
+      });
     update.mutate(
       { id: chore.id, body: { position: neighbour.position } },
       {
-        onError: (err) =>
-          setError({
-            id: chore.id,
-            message: err instanceof ApiError ? err.message : 'Could not reorder — try again.',
-          }),
+        onSuccess: () => {
+          update.mutate(
+            { id: neighbour.id, body: { position: chore.position } },
+            { onError: onReorderError }
+          );
+        },
+        onError: onReorderError,
       }
     );
-    update.mutate({ id: neighbour.id, body: { position: chore.position } });
   };
 
   // Group by member, sorted by position.
