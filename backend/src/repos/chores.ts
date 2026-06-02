@@ -97,6 +97,19 @@ export function updateChore(id: string, patch: ChoreUpdate): Chore {
     assignedTo: patch.assignedTo ?? existing.assignedTo,
     position: patch.position ?? existing.position,
   };
+  const dailyValid = next.frequency === 'daily' && next.dayOfWeek == null;
+  const weeklyValid =
+    next.frequency === 'weekly' &&
+    next.dayOfWeek != null &&
+    next.dayOfWeek >= 0 &&
+    next.dayOfWeek <= 6;
+  if (!dailyValid && !weeklyValid) {
+    throw httpError(
+      400,
+      'INVALID_DAY_OF_WEEK',
+      'weekly chores require dayOfWeek (0-6); daily chores must not have dayOfWeek'
+    );
+  }
   db.prepare(
     `UPDATE chores SET title=?, icon=?, stars=?, frequency=?, day_of_week=?, assigned_to=?, position=?, updated_at=?
      WHERE id=?`
