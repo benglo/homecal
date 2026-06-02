@@ -59,13 +59,14 @@ bash kiosk/reload.sh                     # reload Pi kiosk browser via CDP (or /
   persist together. It's gitignored; `data/` may be root-owned (created by the container).
 - Tests-first for anything touching recurrence; that engine is the riskiest code (`backend/src/recurrence.ts`).
 
-## Status (2026-06-02)
+## Status (2026-06-02, post-M5 chores)
 - **M0** scaffold + container — done (`f419063`)
 - **M1** data + API — done (`24d7651`), recurrence tests
 - **M2** wall UI — done (`5b3d5ed`), all 3 views verified via screenshot
 - **M3** editing (phone + sheets + mutations + SSE) — done; hardened after a pre-M4 review.
 - **M4** deploy + kiosk + backup — done. Deploy guide in `docs/deploy.md`.
-- **Tests:** backend 76/76, frontend 19/19, build clean.
+- **M5** chores board — done. Family members + chores + tap-to-complete on wall.
+- **Tests:** backend 114/114, frontend 23/23, build clean.
 
 ### Feature inventory (beyond core CRUD)
 - **Realtime** — in-process SSE broker (`GET /api/stream`); mutations `poke()`;
@@ -84,6 +85,10 @@ bash kiosk/reload.sh                     # reload Pi kiosk browser via CDP (or /
   `stop_grace_period: 30s`.
 - **Forms** — plain controlled React state, no react-hook-form/zod on frontend; API Zod is authoritative.
 - **Recurrence editing** — whole-series edit + This/All delete. "This-and-following" + modified overrides = v2.
+- **Chores board** — family members + chores CRUD with daily/weekly frequency,
+  tap-to-complete on wall with star-fly animation + chime (muted 8pm–7am),
+  optimistic updates, SSE sync. Phone managers for family + chores. 3 new tables
+  (`family_members`, `chores`, `chore_completions`). 38 backend + 4 frontend tests added.
 
 ## Gotchas
 - `better-sqlite3` is native — compiled for the **server's** arch inside the Docker build; `.dockerignore`
