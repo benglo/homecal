@@ -5,6 +5,7 @@ import { useCategoryMutations } from '../../core/hooks/useMutations';
 import { ApiError } from '../../core/api/client';
 import { CategoryChip } from '../primitives/CategoryChip';
 import { Button } from '../primitives/Button';
+import { SectionHeading } from './primitives/SectionHeading';
 
 interface Props {
   categories: Category[];
@@ -15,7 +16,11 @@ const UNCATEGORIZED = 'Uncategorized';
 
 /** Manage-tab list of categories: edit (→ sheet) + delete. Delete is blocked (409
  *  CATEGORY_IN_USE) when events reference it — we explain why and offer a one-tap
- *  "move them to Uncategorized & delete" (spec §4.2), rather than a dead-end error. */
+ *  "move them to Uncategorized & delete" (spec §4.2), rather than a dead-end error.
+ *
+ *  The row uses CategoryChip as the whole left/centre block (not a separate icon +
+ *  title pair), so it doesn't fit ManagerRow's leading/title/actions shape — kept
+ *  as a bespoke row. SectionHeading is shared. */
 export function CategoryManager({ categories, onEdit }: Props) {
   const { remove, reassign } = useCategoryMutations();
   const [blocked, setBlocked] = useState<{ id: string; message: string } | null>(null);
@@ -43,9 +48,7 @@ export function CategoryManager({ categories, onEdit }: Props) {
 
   return (
     <section>
-      <h2 className="font-semibold text-text-muted" style={{ fontSize: 13, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>
-        Categories
-      </h2>
+      <SectionHeading>Categories</SectionHeading>
       <ul className="flex flex-col gap-2">
         {categories.map((c) => {
           const canReassign = blocked?.id === c.id && !!uncategorized && uncategorized.id !== c.id;
