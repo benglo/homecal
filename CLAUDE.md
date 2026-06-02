@@ -45,6 +45,7 @@ npm run build                            # frontend/dist + backend/dist
 STATIC_DIR=frontend/dist npm start       # prod single-origin path locally
 npm --workspace backend test             # recurrence truth-table (node:test + tsx)
 docker compose up -d --build             # the supported deploy path
+bash kiosk/reload.sh                     # reload Pi kiosk browser via CDP (or /reload-kiosk)
 ```
 
 ## Conventions
