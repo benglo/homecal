@@ -7,6 +7,7 @@ import { iconFor } from '../../core/util/icons';
 import { Sheet } from './Sheet';
 import { Button } from '../primitives/Button';
 import { Field, FormError, TextInput } from './fields';
+import { TogglePill } from '../ui/TogglePill';
 
 interface Props {
   open: boolean;
@@ -115,25 +116,23 @@ export function CategoryEditorSheet({ open, onClose, category }: Props) {
         <div className="flex flex-wrap gap-2">
           {ICONS.map((key) => {
             const Ic = iconFor(key);
-            const active = key === icon;
             return (
-              <button
+              <TogglePill
                 key={key}
-                type="button"
+                active={key === icon}
                 onClick={() => setIcon(key)}
-                aria-pressed={active}
-                aria-label={key}
-                className="grid place-items-center rounded-md border"
+                ariaLabel={key}
                 style={{
                   width: 46,
                   height: 46,
-                  background: active ? 'var(--accent-weak)' : 'var(--surface)',
-                  borderColor: active ? 'var(--accent)' : 'var(--border)',
-                  color: active ? 'var(--accent-ink)' : 'var(--text-muted)',
+                  minHeight: 46,
+                  padding: 0,
+                  display: 'grid',
+                  placeItems: 'center',
                 }}
               >
                 <Ic size={20} strokeWidth={2} />
-              </button>
+              </TogglePill>
             );
           })}
         </div>

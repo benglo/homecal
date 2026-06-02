@@ -6,6 +6,7 @@ import { useChoreMutations } from '../../core/hooks/useMutations';
 import { ApiError } from '../../core/api/client';
 import { Button } from '../primitives/Button';
 import { TextInput } from '../sheets/fields';
+import { TogglePillGroup } from '../ui/TogglePill';
 
 type EditState =
   | { mode: 'edit'; id: string }
@@ -538,35 +539,20 @@ function ChoreForm({
         <span className="font-medium text-text-muted" style={labelStyle}>
           Frequency
         </span>
-        <div className="flex gap-2">
-          {(['daily', 'weekly'] as const).map((opt) => {
-            const active = frequency === opt;
-            return (
-              <button
-                key={opt}
-                type="button"
-                onClick={() => {
-                  setFrequency(opt);
-                  if (opt === 'daily') setDayOfWeek(null);
-                }}
-                aria-pressed={active}
-                className="rounded-md border font-semibold"
-                style={{
-                  flex: 1,
-                  minHeight: 44,
-                  fontSize: 15,
-                  background: active ? 'var(--accent-weak)' : 'var(--surface)',
-                  color: active ? 'var(--accent-ink)' : 'var(--text)',
-                  borderColor: active ? 'var(--accent)' : 'var(--border)',
-                  borderWidth: active ? 2 : 1,
-                  textTransform: 'capitalize',
-                }}
-              >
-                {opt}
-              </button>
-            );
-          })}
-        </div>
+        <TogglePillGroup
+          options={[
+            { value: 'daily', label: 'Daily' },
+            { value: 'weekly', label: 'Weekly' },
+          ]}
+          value={frequency}
+          onChange={(opt) => {
+            setFrequency(opt);
+            if (opt === 'daily') setDayOfWeek(null);
+          }}
+          ariaLabel="Frequency"
+          pillStyle={{ flex: 1, fontSize: 15 }}
+          className="flex gap-2"
+        />
       </div>
 
       {frequency === 'weekly' && (
@@ -574,32 +560,13 @@ function ChoreForm({
           <span className="font-medium text-text-muted" style={labelStyle}>
             Day
           </span>
-          <div className="flex flex-wrap gap-2">
-            {DOW_OPTIONS.map((opt) => {
-              const active = dayOfWeek === opt.value;
-              return (
-                <button
-                  key={opt.value}
-                  type="button"
-                  onClick={() => setDayOfWeek(opt.value)}
-                  aria-pressed={active}
-                  className="rounded-md border font-semibold"
-                  style={{
-                    minHeight: 44,
-                    minWidth: 56,
-                    padding: '6px 12px',
-                    fontSize: 14,
-                    background: active ? 'var(--accent-weak)' : 'var(--surface)',
-                    color: active ? 'var(--accent-ink)' : 'var(--text)',
-                    borderColor: active ? 'var(--accent)' : 'var(--border)',
-                    borderWidth: active ? 2 : 1,
-                  }}
-                >
-                  {opt.label}
-                </button>
-              );
-            })}
-          </div>
+          <TogglePillGroup
+            options={DOW_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+            value={dayOfWeek}
+            onChange={setDayOfWeek}
+            ariaLabel="Day of week"
+            pillStyle={{ minWidth: 56, padding: '6px 12px' }}
+          />
         </div>
       )}
 

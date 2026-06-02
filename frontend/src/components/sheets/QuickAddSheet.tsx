@@ -8,6 +8,7 @@ import { iconFor } from '../../core/util/icons';
 import { Sheet } from './Sheet';
 import { Button } from '../primitives/Button';
 import { Field, TextInput } from './fields';
+import { TogglePill } from '../ui/TogglePill';
 
 interface Props {
   open: boolean;
@@ -97,22 +98,13 @@ export function QuickAddSheet({ open, onClose, categories, defaultCategoryId, de
           {!allDay && (
             <TextInput type="time" value={time} onChange={(e) => setTime(e.target.value)} style={{ width: 'auto', flex: '0 1 120px' }} />
           )}
-          <button
-            type="button"
+          <TogglePill
+            active={allDay}
             onClick={() => setAllDay((v) => !v)}
-            aria-pressed={allDay}
-            className="rounded-md border font-medium"
-            style={{
-              minHeight: 46,
-              padding: '0 14px',
-              fontSize: 14,
-              background: allDay ? 'var(--accent-weak)' : 'var(--surface)',
-              borderColor: allDay ? 'var(--accent)' : 'var(--border)',
-              color: allDay ? 'var(--accent-ink)' : 'var(--text-muted)',
-            }}
+            style={{ minHeight: 46, padding: '0 14px' }}
           >
             All day
-          </button>
+          </TogglePill>
         </div>
       </Field>
     </Sheet>

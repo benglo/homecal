@@ -9,6 +9,7 @@ import { fromInputDateTime, nextHalfHour, nowBne, toInputDate, toInputDateTime }
 import { Sheet } from './Sheet';
 import { Button } from '../primitives/Button';
 import { CategoryPicker, Field, FormError, TextInput } from './fields';
+import { TogglePill, TogglePillGroup } from '../ui/TogglePill';
 
 interface Props {
   open: boolean;
@@ -233,23 +234,13 @@ function EventForm({
       </Field>
 
       <Field label="When">
-        <button
-          type="button"
+        <TogglePill
+          active={allDay}
           onClick={() => toggleAllDay(!allDay)}
-          aria-pressed={allDay}
-          className="inline-flex items-center gap-2 rounded-md border font-medium"
-          style={{
-            minHeight: 48,
-            padding: '8px 14px',
-            marginBottom: 12,
-            fontSize: 14,
-            background: allDay ? 'var(--accent-weak)' : 'var(--surface)',
-            borderColor: allDay ? 'var(--accent)' : 'var(--border)',
-            color: allDay ? 'var(--accent-ink)' : 'var(--text-muted)',
-          }}
+          style={{ minHeight: 48, padding: '8px 14px', marginBottom: 12 }}
         >
           All day
-        </button>
+        </TogglePill>
         <div className="flex flex-col gap-2">
           <label className="flex items-center gap-3">
             <span className="text-text-muted" style={{ width: 48, fontSize: 14 }}>
@@ -267,27 +258,15 @@ function EventForm({
       </Field>
 
       <Field label="Repeat" hint={editing && isRecurring ? 'Changes apply to the whole series.' : undefined}>
-        <div className="flex flex-wrap gap-2" style={{ marginBottom: freq !== 'none' ? 12 : 0 }}>
-          {FREQS.map((f) => (
-            <button
-              key={f}
-              type="button"
-              onClick={() => setFreq(f)}
-              aria-pressed={f === freq}
-              className="rounded-md border font-medium"
-              style={{
-                minHeight: 48,
-                padding: '8px 13px',
-                fontSize: 14,
-                background: f === freq ? 'var(--accent)' : 'var(--surface)',
-                color: f === freq ? '#fff' : 'var(--text-muted)',
-                borderColor: f === freq ? 'var(--accent)' : 'var(--border)',
-              }}
-            >
-              {REPEAT_LABELS[f]}
-            </button>
-          ))}
-        </div>
+        <TogglePillGroup
+          options={FREQS.map((f) => ({ value: f, label: REPEAT_LABELS[f] }))}
+          value={freq}
+          onChange={setFreq}
+          variant="solid"
+          pillStyle={{ minHeight: 48 }}
+          className="flex flex-wrap gap-2"
+        />
+        {freq !== 'none' && <div style={{ height: 12 }} />}
         {freq !== 'none' && (
           <label className="flex items-center gap-3">
             <span className="text-text-muted" style={{ width: 48, fontSize: 14 }}>
