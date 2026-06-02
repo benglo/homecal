@@ -110,22 +110,24 @@ export function DinnerEditorSheet({ open, onClose, initialDate }: Props) {
   return (
     <Sheet open onClose={onClose} title={`Dinner · ${pretty}`} actions={actions}>
       {savedAt > 0 && (
-        <span
+        <div
           aria-live="polite"
-          className="absolute rounded-full"
-          style={{
-            top: 24,
-            right: 90,
-            fontSize: 12,
-            padding: '4px 10px',
-            background: 'var(--accent-weak)',
-            color: 'var(--accent-ink)',
-            fontWeight: 600,
-            zIndex: 1,
-          }}
+          className="sticky flex justify-end pointer-events-none"
+          style={{ top: 0, marginBottom: -28, zIndex: 1 }}
         >
-          Saved
-        </span>
+          <span
+            className="rounded-full"
+            style={{
+              fontSize: 12,
+              padding: '4px 10px',
+              background: 'var(--accent-weak)',
+              color: 'var(--accent-ink)',
+              fontWeight: 600,
+            }}
+          >
+            Saved
+          </span>
+        </div>
       )}
       <DinnerDateStrip
         weekStart={week.start}
