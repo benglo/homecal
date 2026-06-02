@@ -2,9 +2,13 @@ import { useMutation, useQueryClient, type QueryClient } from '@tanstack/react-q
 import { api } from '../api/client';
 import type {
   CategoryInput,
+  ChoreBoard,
+  ChoreInput,
+  ChoreUpdateInput,
   EventCreateInput,
   EventOccurrence,
   EventUpdateInput,
+  FamilyMemberInput,
 } from '../model/types';
 
 /** Patch every cached ['events', …] window in place. Returns a rollback thunk
@@ -150,6 +154,106 @@ export function useCategoryMutations() {
   });
 
   return { create, update, remove, reassign };
+}
+
+/** Family member CRUD. Settle invalidates members + chore-board (member display).  */
+export function useFamilyMemberMutations() {
+  const qc = useQueryClient();
+  const settle = () => {
+    void qc.invalidateQueries({ queryKey: ['family-members'] });
+    void qc.invalidateQueries({ queryKey: ['chore-board'] });
+  };
+
+  const create = useMutation({
+    mutationFn: (body: FamilyMemberInput) => api.createFamilyMember(body),
+    onSettled: settle,
+  });
+
+  const update = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: FamilyMemberInput }) =>
+      api.updateFamilyMember(id, body),
+    onSettled: settle,
+  });
+
+  const remove = useMutation({
+    mutationFn: (id: string) => api.deleteFamilyMember(id),
+    onSettled: settle,
+  });
+
+  return { create, update, remove };
+}
+
+/** Chore CRUD. Settle invalidates chores + chore-board. */
+export function useChoreMutations() {
+  const qc = useQueryClient();
+  const settle = () => {
+    void qc.invalidateQueries({ queryKey: ['chores'] });
+    void qc.invalidateQueries({ queryKey: ['chore-board'] });
+  };
+
+  const create = useMutation({
+    mutationFn: (body: ChoreInput) => api.createChore(body),
+    onSettled: settle,
+  });
+
+  const update = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: ChoreUpdateInput }) =>
+      api.updateChore(id, body),
+    onSettled: settle,
+  });
+
+  const remove = useMutation({
+    mutationFn: (id: string) => api.deleteChore(id),
+    onSettled: settle,
+  });
+
+  return { create, update, remove };
+}
+
+/** Tap-to-complete a chore. Optimistic: flip the chip + bump totalStars so the
+ *  star animation fires immediately; SSE+invalidate reconciles. */
+export function useChoreCompletion() {
+  const qc = useQueryClient();
+
+  const complete = useMutation({
+    mutationFn: ({ choreId, date }: { choreId: string; date: string }) =>
+      api.completeChore(choreId, date),
+    onMutate: async ({ choreId }) => {
+      await qc.cancelQueries({ queryKey: ['chore-board'] });
+      const queries = qc.getQueriesData<ChoreBoard>({ queryKey: ['chore-board'] });
+      const rollback = () => queries.forEach(([k, d]) => qc.setQueryData(k, d));
+
+      const nowIso = new Date().toISOString();
+      for (const [key, data] of queries) {
+        if (!data) continue;
+        qc.setQueryData<ChoreBoard>(key, {
+          ...data,
+          members: data.members.map((m) => {
+            const target = m.chores.find((c) => c.id === choreId);
+            if (!target || target.completed) return m;
+            return {
+              ...m,
+              totalStars: m.totalStars + target.stars,
+              chores: m.chores.map((c) =>
+                c.id === choreId ? { ...c, completed: true, completedAt: nowIso } : c
+              ),
+            };
+          }),
+        });
+      }
+      return { rollback };
+    },
+    onError: (_e, _v, ctx) => ctx?.rollback(),
+    onSettled: () => void qc.invalidateQueries({ queryKey: ['chore-board'] }),
+  });
+
+  const uncomplete = useMutation({
+    mutationFn: ({ choreId, date }: { choreId: string; date: string }) =>
+      api.uncompleteChore(choreId, date),
+    onSettled: () => void qc.invalidateQueries({ queryKey: ['chore-board'] }),
+  });
+
+  return { complete, uncomplete };
 }
 
 export function usePhotoMutations() {

@@ -1,6 +1,16 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
-import type { Category, Dinner, EventMaster, EventOccurrence, Photo, WeatherData } from '../model/types';
+import type {
+  Category,
+  Chore,
+  ChoreBoard,
+  Dinner,
+  EventMaster,
+  EventOccurrence,
+  FamilyMember,
+  Photo,
+  WeatherData,
+} from '../model/types';
 
 export function useCategories() {
   return useQuery({
@@ -58,4 +68,28 @@ export function useWeather() {
 /** Map categories by id for chip lookup. */
 export function byId(categories: Category[] | undefined): Map<string, Category> {
   return new Map((categories ?? []).map((c) => [c.id, c]));
+}
+
+export function useFamilyMembers() {
+  return useQuery<FamilyMember[]>({
+    queryKey: ['family-members'],
+    queryFn: api.familyMembers,
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useChores() {
+  return useQuery<Chore[]>({
+    queryKey: ['chores'],
+    queryFn: api.chores,
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useChoreBoard(date: string) {
+  return useQuery<ChoreBoard>({
+    queryKey: ['chore-board', date],
+    queryFn: () => api.choreBoard(date),
+    placeholderData: keepPreviousData,
+  });
 }

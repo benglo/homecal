@@ -67,7 +67,7 @@ export interface Dinner {
   updatedAt: string;
 }
 
-export type WallView = 'agenda' | 'week' | 'month';
+export type WallView = 'agenda' | 'week' | 'month' | 'chores';
 
 export interface Photo {
   id: string;
@@ -75,6 +75,70 @@ export interface Photo {
   url: string;
   createdAt: string;
 }
+
+export interface FamilyMember {
+  id: string;
+  name: string;
+  icon: string;
+  updatedAt: string;
+}
+
+export interface Chore {
+  id: string;
+  title: string;
+  icon: string;
+  stars: number;
+  frequency: 'daily' | 'weekly';
+  dayOfWeek: number | null;
+  assignedTo: string;
+  position: number;
+  updatedAt: string;
+}
+
+export interface BoardChore {
+  id: string;
+  title: string;
+  icon: string;
+  stars: number;
+  completed: boolean;
+  completedAt: string | null;
+}
+
+export interface BoardMember {
+  id: string;
+  name: string;
+  icon: string;
+  totalStars: number;
+  chores: BoardChore[];
+}
+
+export interface ChoreBoard {
+  date: string;
+  members: BoardMember[];
+}
+
+export interface ChoreCompletion {
+  choreId: string;
+  completedDate: string;
+  completedAt: string;
+}
+
+export interface FamilyMemberInput {
+  name: string;
+  icon: string;
+}
+
+export interface ChoreInput {
+  title: string;
+  icon: string;
+  stars?: number;
+  frequency: 'daily' | 'weekly';
+  dayOfWeek?: number | null;
+  assignedTo: string;
+  position?: number;
+}
+
+export type ChoreUpdateInput = Partial<ChoreInput>;
 
 export interface WeatherData {
   temperature: number | null;

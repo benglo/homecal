@@ -100,6 +100,9 @@ export function WallLayout() {
 
       {view === 'agenda' ? (
         <AgendaView occurrences={occurrences} categories={cats} now={now} loading={eventsQ.isPending} onTap={onTap} />
+      ) : view === 'chores' ? (
+        /* ChoresView wired in a later task; placeholder keeps view-switching type-safe. */
+        <div className="flex-1" />
       ) : (
         <GridCalendar
           view={view}

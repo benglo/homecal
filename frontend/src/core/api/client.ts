@@ -1,11 +1,18 @@
 import type {
   Category,
   CategoryInput,
+  Chore,
+  ChoreBoard,
+  ChoreCompletion,
+  ChoreInput,
+  ChoreUpdateInput,
   Dinner,
   EventCreateInput,
   EventMaster,
   EventOccurrence,
   EventUpdateInput,
+  FamilyMember,
+  FamilyMemberInput,
   Photo,
   WeatherData,
 } from '../model/types';
@@ -100,4 +107,23 @@ export const api = {
 
   // weather
   weather: () => get<WeatherData>('/api/weather'),
+
+  // family members
+  familyMembers: () => get<FamilyMember[]>('/api/family-members'),
+  createFamilyMember: (body: FamilyMemberInput) => send<FamilyMember>('POST', '/api/family-members', body),
+  updateFamilyMember: (id: string, body: FamilyMemberInput) => send<FamilyMember>('PUT', `/api/family-members/${id}`, body),
+  deleteFamilyMember: (id: string) => send<void>('DELETE', `/api/family-members/${id}`),
+
+  // chores
+  chores: () => get<Chore[]>('/api/chores'),
+  createChore: (body: ChoreInput) => send<Chore>('POST', '/api/chores', body),
+  updateChore: (id: string, body: ChoreUpdateInput) => send<Chore>('PUT', `/api/chores/${id}`, body),
+  deleteChore: (id: string) => send<void>('DELETE', `/api/chores/${id}`),
+
+  // chore board + completion
+  choreBoard: (date: string) => get<ChoreBoard>(`/api/chore-board?date=${date}`),
+  completeChore: (id: string, date: string) =>
+    send<ChoreCompletion>('POST', `/api/chores/${id}/complete`, { date }),
+  uncompleteChore: (id: string, date: string) =>
+    send<void>('DELETE', `/api/chores/${id}/complete/${date}`),
 };
