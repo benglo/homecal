@@ -426,9 +426,11 @@ function ChoreForm({
   const [validationError, setValidationError] = useState<string | null>(null);
 
   const trimmedTitle = title.trim();
+  const trimmedIcon = icon.trim();
   const weeklyMissingDay = frequency === 'weekly' && dayOfWeek == null;
   const canSave =
     trimmedTitle.length > 0 &&
+    trimmedIcon.length > 0 &&
     assignedTo.length > 0 &&
     !weeklyMissingDay &&
     !isPending;
@@ -449,7 +451,7 @@ function ChoreForm({
     setValidationError(null);
     onSubmit({
       title: trimmedTitle,
-      icon: icon.trim(),
+      icon: trimmedIcon,
       stars: Math.max(1, Math.min(5, stars)),
       frequency,
       dayOfWeek: frequency === 'weekly' ? dayOfWeek : null,

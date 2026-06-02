@@ -262,11 +262,12 @@ function MemberForm({
   const [icon, setIcon] = useState(initialIcon);
 
   const trimmedName = name.trim();
-  const canSave = trimmedName.length > 0 && !isPending;
+  const trimmedIcon = icon.trim();
+  const canSave = trimmedName.length > 0 && trimmedIcon.length > 0 && !isPending;
 
   const submit = () => {
     if (!canSave) return;
-    onSubmit({ name: trimmedName, icon: icon.trim() });
+    onSubmit({ name: trimmedName, icon: trimmedIcon });
   };
 
   return (
