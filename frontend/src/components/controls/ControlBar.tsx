@@ -27,7 +27,7 @@ function periodLabel(view: WallView, anchor: DateTime): string {
   return a.toFormat('cccc d LLL');
 }
 
-const VIEWS: WallView[] = ['agenda', 'week', 'month'];
+const VIEWS: WallView[] = ['agenda', 'week', 'month', 'chores'];
 
 export function ControlBar({ view, anchor, onView, onPrev, onNext, onToday, isToday, onQuickAdd }: Props) {
   return (
@@ -49,7 +49,7 @@ export function ControlBar({ view, anchor, onView, onPrev, onNext, onToday, isTo
               color: v === view ? '#fff' : 'var(--text-muted)',
             }}
           >
-            {v}
+            {v === 'chores' ? '⭐ Chores' : v}
           </button>
         ))}
       </div>

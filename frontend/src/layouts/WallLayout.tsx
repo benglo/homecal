@@ -11,6 +11,7 @@ import { eventWindow, weekDates, nowBne, toInputDate } from '../core/util/time';
 import { HeroBand } from '../components/hero/HeroBand';
 import { AgendaView } from '../components/calendar/AgendaView';
 import { GridCalendar } from '../components/calendar/GridCalendar';
+import { ChoresBoard } from '../components/chores/ChoresBoard';
 import { ControlBar } from '../components/controls/ControlBar';
 import { AddChooser } from '../components/controls/AddChooser';
 import { DayDetailSheet } from '../components/sheets/DayDetailSheet';
@@ -52,10 +53,12 @@ export function WallLayout() {
   const dataUpdatedAt = Number.isFinite(oldest) ? oldest : 0;
   const dataIsError = eventsQ.isError || dinnersQ.isError;
 
-  const step = (dir: 1 | -1) =>
+  const step = (dir: 1 | -1) => {
+    if (view === 'chores') return;
     setAnchor((a) =>
       view === 'agenda' ? a.plus({ days: dir }) : view === 'week' ? a.plus({ weeks: dir }) : a.plus({ months: dir })
     );
+  };
   const goToday = () => setAnchor(now.startOf('day'));
   const isToday = anchor.hasSame(now, 'day') && (view !== 'month' || anchor.hasSame(now, 'month'));
 
@@ -101,8 +104,7 @@ export function WallLayout() {
       {view === 'agenda' ? (
         <AgendaView occurrences={occurrences} categories={cats} now={now} loading={eventsQ.isPending} onTap={onTap} />
       ) : view === 'chores' ? (
-        /* ChoresView wired in a later task; placeholder keeps view-switching type-safe. */
-        <div className="flex-1" />
+        <ChoresBoard />
       ) : (
         <GridCalendar
           view={view}
