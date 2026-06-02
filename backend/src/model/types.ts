@@ -52,6 +52,12 @@ export interface Dinner {
   updatedAt: string;
 }
 
+export interface DinnerSuggestion {
+  meal: string;       // canonical casing = most recent usage (deterministic — see repo)
+  count: number;      // total times used (case-insensitive)
+  lastUsed: string;   // ISO UTC of the most recent updated_at
+}
+
 export interface FamilyMember {
   id: string;
   name: string;
