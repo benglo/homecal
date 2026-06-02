@@ -1,6 +1,6 @@
 import { getDb } from '../db';
 import { newId } from '../util/ids';
-import { isoUtc } from '../util/time';
+import { nowIso } from '../util/time';
 import { httpError } from '../util/errors';
 import { familyMemberExists } from './familyMembers';
 import type {
@@ -37,8 +37,6 @@ const toChore = (r: ChoreRow): Chore => ({
   updatedAt: r.updated_at,
 });
 
-const now = () => isoUtc(new Date());
-
 export function listChores(): Chore[] {
   const db = getDb();
   return (
@@ -61,7 +59,7 @@ export function createChore(input: ChoreCreate): Chore {
     throw httpError(400, 'INVALID_MEMBER', 'Family member does not exist');
   }
   const id = newId();
-  const ts = now();
+  const ts = nowIso();
   db.prepare(
     `INSERT INTO chores (id, title, icon, stars, frequency, day_of_week, assigned_to, position, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -121,7 +119,7 @@ export function updateChore(id: string, patch: ChoreUpdate): Chore {
     next.dayOfWeek,
     next.assignedTo,
     next.position,
-    now(),
+    nowIso(),
     id
   );
   return getChore(id)!;
@@ -139,7 +137,7 @@ export function completeChore(
 ): { completion: ChoreCompletion; created: boolean } {
   const db = getDb();
   if (!getChore(choreId)) throw httpError(404, 'NOT_FOUND', 'Chore not found');
-  const ts = now();
+  const ts = nowIso();
   const info = db
     .prepare(
       `INSERT INTO chore_completions (chore_id, completed_date, completed_at)

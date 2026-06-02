@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import { getDb } from '../db';
 import { newId } from '../util/ids';
-import { isoUtc } from '../util/time';
+import { nowIso } from '../util/time';
 import { httpError } from '../util/errors';
 import type { Category } from '../model/types';
 import type { CategoryCreate, CategoryUpdate } from '../schemas';
@@ -21,8 +21,6 @@ const toCategory = (r: Row): Category => ({
   updatedAt: r.updated_at,
 });
 
-const now = () => isoUtc(new Date());
-
 export function listCategories(): Category[] {
   const db = getDb();
   return (db.prepare('SELECT * FROM categories ORDER BY name').all() as Row[]).map(toCategory);
@@ -36,7 +34,7 @@ export function getCategory(id: string): Category | null {
 export function createCategory(input: CategoryCreate): Category {
   const db = getDb();
   const id = newId();
-  const ts = now();
+  const ts = nowIso();
   try {
     db.prepare(
       `INSERT INTO categories (id, name, color, icon, created_at, updated_at)
@@ -62,7 +60,7 @@ export function updateCategory(id: string, patch: CategoryUpdate): Category {
       next.name,
       next.color,
       next.icon,
-      now(),
+      nowIso(),
       id
     );
   } catch (e) {
@@ -80,7 +78,7 @@ export function reassignEvents(fromId: string, toId: string): number {
   if (fromId === toId) throw httpError(400, 'BAD_REQUEST', 'Cannot reassign a category to itself');
   const info = db
     .prepare('UPDATE events SET category_id = ?, updated_at = ? WHERE category_id = ?')
-    .run(toId, now(), fromId);
+    .run(toId, nowIso(), fromId);
   return info.changes;
 }
 

@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import { getDb } from '../db';
 import { newId } from '../util/ids';
-import { isoUtc } from '../util/time';
+import { nowIso } from '../util/time';
 import { httpError } from '../util/errors';
 import type { FamilyMember } from '../model/types';
 import type { FamilyMemberCreate } from '../schemas';
@@ -20,8 +20,6 @@ const toMember = (r: Row): FamilyMember => ({
   updatedAt: r.updated_at,
 });
 
-const now = () => isoUtc(new Date());
-
 export function listFamilyMembers(): FamilyMember[] {
   const db = getDb();
   return (db.prepare('SELECT * FROM family_members ORDER BY name').all() as Row[]).map(toMember);
@@ -35,7 +33,7 @@ export function getFamilyMember(id: string): FamilyMember | null {
 export function createFamilyMember(input: FamilyMemberCreate): FamilyMember {
   const db = getDb();
   const id = newId();
-  const ts = now();
+  const ts = nowIso();
   try {
     db.prepare(
       `INSERT INTO family_members (id, name, icon, created_at, updated_at)
@@ -54,7 +52,7 @@ export function updateFamilyMember(id: string, input: FamilyMemberCreate): Famil
     db.prepare('UPDATE family_members SET name=?, icon=?, updated_at=? WHERE id=?').run(
       input.name,
       input.icon,
-      now(),
+      nowIso(),
       id
     );
   } catch (e) {

@@ -10,6 +10,9 @@ export function isoUtc(d: Date): string {
   return d.toISOString().replace(/\.\d{3}Z$/, 'Z');
 }
 
+/** Current UTC instant in storage format. Used for `created_at`/`updated_at`. */
+export const nowIso = (): string => isoUtc(new Date());
+
 /**
  * Normalize an incoming timestamp to the storage convention.
  * - all-day accepts a bare 'YYYY-MM-DD' (anchored at midnight UTC) or an instant.
