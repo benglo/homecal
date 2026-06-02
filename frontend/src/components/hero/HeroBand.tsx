@@ -1,6 +1,8 @@
 import type { DateTime } from 'luxon';
-import { Utensils } from 'lucide-react';
+import { DateTime as DT } from 'luxon';
+import { Utensils, Pencil, Plus } from 'lucide-react';
 import type { Dinner, WeatherData } from '../../core/model/types';
+import { ZONE } from '../../core/util/time';
 import { Clock } from '../primitives/Clock';
 import { StatusDot } from '../primitives/StatusDot';
 import { WeatherSidebar } from '../weather/WeatherSidebar';
@@ -12,12 +14,15 @@ interface Props {
   dataUpdatedAt: number;
   isError: boolean;
   weather?: WeatherData;
+  /** Tap a day pill → open DinnerEditorSheet with that date pre-filled. */
+  onTapDay: (date: string) => void;
 }
 
 const WEEKDAY = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-/** Hero band: Tonight dinner (rolls to tomorrow after 20:00) + week strip + clock. */
-export function HeroBand({ now, weekDays, dinners, dataUpdatedAt, isError, weather }: Props) {
+/** Hero band: Tonight dinner (rolls to tomorrow after 20:00) + week strip + clock.
+ *  Day pills are buttons; empty cells show a corner +, filled cells a pencil. */
+export function HeroBand({ now, weekDays, dinners, dataUpdatedAt, isError, weather, onTapDay }: Props) {
   const byDate = new Map(dinners.map((d) => [d.date, d.meal]));
   const todayKey = now.toFormat('yyyy-LL-dd');
   const rollToTomorrow = now.hour >= 20;
@@ -39,7 +44,7 @@ export function HeroBand({ now, weekDays, dinners, dataUpdatedAt, isError, weath
               <Utensils size={30} />
             </span>
             <span className="font-bold leading-none" style={{ fontSize: 56, letterSpacing: '-0.02em' }}>
-              {focusMeal ?? <span className="text-text-muted font-medium" style={{ fontSize: 38 }}>No dinner planned — tap to add</span>}
+              {focusMeal ?? <span className="text-text-muted font-medium" style={{ fontSize: 38 }}>No dinner planned</span>}
             </span>
           </div>
         </div>
@@ -47,12 +52,17 @@ export function HeroBand({ now, weekDays, dinners, dataUpdatedAt, isError, weath
           {weekDays.map((date, i) => {
             const isToday = date === todayKey;
             const meal = byDate.get(date);
+            const friendly = DT.fromISO(date, { zone: ZONE }).toFormat('cccc d LLLL');
             return (
-              <div
+              <button
                 key={date}
-                className="rounded-md border flex flex-col gap-1"
+                type="button"
+                onClick={() => onTapDay(date)}
+                aria-label={meal ? `Edit dinner for ${friendly}` : `Plan dinner for ${friendly}`}
+                className="relative rounded-md border flex flex-col gap-1 text-left"
                 style={{
                   padding: '9px 10px 11px',
+                  paddingRight: 28,
                   minHeight: 64,
                   background: isToday ? 'var(--accent-weak)' : 'var(--surface-2)',
                   borderColor: isToday ? 'color-mix(in srgb, var(--accent) 40%, transparent)' : 'var(--border)',
@@ -65,7 +75,14 @@ export function HeroBand({ now, weekDays, dinners, dataUpdatedAt, isError, weath
                 <div className="leading-tight" style={{ fontSize: 18, color: meal ? 'var(--text)' : 'var(--text-faint)' }}>
                   {meal ?? '—'}
                 </div>
-              </div>
+                <span
+                  aria-hidden
+                  className="absolute"
+                  style={{ top: 8, right: 8, color: 'var(--text-faint)', opacity: 0.75 }}
+                >
+                  {meal ? <Pencil size={18} /> : <Plus size={20} />}
+                </span>
+              </button>
             );
           })}
         </div>

@@ -46,7 +46,7 @@ export function WallLayout() {
   const [detailDate, setDetailDate] = useState<string | null>(null);
   const [chooserOpen, setChooserOpen] = useState(false);
   const [quickAddCategoryId, setQuickAddCategoryId] = useState<string | null>(null);
-  const [dinnerEditorOpen, setDinnerEditorOpen] = useState(false);
+  const [dinnerDate, setDinnerDate] = useState<string | null>(null);
 
   // Wall staleness = the worse of events + dinners (events is the primary data).
   const oldest = Math.min(eventsQ.dataUpdatedAt || Infinity, dinnersQ.dataUpdatedAt || Infinity);
@@ -65,11 +65,12 @@ export function WallLayout() {
   const dismissAll = () => {
     setChooserOpen(false);
     setQuickAddCategoryId(null);
-    setDinnerEditorOpen(false);
+    setDinnerDate(null);
     setDetailDate(null);
   };
 
   useIdleReset(90_000, () => {
+    if (dinnerDate !== null) return; // planning in progress — let the user finish
     setView('agenda');
     setAnchor(now.startOf('day'));
     dismissAll();
@@ -88,7 +89,6 @@ export function WallLayout() {
   const detailDinner = detailDate ? dinners.find((d) => d.date === detailDate)?.meal : undefined;
 
   const todayStr = toInputDate(nowBne().toUTC().toISO()!);
-  const todayMeal = dinners.find((d) => d.date === todayStr)?.meal ?? '';
 
   return (
     <div className="flex flex-col h-full overflow-hidden" style={{ filter: 'brightness(var(--kiosk-brightness))' }}>
@@ -99,6 +99,10 @@ export function WallLayout() {
         dataUpdatedAt={dataUpdatedAt}
         isError={dataIsError}
         weather={weatherQ.data}
+        onTapDay={(date) => {
+          dismissAll();
+          setDinnerDate(date);
+        }}
       />
 
       {view === 'agenda' ? (
@@ -136,7 +140,7 @@ export function WallLayout() {
         }}
         onDinner={() => {
           dismissAll();
-          setDinnerEditorOpen(true);
+          setDinnerDate(todayStr);
         }}
       />
 
@@ -157,10 +161,10 @@ export function WallLayout() {
       />
 
       <DinnerEditorSheet
-        open={dinnerEditorOpen}
-        onClose={() => setDinnerEditorOpen(false)}
-        date={todayStr}
-        currentMeal={todayMeal}
+        key={dinnerDate ?? 'closed'}
+        open={dinnerDate !== null}
+        onClose={() => setDinnerDate(null)}
+        initialDate={dinnerDate}
       />
 
       <VirtualKeyboard />
