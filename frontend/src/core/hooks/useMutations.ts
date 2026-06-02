@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
+import { optimisticPatch } from './optimisticPatch';
 import type {
   CategoryInput,
   ChoreBoard,
@@ -220,27 +221,21 @@ export function useChoreCompletion() {
       api.completeChore(choreId, date),
     onMutate: async ({ choreId }) => {
       await qc.cancelQueries({ queryKey: ['chore-board'] });
-      const queries = qc.getQueriesData<ChoreBoard>({ queryKey: ['chore-board'] });
-      const rollback = () => queries.forEach(([k, d]) => qc.setQueryData(k, d));
-
       const nowIso = new Date().toISOString();
-      for (const [key, data] of queries) {
-        if (!data) continue;
-        qc.setQueryData<ChoreBoard>(key, {
-          ...data,
-          members: data.members.map((m) => {
-            const target = m.chores.find((c) => c.id === choreId);
-            if (!target || target.completed) return m;
-            return {
-              ...m,
-              totalStars: m.totalStars + target.stars,
-              chores: m.chores.map((c) =>
-                c.id === choreId ? { ...c, completed: true, completedAt: nowIso } : c
-              ),
-            };
-          }),
-        });
-      }
+      const { rollback } = optimisticPatch<ChoreBoard>(qc, ['chore-board'], (data) => ({
+        ...data,
+        members: data.members.map((m) => {
+          const target = m.chores.find((c) => c.id === choreId);
+          if (!target || target.completed) return m;
+          return {
+            ...m,
+            totalStars: m.totalStars + target.stars,
+            chores: m.chores.map((c) =>
+              c.id === choreId ? { ...c, completed: true, completedAt: nowIso } : c
+            ),
+          };
+        }),
+      }));
       return { rollback };
     },
     onError: (_e, _v, ctx) => ctx?.rollback(),
