@@ -51,3 +51,54 @@ export interface Dinner {
   meal: string;
   updatedAt: string;
 }
+
+export interface FamilyMember {
+  id: string;
+  name: string;
+  icon: string;
+  updatedAt: string;
+}
+
+export type ChoreFrequency = 'daily' | 'weekly';
+
+export interface Chore {
+  id: string;
+  title: string;
+  icon: string;
+  stars: number;
+  frequency: ChoreFrequency;
+  dayOfWeek: number | null;
+  assignedTo: string;
+  position: number;
+  updatedAt: string;
+}
+
+export interface ChoreCompletion {
+  choreId: string;
+  completedDate: string;
+  completedAt: string;
+}
+
+export interface BoardChore {
+  id: string;
+  title: string;
+  icon: string;
+  stars: number;
+  completed: boolean;
+  completedAt: string | null;
+}
+
+export interface BoardMember {
+  id: string;
+  name: string;
+  icon: string;
+  totalStars: number;
+  chores: BoardChore[];
+}
+
+export interface ChoreBoard {
+  date: string;
+  members: BoardMember[];
+}
+
+export type FamilyMemberCreate = { name: string; icon: string };

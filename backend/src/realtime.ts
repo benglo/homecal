@@ -2,7 +2,7 @@
  *  subscribes; mutation routes call `poke()` so every connected client refetches.
  *  LAN, single process, single in-memory connection — a Set of listeners is plenty. */
 
-export type PokeKind = 'events' | 'dinners' | 'categories' | 'photos';
+export type PokeKind = 'events' | 'dinners' | 'categories' | 'photos' | 'chores' | 'family-members';
 
 export interface Poke {
   kind: PokeKind;

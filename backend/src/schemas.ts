@@ -74,3 +74,47 @@ export type CategoryUpdate = z.infer<typeof categoryUpdate>;
 // Use output type so `allDay` (which has .default) is a required boolean post-parse.
 export type EventCreate = z.output<typeof eventCreate>;
 export type EventUpdate = z.infer<typeof eventUpdate>;
+
+export const familyMemberCreate = z.object({
+  name: z.string().min(1).max(64),
+  icon: z.string().min(1).max(16),
+});
+export const familyMemberUpdate = familyMemberCreate;
+
+export const choreCreate = z
+  .object({
+    title: z.string().min(1).max(256),
+    icon: z.string().min(1).max(16),
+    stars: z.number().int().min(1).max(5).default(1),
+    frequency: z.enum(['daily', 'weekly']),
+    dayOfWeek: z.number().int().min(0).max(6).nullable().optional(),
+    assignedTo: z.string().min(1),
+    position: z.number().int().min(0).default(0),
+  })
+  .refine(
+    (o) =>
+      o.frequency === 'daily'
+        ? o.dayOfWeek == null
+        : o.dayOfWeek != null && o.dayOfWeek >= 0 && o.dayOfWeek <= 6,
+    { message: 'weekly chores require dayOfWeek (0-6); daily chores must not have dayOfWeek', path: ['dayOfWeek'] }
+  );
+
+export const choreUpdate = z
+  .object({
+    title: z.string().min(1).max(256).optional(),
+    icon: z.string().min(1).max(16).optional(),
+    stars: z.number().int().min(1).max(5).optional(),
+    frequency: z.enum(['daily', 'weekly']).optional(),
+    dayOfWeek: z.number().int().min(0).max(6).nullable().optional(),
+    assignedTo: z.string().min(1).optional(),
+    position: z.number().int().min(0).optional(),
+  })
+  .refine((o) => Object.keys(o).length > 0, { message: 'no fields to update' });
+
+export const choreCompleteBody = z.object({
+  date: dateParam,
+});
+
+export type FamilyMemberCreate = z.infer<typeof familyMemberCreate>;
+export type ChoreCreate = z.output<typeof choreCreate>;
+export type ChoreUpdate = z.infer<typeof choreUpdate>;
