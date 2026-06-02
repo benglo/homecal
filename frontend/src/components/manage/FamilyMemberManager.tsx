@@ -1,11 +1,15 @@
 import { useState } from 'react';
-import { Pencil, Trash2, Plus } from 'lucide-react';
+import { Pencil, Trash2 } from 'lucide-react';
 import type { FamilyMember } from '../../core/model/types';
 import { useFamilyMembers } from '../../core/hooks/useData';
 import { useFamilyMemberMutations } from '../../core/hooks/useMutations';
 import { ApiError } from '../../core/api/client';
 import { Button } from '../primitives/Button';
 import { TextInput } from '../sheets/fields';
+import { SectionHeading } from './primitives/SectionHeading';
+import { ManagerRow } from './primitives/ManagerRow';
+import { InlineConfirmDelete } from './primitives/InlineConfirmDelete';
+import { InlineAddButton } from './primitives/InlineAddButton';
 
 type EditState = { mode: 'edit'; id: string } | { mode: 'add' } | null;
 
@@ -58,12 +62,7 @@ export function FamilyMemberManager() {
 
   return (
     <section style={{ marginBottom: 24 }}>
-      <h2
-        className="font-semibold text-text-muted"
-        style={{ fontSize: 13, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}
-      >
-        Family members
-      </h2>
+      <SectionHeading>Family members</SectionHeading>
 
       {familyMembersQ.isPending && (
         <p className="text-text-faint" style={{ fontSize: 14, padding: '8px 0' }}>
@@ -77,40 +76,41 @@ export function FamilyMemberManager() {
           const isConfirming = confirmDelete === m.id;
           const rowError = error?.id === m.id ? error.message : null;
           return (
-            <li
-              key={m.id}
-              className="rounded-md border border-border"
-              style={{ background: 'var(--surface)' }}
-            >
+            <li key={m.id}>
               {isEditing ? (
-                <MemberForm
-                  initialName={m.name}
-                  initialIcon={m.icon}
-                  submitLabel="Save"
-                  isPending={update.isPending}
-                  errorMessage={rowError}
-                  onCancel={cancel}
-                  onSubmit={(body) =>
-                    update.mutate(
-                      { id: m.id, body },
-                      {
-                        onSuccess: () => {
-                          setEditing(null);
-                          setError(null);
+                <div
+                  className="rounded-md border border-border"
+                  style={{ background: 'var(--surface)' }}
+                >
+                  <MemberForm
+                    initialName={m.name}
+                    initialIcon={m.icon}
+                    submitLabel="Save"
+                    isPending={update.isPending}
+                    errorMessage={rowError}
+                    onCancel={cancel}
+                    onSubmit={(body) =>
+                      update.mutate(
+                        { id: m.id, body },
+                        {
+                          onSuccess: () => {
+                            setEditing(null);
+                            setError(null);
+                          },
+                          onError: (err) =>
+                            setError({
+                              id: m.id,
+                              message:
+                                err instanceof ApiError ? err.message : 'Could not save — try again.',
+                            }),
                         },
-                        onError: (err) =>
-                          setError({
-                            id: m.id,
-                            message:
-                              err instanceof ApiError ? err.message : 'Could not save — try again.',
-                          }),
-                      },
-                    )
-                  }
-                />
+                      )
+                    }
+                  />
+                </div>
               ) : (
-                <>
-                  <div className="flex items-center gap-3" style={{ padding: '10px 12px' }}>
+                <ManagerRow
+                  leading={
                     <span
                       className="grid place-items-center shrink-0 rounded-md"
                       style={{
@@ -123,53 +123,42 @@ export function FamilyMemberManager() {
                     >
                       {m.icon || '👤'}
                     </span>
-                    <span
-                      className="flex-1 min-w-0 font-semibold text-text truncate"
-                      style={{ fontSize: 16 }}
-                    >
-                      {m.name}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => startEdit(m)}
-                      aria-label={`Edit ${m.name}`}
-                      className="grid place-items-center rounded-md text-text-muted"
-                      style={{ width: 48, height: 48 }}
-                    >
-                      <Pencil size={18} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => requestDelete(m.id)}
-                      aria-label={`Delete ${m.name}`}
-                      className="grid place-items-center rounded-md"
-                      style={{ width: 48, height: 48, color: 'var(--stale)' }}
-                    >
-                      <Trash2 size={18} />
-                    </button>
-                  </div>
-                  {isConfirming && (
-                    <div style={{ padding: '0 12px 12px' }}>
-                      <p
-                        className="text-text-muted"
-                        style={{ fontSize: 13, marginBottom: 10 }}
-                        role="alert"
+                  }
+                  title={m.name}
+                  actions={
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => startEdit(m)}
+                        aria-label={`Edit ${m.name}`}
+                        className="grid place-items-center rounded-md text-text-muted"
+                        style={{ width: 48, height: 48 }}
                       >
-                        Delete <strong>{m.name}</strong>? All of their chores will be removed too.
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        <Button
-                          variant="danger"
-                          onClick={() => confirmDeleteFor(m)}
-                          disabled={remove.isPending}
-                        >
-                          {remove.isPending ? 'Deleting…' : 'Delete'}
-                        </Button>
-                        <Button variant="ghost" onClick={() => setConfirmDelete(null)}>
-                          Cancel
-                        </Button>
-                      </div>
-                    </div>
+                        <Pencil size={18} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => requestDelete(m.id)}
+                        aria-label={`Delete ${m.name}`}
+                        className="grid place-items-center rounded-md"
+                        style={{ width: 48, height: 48, color: 'var(--stale)' }}
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                    </>
+                  }
+                >
+                  {isConfirming && (
+                    <InlineConfirmDelete
+                      message={
+                        <>
+                          Delete <strong>{m.name}</strong>? All of their chores will be removed too.
+                        </>
+                      }
+                      onConfirm={() => confirmDeleteFor(m)}
+                      onCancel={() => setConfirmDelete(null)}
+                      busy={remove.isPending}
+                    />
                   )}
                   {rowError && !isConfirming && (
                     <div style={{ padding: '0 12px 12px' }}>
@@ -182,7 +171,7 @@ export function FamilyMemberManager() {
                       </p>
                     </div>
                   )}
-                </>
+                </ManagerRow>
               )}
             </li>
           );
@@ -218,21 +207,7 @@ export function FamilyMemberManager() {
           />
         </div>
       ) : (
-        <button
-          type="button"
-          onClick={startAdd}
-          className="flex items-center gap-2 rounded-md border border-border font-semibold"
-          style={{
-            marginTop: 10,
-            padding: '10px 16px',
-            fontSize: 14,
-            background: 'var(--surface)',
-            color: 'var(--accent)',
-          }}
-        >
-          <Plus size={16} />
-          Add family member
-        </button>
+        <InlineAddButton onClick={startAdd}>Add family member</InlineAddButton>
       )}
     </section>
   );
