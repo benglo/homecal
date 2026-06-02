@@ -4,6 +4,111 @@ Running log of work per session. Newest first. Pair with `git log` for exact dif
 
 ---
 
+## 2026-06-02 — Chores board + whole-codebase cleanup
+
+### What was built
+
+#### Chores board (M5)
+- **3 new SQLite tables** — `family_members`, `chores`, `chore_completions`. v2 migration via
+  the existing `user_version` runner. CHECK constraints on `(frequency, day_of_week)` (DB layer
+  has a known three-valued-logic gap on `(weekly, NULL)` — closed at Zod + repo layers).
+  Composite PK `(chore_id, completed_date)` makes completion idempotent.
+- **Backend CRUD** — `/api/family-members` (CRUD with 409 on duplicate name) and `/api/chores`
+  (CRUD + `INVALID_DAY_OF_WEEK` on bad frequency/dayOfWeek combos).
+- **Board endpoint** — `GET /api/chore-board?date=YYYY-MM-DD` (defaults to today in Brisbane).
+  3-query design: members (name order) + due chores (LEFT JOIN completions, frequency filter
+  via `strftime('%w', date)`) + all-time star totals (COALESCE sum, INNER JOIN). No N+1.
+- **Completion endpoints** — `POST /api/chores/:id/complete` returns 201 first time, 200 on
+  idempotent re-complete; `DELETE /api/chores/:id/complete/:date` returns 204 or 404.
+- **SSE poke kinds** — added `'chores'` and `'family-members'`. Frontend `KIND_TO_KEYS` fans
+  these out to invalidate both the entity list and the `chore-board` query.
+- **Wall UI** — `⭐ Chores` view in ControlBar. `ChoresBoard` renders columns per member with
+  icon + name + ⭐ totalStars. `ChoreCard` is a tap-to-complete button (disabled when done)
+  with `choreCardPop` animation. `StarBurst` fires N ⭐ particles from card to star counter
+  via `starFly` keyframe + CSS custom props. `useChimeSound` plays a Web Audio sine sweep
+  (muted 8pm-7am Brisbane).
+- **Optimistic completion** — `useChoreCompletion` flips `completed:true` and bumps
+  `totalStars` in the cache before the request, rolls back on error. Guards against double-tap
+  (skips if already completed) so star bump can't double-count.
+- **Phone managers** — `FamilyMemberManager` (list, edit, delete with cascade warning, add)
+  and `ChoreManager` (grouped by member, frequency toggle, day-of-week picker storing 0=Sun,
+  position swap via two sequential PUTs).
+- **`useBrisbaneDate`** hook — returns today's Brisbane date, re-evaluates at local midnight
+  (luxon-based; the frontend already had luxon).
+
+#### Whole-codebase DRY + god-files review
+Three parallel review agents (backend / frontend / cross-cutting) audited the post-chores
+branch. Triage doc saved at `docs/superpowers/reviews/2026-06-02-dry-godfiles-review.md`.
+Four cleanup PRs landed.
+
+- **PR 1** — `nowIso`/`uniqueOr` lifted to backend utils; frontend `maxLength` on TextInputs
+  to match backend Zod caps; blank-icon disables Save in both managers; `ChoreManager.move`
+  chains the second mutation in the first's `onSuccess` (so a partial failure no longer leaves
+  duplicate positions); `BRISBANE_OFFSET_MS` documented (frontend uses luxon
+  `Australia/Brisbane`; if Brisbane ever adopts DST the constants will skew by 1h).
+- **PR 2** — Manage primitives extracted: `SectionHeading`, `ManagerRow`,
+  `InlineConfirmDelete`, `InlineAddButton` (`components/manage/primitives/`). `TogglePill` +
+  `TogglePillGroup` extracted (`components/ui/`). 6 toggle-pill sites migrated. ChoreManager
+  split into `ChoreManager` + `ChoreForm` + `ChoreRow`: **642 → 247 lines**.
+- **PR 3** — `registerCrud` helper handles the 4 standard handlers
+  (`GET list / POST 201+poke / PUT 200+poke / DELETE 204+poke`). `familyMembers`, `categories`,
+  and `chores` migrated; `events` left bespoke (its list endpoint takes a window query and
+  returns expanded occurrences — different shape). Test bootstrap helpers
+  (`setupIsolatedDb`, `createTestApp`) lifted to `backend/src/test/util/bootstrap.ts`.
+- **PR 4** — `EventEditorSheet` split into `EventEditorBody` + `EventForm` +
+  `EventRecurrenceField` + `EventDeleteConfirm`: **349 → 26 lines**. Generic `optimisticPatch<T>`
+  helper in `core/hooks/optimisticPatch.ts`; `useChoreCompletion` adopted it.
+
+### Design process
+- Brainstorming sub-skill → spec doc + 3-persona review (Parent A, Parent B, Senior Engineer).
+- Writing-plans sub-skill → 15-task implementation plan with explicit task boundaries.
+- Subagent-driven execution: per task a fresh implementer + spec reviewer + code-quality
+  reviewer. Caught + fixed a real bug mid-stream: `updateChore` could PATCH `frequency=daily`
+  while preserving a non-null `dayOfWeek`, producing a 500 from the DB CHECK; added
+  `INVALID_DAY_OF_WEEK` 400 in the repo (commit `feca914`).
+- Final cross-cutting review caught `StarBurst` was wired-but-never-rendered. Plumbed it
+  through `ChoreCard` in `46b8d20` so the star-fly animation actually fires.
+
+### Tests
+- **+38 backend tests** — 12 board truth-table cases (daily, weekly, completion, idempotency,
+  cascades, CHECK violations), 9 family-member route integration tests, 17 chore route
+  integration tests.
+- **+4 frontend tests** — `useBrisbaneDate` logic-only (no React testing infra in this project).
+- Backend **114/114**, frontend **23/23**, build clean throughout.
+
+### Files changed
+Too many for a flat list this session — roughly 30 new files plus modifications. Highlights:
+- New backend: `repos/{familyMembers,chores}.ts`, `routes/{familyMembers,chores}.ts`,
+  `routes/crud.ts`, `test/util/bootstrap.ts`, migration v2 in `db/migrate.ts`.
+- New frontend: `components/chores/{ChoresBoard,MemberColumn,ChoreCard,StarBurst,useChimeSound}`,
+  `components/manage/{FamilyMemberManager,ChoreManager,ChoreForm,ChoreRow}`,
+  `components/manage/primitives/{SectionHeading,ManagerRow,InlineConfirmDelete,InlineAddButton}`,
+  `components/ui/TogglePill`, `components/sheets/event/{EventEditorBody,EventForm,EventRecurrenceField,EventDeleteConfirm}`,
+  `core/hooks/{useBrisbaneDate,optimisticPatch}.ts`.
+- Touched: `realtime.ts` (PokeKind), `schemas.ts` (+Zod), `model/types.ts` (both workspaces),
+  `useMutations.ts` / `useData.ts` / `useRealtime.ts`, `WallLayout.tsx`, `PhoneLayout.tsx`,
+  `ControlBar.tsx`.
+
+### Deploy
+- Container rebuilt + restarted in dev (`docker compose up -d --build`).
+- v2 migration applied to existing DB on first boot; `schemaVersion: 2` reported by
+  `/api/health`. No data loss — events/categories/dinners untouched.
+- Kiosk reload deferred (no family members or chores seeded yet; nothing to display).
+
+### Verify
+```bash
+npm --workspace backend test          # 114/114
+npm --workspace frontend test         # 23/23
+npm run build                         # clean
+curl -s localhost:8787/api/health     # {"ok":true,"db":"ok","schemaVersion":2}
+curl -s localhost:8787/api/chore-board  # {"date":"2026-06-02","members":[]}
+# Phone: manage tab → add family members and chores
+# Wall: ⭐ Chores button shows the board with tap-to-complete + star animation + chime
+bash kiosk/reload.sh                  # once there's something to display
+```
+
+---
+
 ## 2026-06-02 — v2: Weather sidebar + wall UI polish
 
 ### What was built
