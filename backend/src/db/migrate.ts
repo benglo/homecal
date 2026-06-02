@@ -58,6 +58,45 @@ const MIGRATIONS: Migration[] = [
     `);
     seedCategories(db);
   },
+  // v2 — chores board (family_members, chores, chore_completions)
+  (db) => {
+    db.exec(`
+      CREATE TABLE family_members (
+        id         TEXT PRIMARY KEY,
+        name       TEXT NOT NULL UNIQUE,
+        icon       TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+      );
+
+      CREATE TABLE chores (
+        id          TEXT PRIMARY KEY,
+        title       TEXT NOT NULL CHECK (length(title) > 0),
+        icon        TEXT NOT NULL,
+        stars       INTEGER NOT NULL DEFAULT 1 CHECK (stars >= 1 AND stars <= 5),
+        frequency   TEXT NOT NULL CHECK (frequency IN ('daily', 'weekly')),
+        day_of_week INTEGER,
+        assigned_to TEXT NOT NULL REFERENCES family_members(id) ON DELETE CASCADE,
+        position    INTEGER NOT NULL DEFAULT 0,
+        created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+        updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+        CHECK (
+          (frequency = 'weekly' AND day_of_week BETWEEN 0 AND 6) OR
+          (frequency = 'daily'  AND day_of_week IS NULL)
+        )
+      );
+
+      CREATE TABLE chore_completions (
+        chore_id       TEXT NOT NULL REFERENCES chores(id) ON DELETE CASCADE,
+        completed_date TEXT NOT NULL CHECK (completed_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+        completed_at   TEXT NOT NULL,
+        PRIMARY KEY (chore_id, completed_date)
+      );
+
+      CREATE INDEX idx_chores_assigned_to       ON chores(assigned_to);
+      CREATE INDEX idx_chore_completions_date   ON chore_completions(completed_date);
+    `);
+  },
 ];
 
 /** Seed categories — idempotent, Okabe–Ito palette from the design system. */
