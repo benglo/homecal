@@ -21,6 +21,19 @@ API_TIMEOUT_SEC = 10
 AGENDA_MAX_ITEMS = 3
 
 
+def _canon_meal(s: str) -> str:
+    """Canonicalise a meal name for storage and display.
+
+    STT returns whatever case the model emitted ("tacos", "pasta") — usually
+    lowercase. We title-case it, but preserve all-caps tokens (BBQ, PB&J)
+    rather than mangling them via plain `.title()`.
+    """
+    s = (s or "").strip()
+    if not s:
+        return s
+    return " ".join(t if t.isupper() and len(t) > 1 else t.capitalize() for t in s.split())
+
+
 def _unwrap(json_body):
     """Backend list endpoints (`/api/family-members`, `/api/chores`,
     `/api/dinners`, `/api/events`) currently return bare arrays. Accept
@@ -52,14 +65,15 @@ class Executor:
         return handler(r.fields)
 
     def _dinner_set(self, f: dict) -> dict:
+        meal = _canon_meal(f["meal"])
         r = requests.put(
             f"{self.base}/api/dinners/{f['date']}",
-            json={"meal": f["meal"]},
+            json={"meal": meal},
             headers=self.headers,
             timeout=API_TIMEOUT_SEC,
         )
         r.raise_for_status()
-        return {"ok": True, "spoken": f"Saved {f['meal']} for {self._humanise(f['date'])}."}
+        return {"ok": True, "spoken": f"Saved {meal} for {self._humanise(f['date'])}."}
 
     def _chore_complete(self, f: dict) -> dict:
         members = _unwrap(requests.get(f"{self.base}/api/family-members", timeout=API_TIMEOUT_SEC).json())

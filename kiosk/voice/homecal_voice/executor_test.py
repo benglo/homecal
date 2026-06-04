@@ -1,4 +1,4 @@
-from homecal_voice.executor import Executor, _unwrap
+from homecal_voice.executor import Executor, _canon_meal, _unwrap
 from homecal_voice.intent import IntentResult
 
 
@@ -25,12 +25,38 @@ def test_unwrap_unexpected_shape_returns_empty():
 
 
 def test_dinner_set_posts_to_dinners(requests_mock):
-    requests_mock.put("http://api/api/dinners/2026-06-04", json={"ok": True})
+    posted = []
+
+    def cb(request, _ctx):
+        posted.append(request.json())
+        return {"ok": True}
+
+    requests_mock.put("http://api/api/dinners/2026-06-04", json=cb)
     ex = Executor(base="http://api", token="t")
     res = IntentResult("dinner_set", {"date": "2026-06-04", "meal": "tacos"}, 0.92, "")
     out = ex.apply(res)
     assert out["ok"] is True
-    assert "tacos" in out["spoken"].lower()
+    # STT returns "tacos"; we canonicalise to "Tacos" before storage AND speech
+    # so the wall display matches the spoken confirmation.
+    assert posted[0]["meal"] == "Tacos"
+    assert "Tacos" in out["spoken"]
+
+
+def test_canon_meal_title_cases_lowercase():
+    assert _canon_meal("tacos") == "Tacos"
+    assert _canon_meal("mac and cheese") == "Mac And Cheese"
+
+
+def test_canon_meal_preserves_all_caps_acronyms():
+    """Plain .title() would mangle 'BBQ' to 'Bbq'."""
+    assert _canon_meal("BBQ chicken") == "BBQ Chicken"
+    assert _canon_meal("PB&J") == "PB&J"
+
+
+def test_canon_meal_strips_and_handles_empty():
+    assert _canon_meal("  tacos  ") == "Tacos"
+    assert _canon_meal("") == ""
+    assert _canon_meal("   ") == ""
 
 
 # --- chore_complete --------------------------------------------------------
