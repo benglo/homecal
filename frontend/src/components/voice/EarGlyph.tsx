@@ -1,4 +1,5 @@
 import { Mic, MicOff, Loader2, Check, AlertCircle } from 'lucide-react';
+import type { ComponentType, SVGProps } from 'react';
 import type { OverlayState } from './voiceState';
 
 interface Props {
@@ -6,42 +7,44 @@ interface Props {
   muted: boolean;
 }
 
-const ringFor = (k: OverlayState['kind']) =>
-  k === 'listening' || k === 'thinking'
-    ? 'var(--accent)'
-    : k === 'applied'
-      ? 'var(--accent-ink)'
-      : 'var(--text-muted)';
+type LucideIcon = ComponentType<SVGProps<SVGSVGElement> & { size?: number | string }>;
+type Kind = OverlayState['kind'];
+
+const ICON_BY_KIND: Record<Kind, LucideIcon> = {
+  idle: Mic,
+  listening: Mic,
+  thinking: Loader2,
+  confirming: Mic,
+  applied: Check,
+  failed: AlertCircle,
+  mic_offline: AlertCircle,
+  voice_offline: AlertCircle,
+};
+
+const LABEL_BY_KIND: Record<Kind, string> = {
+  idle: 'say "hey mycroft"',
+  listening: 'listening…',
+  thinking: 'thinking…',
+  confirming: 'confirm?',
+  applied: 'done',
+  failed: "didn't catch that",
+  mic_offline: 'mic offline',
+  voice_offline: 'voice offline',
+};
+
+const ACCENT_COLOR_KINDS: ReadonlySet<Kind> = new Set(['listening', 'thinking']);
+const PULSING_KINDS: ReadonlySet<Kind> = new Set(['listening', 'thinking']);
+
+const ringFor = (k: Kind): string => {
+  if (ACCENT_COLOR_KINDS.has(k)) return 'var(--accent)';
+  if (k === 'applied') return 'var(--accent-ink)';
+  return 'var(--text-muted)';
+};
 
 export function EarGlyph({ state, muted }: Props) {
-  const pulsing = state.kind === 'listening' || state.kind === 'thinking';
-  const Icon = muted
-    ? MicOff
-    : state.kind === 'thinking'
-      ? Loader2
-      : state.kind === 'applied'
-        ? Check
-        : state.kind === 'failed' || state.kind === 'mic_offline' || state.kind === 'voice_offline'
-          ? AlertCircle
-          : Mic;
-
-  const label = muted
-    ? 'voice muted'
-    : state.kind === 'idle'
-      ? 'say "hey mycroft"'
-      : state.kind === 'listening'
-        ? 'listening…'
-        : state.kind === 'thinking'
-          ? 'thinking…'
-          : state.kind === 'confirming'
-            ? 'confirm?'
-            : state.kind === 'applied'
-              ? 'done'
-              : state.kind === 'failed'
-                ? "didn't catch that"
-                : state.kind === 'mic_offline'
-                  ? 'mic offline'
-                  : 'voice offline';
+  const Icon = muted ? MicOff : ICON_BY_KIND[state.kind];
+  const label = muted ? 'voice muted' : LABEL_BY_KIND[state.kind];
+  const pulsing = PULSING_KINDS.has(state.kind);
 
   return (
     <div

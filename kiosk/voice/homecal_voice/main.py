@@ -1,11 +1,46 @@
-import logging, signal, time, sys
+"""Top-level orchestration loop for the Pi voice service.
+
+Per utterance:
+    wake -> record -> STT -> intent -> (auto-apply | confirm | silent-fail)
+    Confirmation loop listens 5s for yes/no/edit/ambiguous.
+
+Heartbeat thread + mute SSE listener run as daemons; SIGTERM drains the
+mic and exits cleanly.
+"""
+
+import logging
+import signal
+import sys
+import time
+import threading
 from dataclasses import dataclass
 from typing import Callable
+
+import requests as _requests
 from uuid_utils import uuid7
+
 from homecal_voice.config import load_config
-from homecal_voice.intent import IntentResult, build_system_prompt, parse_intent_response, call_openrouter
+from homecal_voice.intent import (
+    IntentResult,
+    build_system_prompt,
+    parse_intent_response,
+    call_openrouter,
+)
+from homecal_voice.timezone import today_brisbane
 
 log = logging.getLogger("homecal_voice.main")
+
+# Tunables centralised at the top so future operators don't grep the file.
+AUTO_APPLY_CONFIDENCE = 0.85
+SILENT_FAIL_CONFIDENCE = 0.6
+HEARTBEAT_INTERVAL_SEC = 30
+CAP_COOLDOWN_SEC = 60
+MUTE_CACHE_TTL_SEC = 5
+SSE_RECONNECT_DELAY_SEC = 5
+LIST_FETCH_TIMEOUT_SEC = 5
+STATUS_FETCH_TIMEOUT_SEC = 3
+HEARTBEAT_TS_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+
 
 @dataclass
 class OneShotDeps:
@@ -22,79 +57,124 @@ class OneShotDeps:
     utterance_id: Callable[[], str]
     muted: Callable[[], bool]
 
+
+def _intent_payload(intent: IntentResult) -> dict:
+    return {"intent": intent.intent, **intent.fields, "confidence": intent.confidence}
+
+
 def run_once(d: OneShotDeps) -> None:
     """Block until one wake → utterance → confirmation cycle completes."""
+    # 1) wait for a wake event
     while True:
         f = d.next_frame()
         if d.wake.step(f):
             break
+
     uid = d.utterance_id()
     d.post_state(utterance_id=uid, kind="listening", payload={"vu": 0.0})
+
+    # 2) capture the utterance
     while True:
         f = d.next_frame()
         if d.endpointer.feed(f):
             break
     pcm = d.endpointer.audio()
     d.post_state(utterance_id=uid, kind="thinking", payload={"transcript_partial": ""})
+
     started_ms = int(time.time() * 1000)
+
+    def _elapsed() -> int:
+        return int(time.time() * 1000) - started_ms
+
+    def _audit(transcript: str, status: str, intent: IntentResult | None, error: str | None = None) -> None:
+        d.post_audit(
+            id=uid,
+            transcript=transcript,
+            status=status,
+            intent_json=intent.raw if intent else None,
+            confidence=intent.confidence if intent else None,
+            duration_ms=_elapsed(),
+            error=error,
+        )
+
+    # 3) speech-to-text
     try:
         transcript = d.transcribe(pcm)
     except Exception as e:
         log.warning("STT failed: %s", e)
         d.post_state(utterance_id=uid, kind="failed", payload={"reason": "stt_error"})
-        d.post_audit(id=uid, transcript="", status="failed", intent_json=None, confidence=None,
-                     duration_ms=int(time.time()*1000)-started_ms, error=f"stt:{e}")
+        _audit("", "failed", None, error=f"stt:{e}")
         return
+
+    # 4) intent extraction (parse_intent_response never raises; returns unknown on failure)
     intent = d.extract_intent(transcript)
-    auto_apply = intent.confidence >= 0.85 and intent.intent != "unknown"
-    if intent.intent == "unknown" or intent.confidence < 0.6:
+
+    # 5) confidence routing
+    if intent.intent == "unknown" or intent.confidence < SILENT_FAIL_CONFIDENCE:
         d.post_state(utterance_id=uid, kind="failed", payload={"reason": "low_confidence"})
-        d.post_audit(id=uid, transcript=transcript, status="silent_low_conf",
-                     intent_json=intent.raw, confidence=intent.confidence,
-                     duration_ms=int(time.time()*1000)-started_ms, error=None)
+        _audit(transcript, "silent_low_conf", intent)
         return
-    if auto_apply:
+
+    if intent.confidence >= AUTO_APPLY_CONFIDENCE:
         out = d.execute(intent)
         d.speak(out.get("spoken", ""))
-        d.post_state(utterance_id=uid, kind="applied",
-                     payload={"intent": {"intent": intent.intent, **intent.fields, "confidence": intent.confidence}})
-        d.post_audit(id=uid, transcript=transcript, status="applied",
-                     intent_json=intent.raw, confidence=intent.confidence,
-                     duration_ms=int(time.time()*1000)-started_ms, error=None)
-    else:
-        d.post_state(utterance_id=uid, kind="confirming",
-                     payload={"intent": {"intent": intent.intent, **intent.fields, "confidence": intent.confidence},
-                              "transcript": transcript})
-        d.post_audit(id=uid, transcript=transcript, status="pending",
-                     intent_json=intent.raw, confidence=intent.confidence,
-                     duration_ms=int(time.time()*1000)-started_ms, error=None)
-        # T20b — listen for a yes/no/edit
-        from homecal_voice.confirm_loop import confirm_listen
-        outcome = confirm_listen(
-            next_frame=d.next_frame,
-            endpointer_factory=d.endpointer_factory,
-            transcribe=d.transcribe,
-        )
-        if outcome.kind == "yes":
-            out = d.execute(intent)
-            d.speak(out.get("spoken", ""))
-            d.post_state(utterance_id=uid, kind="applied",
-                         payload={"intent": {"intent": intent.intent, **intent.fields, "confidence": intent.confidence}})
-            d.post_audit(id=uid, transcript=transcript, status="confirmed",
-                         intent_json=intent.raw, confidence=intent.confidence,
-                         duration_ms=int(time.time()*1000)-started_ms, error=None)
-        elif outcome.kind in ("no", "timeout"):
-            d.post_state(utterance_id=uid, kind="failed", payload={"reason": outcome.kind})
-            d.post_audit(id=uid, transcript=transcript, status="cancelled",
-                         intent_json=intent.raw, confidence=intent.confidence,
-                         duration_ms=int(time.time()*1000)-started_ms, error=None)
-        # else: edit | ambiguous → keep status=pending (PendingReviewTray)
+        d.post_state(utterance_id=uid, kind="applied", payload={"intent": _intent_payload(intent)})
+        _audit(transcript, "applied", intent)
+        return
+
+    # 6) mid-confidence: confirm card + 5s yes/no listen
+    d.post_state(
+        utterance_id=uid,
+        kind="confirming",
+        payload={"intent": _intent_payload(intent), "transcript": transcript},
+    )
+    _audit(transcript, "pending", intent)
+
+    from homecal_voice.confirm_loop import confirm_listen
+    outcome = confirm_listen(
+        next_frame=d.next_frame,
+        endpointer_factory=d.endpointer_factory,
+        transcribe=d.transcribe,
+    )
+
+    if outcome.kind == "yes":
+        out = d.execute(intent)
+        d.speak(out.get("spoken", ""))
+        d.post_state(utterance_id=uid, kind="applied", payload={"intent": _intent_payload(intent)})
+        _audit(transcript, "confirmed", intent)
+        return
+
+    if outcome.kind == "no":
+        d.speak("Cancelled.")
+        d.post_state(utterance_id=uid, kind="failed", payload={"reason": "no"})
+        _audit(transcript, "cancelled", intent)
+        return
+
+    if outcome.kind == "timeout":
+        # Distinct from "no" so the audit log shows why the action didn't happen.
+        # Tell the user out loud — silence + a green confirm card disappearing is
+        # the worst possible UX for "did it save or not?".
+        d.speak("I didn't hear a yes or no — cancelled.")
+        d.post_state(utterance_id=uid, kind="failed", payload={"reason": "timeout"})
+        _audit(transcript, "cancelled", intent)
+        return
+
+    # outcome.kind in ("edit", "ambiguous") → audit stays "pending" from the
+    # earlier write. Give a short audible cue so the user knows the system
+    # heard them but didn't act. PendingReviewTray (future UI) will surface
+    # this row for later resolution; for now the audit log is the trail.
+    d.speak("I didn't catch that — say yes or no.")
+    d.post_state(utterance_id=uid, kind="failed", payload={"reason": outcome.kind})
+
 
 _shutdown = False
+
+
 def _on_sigterm(*_):
     global _shutdown
     _shutdown = True
     log.info("SIGTERM received; shutting down")
+
 
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -109,11 +189,12 @@ def main() -> int:
     from homecal_voice.tts import speak as tts_speak
     from homecal_voice.executor import Executor
     from homecal_voice.server_state import post_state, post_audit, post_heartbeat
-    import threading
 
-    mic = MicStream(device=cfg.audio_device); mic.start()
+    mic = MicStream(device=cfg.audio_device)
+    mic.start()
     frame_iter = mic.frames()
-    # BUG FIX — load_default_model returns (Model, scoring_key) per T13 R13.
+    # load_default_model returns (Model, scoring_key); the versioned key
+    # (e.g. 'hey_mycroft_v0.1') is what Model.predict() returns scores under.
     wake_model, wake_key = load_default_model(cfg.wake_word)
     wake = WakeDetector(model=wake_model, wake_name=wake_key, threshold=cfg.wake_threshold)
     endpointer_factory = lambda: Endpointer(vad=load_silero_vad())
@@ -124,17 +205,23 @@ def main() -> int:
     def _hb():
         while not _shutdown:
             try:
-                post_heartbeat(base=cfg.homecal_api_base, token=cfg.pi_api_token,
-                               at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+                post_heartbeat(
+                    base=cfg.homecal_api_base,
+                    token=cfg.pi_api_token,
+                    at=time.strftime(HEARTBEAT_TS_FORMAT, time.gmtime()),
+                )
             except Exception as e:
                 log.warning("heartbeat failed: %s", e)
-            time.sleep(30)
+            time.sleep(HEARTBEAT_INTERVAL_SEC)
+
     threading.Thread(target=_hb, daemon=True).start()
 
     counter = {"day": "", "count": 0}
+
     def _under_cap() -> bool:
-        today = time.strftime("%Y-%m-%d", time.gmtime(time.time() + 10 * 3600))
-        if counter["day"] != today: counter.update(day=today, count=0)
+        today = today_brisbane()
+        if counter["day"] != today:
+            counter.update(day=today, count=0)
         counter["count"] += 1
         return counter["count"] <= cfg.daily_request_cap
 
@@ -143,23 +230,32 @@ def main() -> int:
             ep = endpointer_factory()
             deps = OneShotDeps(
                 next_frame=lambda: next(frame_iter),
-                wake=wake, endpointer=ep,
+                wake=wake,
+                endpointer=ep,
                 endpointer_factory=endpointer_factory,
                 transcribe=lambda pcm: stt_transcribe(pcm, server_url=cfg.whisper_server_url),
                 extract_intent=lambda text: parse_intent_response(
                     call_openrouter(
                         system=build_system_prompt(
-                            today_brisbane=time.strftime("%Y-%m-%d", time.gmtime(time.time() + 10 * 3600)),
-                            family=[m["name"] for m in _list_bare(f"{cfg.homecal_api_base}/api/family-members")],
+                            today_brisbane=today_brisbane(),
+                            family=[
+                                m["name"]
+                                for m in _list_bare(f"{cfg.homecal_api_base}/api/family-members")
+                            ],
                             chores=_chore_strings(cfg.homecal_api_base),
                         ),
-                        user=text, model=cfg.intent_model, api_key=cfg.openrouter_api_key,
+                        user=text,
+                        model=cfg.intent_model,
+                        api_key=cfg.openrouter_api_key,
                     )
                 ),
                 execute=executor.apply,
-                speak=lambda text: tts_speak(text, model=cfg.tts_model,
-                                              api_key=cfg.openrouter_api_key,
-                                              muted=is_muted_locally(cfg)),
+                speak=lambda text: tts_speak(
+                    text,
+                    model=cfg.tts_model,
+                    api_key=cfg.openrouter_api_key,
+                    muted=is_muted_locally(cfg),
+                ),
                 post_state=lambda **kw: post_state(base=cfg.homecal_api_base, token=cfg.pi_api_token, **kw),
                 post_audit=lambda **kw: post_audit(base=cfg.homecal_api_base, token=cfg.pi_api_token, **kw),
                 utterance_id=lambda: str(uuid7()),
@@ -167,55 +263,86 @@ def main() -> int:
             )
             if not _under_cap():
                 log.warning("daily request cap %d reached; sleeping", cfg.daily_request_cap)
-                time.sleep(60); continue
+                time.sleep(CAP_COOLDOWN_SEC)
+                continue
             run_once(deps)
     finally:
         mic.stop()
     return 0
 
-import requests as _requests
 
 def _list_bare(url: str) -> list:
-    """R3 — homecal list endpoints return bare arrays. Tolerate {data:[...]} too."""
+    """GET a list endpoint and tolerate either a bare array or {data:[...]}.
+
+    Returns [] on any network/HTTP failure so the prompt-builder still
+    runs (with an empty family/chore list) instead of crashing the
+    whole utterance.
+    """
     try:
-        r = _requests.get(url, timeout=5); r.raise_for_status(); j = r.json()
-        if isinstance(j, list): return j
-        if isinstance(j, dict) and isinstance(j.get("data"), list): return j["data"]
+        r = _requests.get(url, timeout=LIST_FETCH_TIMEOUT_SEC)
+        r.raise_for_status()
+        j = r.json()
+        if isinstance(j, list):
+            return j
+        if isinstance(j, dict) and isinstance(j.get("data"), list):
+            return j["data"]
         return []
     except Exception as e:
-        log.warning("GET %s failed: %s", url, e); return []
+        log.warning("GET %s failed: %s", url, e)
+        return []
+
 
 def _chore_strings(base: str) -> list:
-    """Return ['Bathroom (Mia)', ...] by joining chores → members in-process. R4."""
+    """Group chores by family member for the intent prompt.
+
+    Returns one entry per member who has chores, e.g.:
+        ["Mia: Bathroom, Dishes", "Tom: Bins"]
+
+    Grouping (vs the older "Bathroom (Mia), Dishes (Tom)" format) lets the
+    intent LLM emit `chore="Bathroom"` and `person="Mia"` as separate exact
+    matches — the executor's `c.title == chore && c.assignedTo == person.id`
+    lookup expects bare titles, not combined strings.
+    """
     members = {m["id"]: m["name"] for m in _list_bare(f"{base}/api/family-members")}
-    out = []
+    by_person: dict[str, list[str]] = {}
     for c in _list_bare(f"{base}/api/chores"):
         title = c.get("title", "?")
-        assigned = c.get("assignedTo")
-        out.append(f"{title} ({members.get(assigned, '?')})")
-    return out
+        name = members.get(c.get("assignedTo"), "?")
+        by_person.setdefault(name, []).append(title)
+    return [f"{name}: {', '.join(titles)}" for name, titles in by_person.items()]
+
 
 _mute_state = {"muted": False, "checked_at": 0.0}
 
+
 def is_muted_locally(cfg) -> bool:
     now = time.time()
-    if now - _mute_state["checked_at"] > 5:
+    if now - _mute_state["checked_at"] > MUTE_CACHE_TTL_SEC:
         try:
-            r = _requests.get(f"{cfg.homecal_api_base}/api/voice/status", timeout=3).json()
+            r = _requests.get(
+                f"{cfg.homecal_api_base}/api/voice/status",
+                timeout=STATUS_FETCH_TIMEOUT_SEC,
+            ).json()
             _mute_state["muted"] = bool(r.get("muted"))
         except Exception:
             pass
         _mute_state["checked_at"] = now
     return _mute_state["muted"]
 
+
 def _start_mute_sse(cfg) -> None:
-    """R16 — open an SSE client to /api/stream and clear the mute cache when a
-    voice poke arrives. Survives reconnects via the outer while-loop."""
-    import threading
+    """Subscribe to /api/stream so mute changes from wall/phone propagate
+    to the Pi within one round-trip. Without this, the 5-second local
+    cache (`is_muted_locally`) means a tap-to-mute can be ignored for up
+    to MUTE_CACHE_TTL_SEC. The outer while-loop survives EventSource
+    reconnects.
+    """
     def loop():
         while not _shutdown:
             try:
-                with _requests.get(f"{cfg.homecal_api_base}/api/stream", stream=True, timeout=None) as r:
+                with _requests.get(
+                    f"{cfg.homecal_api_base}/api/stream", stream=True, timeout=None
+                ) as r:
                     for line in r.iter_lines():
                         if line and line.startswith(b"data: "):
                             try:
@@ -226,9 +353,11 @@ def _start_mute_sse(cfg) -> None:
                             except Exception:
                                 pass
             except Exception as e:
-                log.warning("SSE client error: %s; reconnecting in 5s", e)
-                time.sleep(5)
+                log.warning("SSE client error: %s; reconnecting in %ds", e, SSE_RECONNECT_DELAY_SEC)
+                time.sleep(SSE_RECONNECT_DELAY_SEC)
+
     threading.Thread(target=loop, daemon=True).start()
+
 
 if __name__ == "__main__":
     sys.exit(main())

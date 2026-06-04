@@ -7,9 +7,13 @@ log = logging.getLogger("homecal_voice.wake")
 
 @dataclass
 class WakeDetector:
-    """R13 — `wake_name` is the versioned scoring key returned by
-    Model.predict() (e.g. 'hey_mycroft_v0.1'), not the user-facing short name.
-    Use `load_default_model` to get both the Model and its correct scoring key."""
+    """openWakeWord-backed wake detector with trigger-level + refractory window.
+
+    `wake_name` must be the versioned scoring key returned by Model.predict()
+    (e.g. 'hey_mycroft_v0.1'), NOT the user-facing short name. With the wrong
+    key, Model.predict() silently returns 0 for every frame and wake never
+    fires. Use `load_default_model` to get both the Model and the correct key.
+    """
     model: object
     wake_name: str
     threshold: float = 0.5
@@ -36,9 +40,11 @@ class WakeDetector:
         return False
 
 def load_default_model(wake_name_prefix: str = "hey_mycroft") -> Tuple[object, str]:
-    """R13 — return (Model, scoring_key). `wake_name_prefix` is matched
-    against the ONNX file basename; the scoring key is the basename without
-    the .onnx suffix (e.g. 'hey_mycroft_v0.1')."""
+    """Load an openWakeWord model and return (Model, scoring_key).
+
+    `wake_name_prefix` is matched against the ONNX file basename; the scoring
+    key is the basename without the .onnx suffix (e.g. 'hey_mycroft_v0.1').
+    """
     import openwakeword
     from openwakeword.model import Model
     pkg = os.path.dirname(openwakeword.__file__)

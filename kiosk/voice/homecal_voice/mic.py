@@ -19,7 +19,7 @@ class MicStream:
         self._proc: subprocess.Popen | None = None
 
     def start(self) -> None:
-        # R14 — `--target` is unreliable across pw-record versions; rely on the
+        # `--target` is unreliable across pw-record versions; rely on the
         # PipeWire default source. Override via env var `PIPEWIRE_NODE=<name>`.
         cmd = [
             "pw-record",

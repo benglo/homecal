@@ -1,82 +1,139 @@
-import logging, requests
+"""Per-intent execution against the homecal HTTP API.
+
+Each branch of `Executor.apply` is independent and returns:
+    {"ok": bool, "spoken": str}
+where `spoken` is fed straight to TTS. The `ok` flag drives the audit log
+status — `True` for "applied", `False` for "couldn't resolve, told the
+user, did not change state".
+"""
+
 from datetime import date as Date
+import logging
+
+import requests
+
 from homecal_voice.intent import IntentResult
+from homecal_voice.timezone import today_brisbane
 
 log = logging.getLogger("homecal_voice.executor")
 
+API_TIMEOUT_SEC = 10
+AGENDA_MAX_ITEMS = 3
+
+
 def _unwrap(json_body):
-    """R3 — defensive: homecal list endpoints return bare arrays today.
-    Tolerate either bare array or {data:[...]} so the test fixtures and the
-    real API both work."""
-    if isinstance(json_body, list): return json_body
+    """Backend list endpoints (`/api/family-members`, `/api/chores`,
+    `/api/dinners`, `/api/events`) currently return bare arrays. Accept
+    `{data:[...]}` defensively so test fixtures and a future envelope
+    migration don't tightly couple the Pi service to the current shape.
+    """
+    if isinstance(json_body, list):
+        return json_body
     if isinstance(json_body, dict) and isinstance(json_body.get("data"), list):
         return json_body["data"]
     return []
+
 
 class Executor:
     def __init__(self, *, base: str, token: str):
         self.base = base.rstrip("/")
         self.headers = {"X-Pi-Token": token, "Content-Type": "application/json"}
+        self._handlers = {
+            "dinner_set": self._dinner_set,
+            "chore_complete": self._chore_complete,
+            "query_dinner": self._query_dinner,
+            "query_agenda": self._query_agenda,
+        }
 
     def apply(self, r: IntentResult) -> dict:
-        if r.intent == "dinner_set":     return self._dinner_set(r.fields)
-        if r.intent == "chore_complete": return self._chore_complete(r.fields)
-        if r.intent == "query_dinner":   return self._query_dinner(r.fields)
-        if r.intent == "query_agenda":   return self._query_agenda(r.fields)
-        return {"ok": False, "spoken": "I didn't catch that."}
+        handler = self._handlers.get(r.intent)
+        if handler is None:
+            return {"ok": False, "spoken": "I didn't catch that."}
+        return handler(r.fields)
 
     def _dinner_set(self, f: dict) -> dict:
-        r = requests.put(f"{self.base}/api/dinners/{f['date']}",
-                         json={"meal": f["meal"]}, headers=self.headers, timeout=10)
+        r = requests.put(
+            f"{self.base}/api/dinners/{f['date']}",
+            json={"meal": f["meal"]},
+            headers=self.headers,
+            timeout=API_TIMEOUT_SEC,
+        )
         r.raise_for_status()
         return {"ok": True, "spoken": f"Saved {f['meal']} for {self._humanise(f['date'])}."}
 
     def _chore_complete(self, f: dict) -> dict:
-        members = _unwrap(requests.get(f"{self.base}/api/family-members", timeout=10).json())
-        chores  = _unwrap(requests.get(f"{self.base}/api/chores",          timeout=10).json())
+        members = _unwrap(requests.get(f"{self.base}/api/family-members", timeout=API_TIMEOUT_SEC).json())
+        chores = _unwrap(requests.get(f"{self.base}/api/chores", timeout=API_TIMEOUT_SEC).json())
         person = next((m for m in members if m["name"].lower() == f["person"].lower()), None)
-        if not person: return {"ok": False, "spoken": f"I don't know {f['person']}."}
-        chore = next((c for c in chores
-                      if c.get("title", "").lower() == f["chore"].lower()
-                      and c.get("assignedTo") == person["id"]), None)
-        if not chore: return {"ok": False, "spoken": f"I don't know that chore for {person['name']}."}
-        today_br = self._today_brisbane()
-        r = requests.post(f"{self.base}/api/chores/{chore['id']}/complete",
-                          json={"date": today_br}, headers=self.headers, timeout=10)
+        if not person:
+            return {"ok": False, "spoken": f"I don't know {f['person']}."}
+        chore = next(
+            (
+                c
+                for c in chores
+                if c.get("title", "").lower() == f["chore"].lower()
+                and c.get("assignedTo") == person["id"]
+            ),
+            None,
+        )
+        if not chore:
+            return {"ok": False, "spoken": f"I don't know that chore for {person['name']}."}
+        r = requests.post(
+            f"{self.base}/api/chores/{chore['id']}/complete",
+            json={"date": today_brisbane()},
+            headers=self.headers,
+            timeout=API_TIMEOUT_SEC,
+        )
         r.raise_for_status()
         return {"ok": True, "spoken": f"Nice work {person['name']}."}
 
     def _query_dinner(self, f: dict) -> dict:
         date = f["date"]
-        rows = _unwrap(requests.get(f"{self.base}/api/dinners",
-                                    params={"start": date, "end": date}, timeout=10).json())
+        rows = _unwrap(
+            requests.get(
+                f"{self.base}/api/dinners",
+                params={"start": date, "end": date},
+                timeout=API_TIMEOUT_SEC,
+            ).json()
+        )
         meal = next((row["meal"] for row in rows if row["date"] == date), None)
-        if not meal: return {"ok": True, "spoken": f"Nothing planned for {self._humanise(date)} yet."}
+        if not meal:
+            return {"ok": True, "spoken": f"Nothing planned for {self._humanise(date)} yet."}
         return {"ok": True, "spoken": f"{self._humanise(date).capitalize()} dinner: {meal}."}
 
     def _query_agenda(self, f: dict) -> dict:
         date = f["date"]
-        # Brisbane is fixed UTC+10 (spec §0). Send the local-day window with offset.
-        items = _unwrap(requests.get(f"{self.base}/api/events",
-                                     params={"start": f"{date}T00:00:00+10:00",
-                                             "end":   f"{date}T23:59:59+10:00"}, timeout=10).json())
-        if not items: return {"ok": True, "spoken": f"Nothing on {self._humanise(date)}."}
+        # Brisbane is fixed UTC+10 (spec §0); send the local-day window with offset so
+        # the backend's UTC window covers the right slice of wall-clock time.
+        items = _unwrap(
+            requests.get(
+                f"{self.base}/api/events",
+                params={
+                    "start": f"{date}T00:00:00+10:00",
+                    "end": f"{date}T23:59:59+10:00",
+                },
+                timeout=API_TIMEOUT_SEC,
+            ).json()
+        )
+        if not items:
+            return {"ok": True, "spoken": f"Nothing on {self._humanise(date)}."}
         bits = []
-        for e in items[:3]:
+        for e in items[:AGENDA_MAX_ITEMS]:
             title = e.get("title", "event")
             start = e.get("start", "")
-            time_str = f" at {start[11:16]}" if len(start) >= 16 and start[10] == "T" else ""
+            # All-day events store start as YYYY-MM-DD (date-only); omit the time.
+            time_str = f" at {start[11:16]}" if len(start) >= 16 and start[10:11] == "T" else ""
             bits.append(f"{title}{time_str}")
         return {"ok": True, "spoken": f"On {self._humanise(date)}: " + ", ".join(bits) + "."}
 
     def _humanise(self, iso_date: str) -> str:
-        today = self._today_brisbane()
-        if iso_date == today: return "today"
-        from datetime import date as D
-        d = D.fromisoformat(iso_date) - D.fromisoformat(today)
-        if d.days == 1: return "tomorrow"
+        today = today_brisbane()
+        if iso_date == today:
+            return "today"
+        try:
+            delta = Date.fromisoformat(iso_date) - Date.fromisoformat(today)
+        except ValueError:
+            return iso_date
+        if delta.days == 1:
+            return "tomorrow"
         return iso_date
-
-    def _today_brisbane(self) -> str:
-        import time
-        return time.strftime("%Y-%m-%d", time.gmtime(time.time() + 10 * 3600))

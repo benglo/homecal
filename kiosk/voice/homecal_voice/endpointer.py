@@ -51,6 +51,13 @@ class Endpointer:
     def audio(self) -> np.ndarray:
         return np.concatenate(self._buf) if self._buf else np.zeros(0, dtype=np.int16)
 
+    @property
+    def had_speech(self) -> bool:
+        """True iff at least one frame fed in scored above the VAD threshold.
+        Callers (e.g. confirm_loop) use this to short-circuit timeouts and
+        avoid sending silence to a paid STT endpoint."""
+        return self._seen_speech
+
 def load_silero_vad(onnx_path: str | None = None) -> VadFn:
     """Pure ONNX (no torch). The silero-vad pypi package's __init__ imports torch
     transitively, so we vendor `silero_vad.onnx` (downloaded by the install

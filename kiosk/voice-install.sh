@@ -5,7 +5,8 @@ sudo apt-get update -qq
 # Trixie ships python3.13 only; we use silero ONNX path so torch isn't pulled.
 # pipewire is already running on the kiosk Pi but install pipewire-pulse if needed.
 sudo apt-get install -y python3 python3-venv python3-dev pipewire-pulse sox curl \
-                        build-essential cmake git rsync
+                        build-essential cmake git rsync \
+                        mpg123  # MP3 player for TTS playback; aplay is PCM-only and silently fails on MP3
 
 # 1. Python service
 DEST="$HOME/homecal-voice"
@@ -27,7 +28,7 @@ if [ ! -f "$DEST/silero_vad.onnx" ]; then
 fi
 echo "silero_vad.onnx: $(ls -la $DEST/silero_vad.onnx)"
 
-# 2. whisper.cpp built locally (Bookworm/trixie may not package it). R17.
+# 2. whisper.cpp built locally (Bookworm/trixie may not package it).
 WCPP="$HOME/whisper.cpp"
 if [ ! -d "$WCPP" ]; then
   git clone --depth 1 https://github.com/ggml-org/whisper.cpp "$WCPP"
