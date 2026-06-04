@@ -47,14 +47,23 @@ WantedBy=default.target
 UNIT
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now whisper-server
-sudo systemctl enable --now homecal-voice
+sudo systemctl enable --now whisper-server   # no env needed for whisper
 
-# 4. confirm
+# homecal-voice needs /etc/homecal-voice.env populated first; only enable here.
+sudo systemctl enable homecal-voice
+
+# 4. confirm whisper is up (homecal-voice will be inactive until env populated + started)
 sleep 3
 systemctl status whisper-server --no-pager -l | head -5
-systemctl status homecal-voice --no-pager -l | head -5
-echo "Install complete. Remember to populate /etc/homecal-voice.env with:"
+
+echo
+echo "================================================================"
+echo "Next step: populate /etc/homecal-voice.env then start the service:"
+echo "  sudo nano /etc/homecal-voice.env"
+echo "  sudo systemctl start homecal-voice"
+echo "  journalctl -u homecal-voice -f"
+echo "================================================================"
+echo "Template for /etc/homecal-voice.env:"
 cat <<'ENV'
 OPENROUTER_API_KEY=sk-or-...
 HOMECAL_API_BASE=http://192.168.1.94:8787
