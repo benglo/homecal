@@ -6,7 +6,10 @@ version = "0.1.0"
 # avoids torch entirely, so 3.13 is fine and the pin is unnecessary.
 requires-python = ">=3.11"
 dependencies = [
-  "openwakeword>=0.6.0",
+  # 0.4.0 ships ONNX-only deps (onnxruntime + sklearn + scipy + tqdm).
+  # 0.5+ added tflite-runtime which has no Python 3.13 aarch64 wheel — broken on trixie.
+  # Feasibility test on this Pi (2026-06-04) ran 0.4.0 at 0.998 confidence; that's the target.
+  "openwakeword>=0.4.0,<0.5.0",
   "onnxruntime>=1.18",
   "numpy>=1.26",
   "requests>=2.32",
