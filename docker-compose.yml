@@ -25,3 +25,5 @@ services:
       - DATA_DIR=/data
       - STATIC_DIR=/app/frontend/dist
       - NODE_ENV=production
+      # Shared secret with the Pi voice service (set in .env). Empty → voice routes 503.
+      - PI_API_TOKEN=${PI_API_TOKEN:-}
