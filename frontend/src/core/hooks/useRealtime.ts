@@ -9,6 +9,7 @@ interface Poke {
   payload?: unknown;
 }
 type Handler = (p: Poke) => void;
+type ReconnectHandler = () => void;
 
 const KIND_TO_KEYS: Record<string, string[]> = {
   chores: ['chores', 'chore-board'],
@@ -18,12 +19,32 @@ const KIND_TO_KEYS: Record<string, string[]> = {
 };
 
 const listeners = new Set<Handler>();
+const reconnectHandlers = new Set<ReconnectHandler>();
 let es: EventSource | null = null;
 let connectCount = 0;
+// Set to true after the initial `open`. Every subsequent `open` is a reconnect
+// and triggers `reconnectHandlers` so subscribers can re-fetch state that may
+// have changed during the gap (the 30s poll backstop alone misses up to 30s).
+let hasOpened = false;
 
 function ensureConnected(): void {
   if (es) return;
+  hasOpened = false;
   es = new EventSource('/api/stream');
+  es.addEventListener('open', () => {
+    if (!hasOpened) {
+      hasOpened = true;
+      return;
+    }
+    for (const fn of [...reconnectHandlers]) {
+      try {
+        fn();
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('useRealtime: reconnect handler threw', err);
+      }
+    }
+  });
   es.addEventListener('poke', (e) => {
     let poke: Poke;
     try {
@@ -48,13 +69,16 @@ function maybeClose(): void {
   if (connectCount === 0 && listeners.size === 0 && es) {
     es.close();
     es = null;
+    hasOpened = false;
   }
 }
 
 /** Subscribe to the backend SSE stream. Every poke invalidates the matching
  *  query family so the wall/phone refetch within a round-trip. EventSource
- *  reconnects natively; the 30s poll (queryClient) is the backstop. Multiple
- *  consumers share a single underlying EventSource via a module-scope singleton. */
+ *  reconnects natively; on every reconnect we invalidate everything so any
+ *  mutations that fired during the gap show up immediately. The 30s poll
+ *  (queryClient) is the backstop. Multiple consumers share a single
+ *  underlying EventSource via a module-scope singleton. */
 export function useRealtime(): void {
   const qc = useQueryClient();
   useEffect(() => {
@@ -64,9 +88,14 @@ export function useRealtime(): void {
       const keys = KIND_TO_KEYS[poke.kind] ?? [poke.kind];
       for (const k of keys) void qc.invalidateQueries({ queryKey: [k] });
     };
+    const onReconnect: ReconnectHandler = () => {
+      void qc.invalidateQueries();
+    };
     listeners.add(onPoke);
+    reconnectHandlers.add(onReconnect);
     return () => {
       listeners.delete(onPoke);
+      reconnectHandlers.delete(onReconnect);
       connectCount--;
       maybeClose();
     };

@@ -9,7 +9,7 @@ import { useScreensaver } from '../components/screensaver/useScreensaver';
 import { Screensaver } from '../components/screensaver/Screensaver';
 import { useSsePoke } from '../core/hooks/useRealtime';
 import { VoiceOverlay } from '../components/voice/VoiceOverlay';
-import { reduceOverlay, initialOverlay, type OverlayAction } from '../components/voice/voiceState';
+import { reduceOverlay, initialOverlay, pokeToAction } from '../components/voice/voiceState';
 import { eventWindow, weekDates, nowBne, toInputDate } from '../core/util/time';
 import { HeroBand } from '../components/hero/HeroBand';
 import { AgendaView } from '../components/calendar/AgendaView';
@@ -45,19 +45,14 @@ export function WallLayout() {
   // idle reset + screensaver so the user can finish their utterance in peace.
   const [overlay, dispatch] = useReducer(reduceOverlay, undefined, initialOverlay);
   const [voiceActive, setVoiceActive] = useState(false);
-  useSsePoke<{ utterance_id?: string; kind?: string; payload?: unknown } | undefined>(
+  // pokeToAction is the trust boundary: rejects unknown kinds, missing
+  // intents, malformed payloads. `mute_changed` falls through here too —
+  // useVoiceStatus's query invalidation picks it up instead.
+  useSsePoke<unknown>(
     'voice',
     useCallback((p) => {
-      if (!p || typeof p !== 'object' || !('kind' in p) || typeof p.kind !== 'string') return;
-      // mute_changed pokes are picked up by useVoiceStatus invalidation only — don't dispatch.
-      if (p.kind === 'mute_changed') return;
-      const payload = (p.payload && typeof p.payload === 'object') ? (p.payload as Record<string, unknown>) : {};
-      dispatch({
-        type: 'sse',
-        kind: p.kind,
-        utterance_id: p.utterance_id,
-        ...payload,
-      } as OverlayAction);
+      const action = pokeToAction(p);
+      if (action) dispatch(action);
     }, []),
   );
 
