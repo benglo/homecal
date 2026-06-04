@@ -49,6 +49,8 @@ export function WallLayout() {
     'voice',
     useCallback((p) => {
       if (!p || typeof p !== 'object' || !('kind' in p) || typeof p.kind !== 'string') return;
+      // mute_changed pokes are picked up by useVoiceStatus invalidation only — don't dispatch.
+      if (p.kind === 'mute_changed') return;
       const payload = (p.payload && typeof p.payload === 'object') ? (p.payload as Record<string, unknown>) : {};
       dispatch({
         type: 'sse',
