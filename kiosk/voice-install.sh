@@ -16,11 +16,16 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -U pip wheel
 pip install -e .
-# silero-vad provides the ONNX model bundle we load directly via onnxruntime in
-# endpointer.py. Install with --no-deps to avoid torch + CUDA toolkit pull
-# (which is ~900MB of wheels — overflows the Pi's 1GB tmpfs /tmp during extract).
-pip install --no-deps silero-vad
 deactivate
+
+# Vendor the silero VAD ONNX model directly (the silero-vad pypi package's
+# __init__ imports torch transitively, even with --no-deps installed). The
+# model file is ~1.8 MB and is loaded by endpointer.py via onnxruntime alone.
+if [ ! -f "$DEST/silero_vad.onnx" ]; then
+  curl -fsSL -o "$DEST/silero_vad.onnx" \
+    https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx
+fi
+echo "silero_vad.onnx: $(ls -la $DEST/silero_vad.onnx)"
 
 # 2. whisper.cpp built locally (Bookworm/trixie may not package it). R17.
 WCPP="$HOME/whisper.cpp"

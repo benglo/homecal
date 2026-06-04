@@ -40,15 +40,37 @@ class Endpointer:
     def audio(self) -> np.ndarray:
         return np.concatenate(self._buf) if self._buf else np.zeros(0, dtype=np.int16)
 
-def load_silero_vad() -> VadFn:
-    """R15 — pure ONNX (no torch). Silero ships a tiny ONNX model in the package;
-    we run it through onnxruntime directly so the install doesn't pull torch."""
+def load_silero_vad(onnx_path: str | None = None) -> VadFn:
+    """Pure ONNX (no torch). The silero-vad pypi package's __init__ imports torch
+    transitively, so we vendor `silero_vad.onnx` (downloaded by the install
+    script) and load it with onnxruntime directly. Path resolution order:
+      1. explicit `onnx_path` argument
+      2. SILERO_VAD_ONNX env var
+      3. ./silero_vad.onnx beside the running script
+      4. ~/homecal-voice/silero_vad.onnx (install default)
+    """
+    import os
     import onnxruntime as ort
-    import importlib.resources as pkg_resources
-    import silero_vad
-    with pkg_resources.as_file(pkg_resources.files(silero_vad) / "data" / "silero_vad.onnx") as p:
-        sess = ort.InferenceSession(str(p), providers=["CPUExecutionProvider"])
+
+    if onnx_path is None:
+        candidates = [
+            os.environ.get("SILERO_VAD_ONNX"),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "silero_vad.onnx"),
+            os.path.expanduser("~/homecal-voice/silero_vad.onnx"),
+        ]
+        for c in candidates:
+            if c and os.path.isfile(c):
+                onnx_path = c
+                break
+        if onnx_path is None:
+            raise RuntimeError(
+                "silero_vad.onnx not found. Set SILERO_VAD_ONNX or place the "
+                "file at ~/homecal-voice/silero_vad.onnx (install script does this)."
+            )
+
+    sess = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
     state = np.zeros((2, 1, 128), dtype=np.float32)
+
     def vad(frame: np.ndarray, sr: int) -> float:
         nonlocal state
         x = (frame.astype(np.float32) / 32768.0).reshape(1, -1)
