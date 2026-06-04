@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useReducer, useState } from 'react';
 import { DateTime } from 'luxon';
 import type { EventOccurrence, WallView } from '../core/model/types';
 import { useClock } from '../core/hooks/useClock';
@@ -7,6 +7,9 @@ import { useIdleReset } from '../core/hooks/useIdleReset';
 import { useCategories, useDinners, useEvents, usePhotos, useWeather, byId } from '../core/hooks/useData';
 import { useScreensaver } from '../components/screensaver/useScreensaver';
 import { Screensaver } from '../components/screensaver/Screensaver';
+import { useSsePoke } from '../core/hooks/useRealtime';
+import { VoiceOverlay } from '../components/voice/VoiceOverlay';
+import { reduceOverlay, initialOverlay, type OverlayAction } from '../components/voice/voiceState';
 import { eventWindow, weekDates, nowBne, toInputDate } from '../core/util/time';
 import { HeroBand } from '../components/hero/HeroBand';
 import { AgendaView } from '../components/calendar/AgendaView';
@@ -37,7 +40,26 @@ export function WallLayout() {
 
   const photosQ = usePhotos();
   const weatherQ = useWeather();
-  const screensaver = useScreensaver(photosQ.data);
+
+  // Voice overlay: SSE-driven state machine. While non-idle, suspend the wall's
+  // idle reset + screensaver so the user can finish their utterance in peace.
+  const [overlay, dispatch] = useReducer(reduceOverlay, undefined, initialOverlay);
+  const [voiceActive, setVoiceActive] = useState(false);
+  useSsePoke<{ utterance_id?: string; kind?: string; payload?: unknown } | undefined>(
+    'voice',
+    useCallback((p) => {
+      if (!p || typeof p !== 'object' || !('kind' in p) || typeof p.kind !== 'string') return;
+      const payload = (p.payload && typeof p.payload === 'object') ? (p.payload as Record<string, unknown>) : {};
+      dispatch({
+        type: 'sse',
+        kind: p.kind,
+        utterance_id: p.utterance_id,
+        ...payload,
+      } as OverlayAction);
+    }, []),
+  );
+
+  const screensaver = useScreensaver(photosQ.data, voiceActive);
 
   const cats = byId(categoriesQ.data);
   const occurrences = eventsQ.data ?? [];
@@ -69,12 +91,16 @@ export function WallLayout() {
     setDetailDate(null);
   };
 
-  useIdleReset(90_000, () => {
-    if (dinnerDate !== null) return; // planning in progress — let the user finish
-    setView('agenda');
-    setAnchor(now.startOf('day'));
-    dismissAll();
-  });
+  useIdleReset(
+    90_000,
+    () => {
+      if (dinnerDate !== null) return; // planning in progress — let the user finish
+      setView('agenda');
+      setAnchor(now.startOf('day'));
+      dismissAll();
+    },
+    voiceActive,
+  );
 
   const openDetail = (date: string) => {
     dismissAll();
@@ -168,6 +194,8 @@ export function WallLayout() {
       />
 
       <VirtualKeyboard />
+
+      <VoiceOverlay state={overlay} dispatch={dispatch} onActiveChange={setVoiceActive} />
 
       {screensaver.active && screensaver.queue.length > 0 && (
         <Screensaver
