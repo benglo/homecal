@@ -20,7 +20,9 @@ def test_run_once_high_confidence_auto_applies():
     audit = MagicMock()
     deps = OneShotDeps(
         next_frame=lambda: next(mic_frames),
-        wake=wake, endpointer=ep, transcribe=stt, extract_intent=intent,
+        wake=wake, endpointer=ep,
+        endpointer_factory=lambda: ep,
+        transcribe=stt, extract_intent=intent,
         execute=executor.apply, speak=tts, post_state=state, post_audit=audit,
         utterance_id=lambda: "u1", muted=lambda: False,
     )

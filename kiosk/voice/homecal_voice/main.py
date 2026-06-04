@@ -12,6 +12,7 @@ class OneShotDeps:
     next_frame: Callable
     wake: object
     endpointer: object
+    endpointer_factory: Callable
     transcribe: Callable
     extract_intent: Callable
     execute: Callable
@@ -67,6 +68,27 @@ def run_once(d: OneShotDeps) -> None:
         d.post_audit(id=uid, transcript=transcript, status="pending",
                      intent_json=intent.raw, confidence=intent.confidence,
                      duration_ms=int(time.time()*1000)-started_ms, error=None)
+        # T20b — listen for a yes/no/edit
+        from homecal_voice.confirm_loop import confirm_listen
+        outcome = confirm_listen(
+            next_frame=d.next_frame,
+            endpointer_factory=d.endpointer_factory,
+            transcribe=d.transcribe,
+        )
+        if outcome.kind == "yes":
+            out = d.execute(intent)
+            d.speak(out.get("spoken", ""))
+            d.post_state(utterance_id=uid, kind="applied",
+                         payload={"intent": {"intent": intent.intent, **intent.fields, "confidence": intent.confidence}})
+            d.post_audit(id=uid, transcript=transcript, status="confirmed",
+                         intent_json=intent.raw, confidence=intent.confidence,
+                         duration_ms=int(time.time()*1000)-started_ms, error=None)
+        elif outcome.kind in ("no", "timeout"):
+            d.post_state(utterance_id=uid, kind="failed", payload={"reason": outcome.kind})
+            d.post_audit(id=uid, transcript=transcript, status="cancelled",
+                         intent_json=intent.raw, confidence=intent.confidence,
+                         duration_ms=int(time.time()*1000)-started_ms, error=None)
+        # else: edit | ambiguous → keep status=pending (PendingReviewTray)
 
 _shutdown = False
 def _on_sigterm(*_):
@@ -122,6 +144,7 @@ def main() -> int:
             deps = OneShotDeps(
                 next_frame=lambda: next(frame_iter),
                 wake=wake, endpointer=ep,
+                endpointer_factory=endpointer_factory,
                 transcribe=lambda pcm: stt_transcribe(pcm, server_url=cfg.whisper_server_url),
                 extract_intent=lambda text: parse_intent_response(
                     call_openrouter(
