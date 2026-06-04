@@ -10,13 +10,30 @@ def test_synthesize_returns_audio_bytes(requests_mock):
         content=fake_mp3,
         headers={"content-type": "audio/mpeg"},
     )
-    out = synthesize("hello", model="google/gemini-3.1-flash-tts-preview", api_key="sk-or-xxx")
+    out = synthesize("hello", model="hexgrad/kokoro-82m", voice="af_bella", api_key="sk-or-xxx")
     assert out == fake_mp3
+
+
+def test_synthesize_sends_required_fields(requests_mock):
+    """OpenRouter SpeechRequest schema requires input+model+voice; sending a
+    bare {model,input,voice:'default'} returned an opaque 500 in production
+    until we started sending a real voice + response_format."""
+    requests_mock.post(
+        "https://openrouter.ai/api/v1/audio/speech",
+        content=b"audio",
+        headers={"content-type": "audio/mpeg"},
+    )
+    synthesize("hello", model="hexgrad/kokoro-82m", voice="af_bella", api_key="sk-or-xxx")
+    body = requests_mock.last_request.json()
+    assert body["model"] == "hexgrad/kokoro-82m"
+    assert body["input"] == "hello"
+    assert body["voice"] == "af_bella"
+    assert body["response_format"] == "mp3"
 
 
 def test_speak_skips_when_muted():
     with patch("subprocess.run") as run, patch("homecal_voice.tts.synthesize") as synth:
-        speak("hi", model="x", api_key="x", muted=True)
+        speak("hi", model="x", voice="v", api_key="x", muted=True)
         run.assert_not_called()
         synth.assert_not_called()
 
@@ -24,7 +41,7 @@ def test_speak_skips_when_muted():
 def test_speak_swallows_synthesize_exception_and_does_not_play(requests_mock):
     requests_mock.post("https://openrouter.ai/api/v1/audio/speech", status_code=502)
     with patch("subprocess.run") as run:
-        speak("hi", model="x", api_key="x", muted=False)
+        speak("hi", model="x", voice="v", api_key="x", muted=False)
         run.assert_not_called()
 
 
@@ -37,7 +54,7 @@ def test_speak_uses_detected_player_not_aplay(requests_mock):
     )
     with patch("homecal_voice.tts.shutil.which") as which, patch("subprocess.run") as run:
         which.side_effect = lambda binary: "/usr/bin/mpg123" if binary == "mpg123" else None
-        speak("hi", model="x", api_key="sk-or-xxx", muted=False)
+        speak("hi", model="x", voice="v", api_key="sk-or-xxx", muted=False)
         assert run.called
         cmd = run.call_args[0][0]
         assert cmd[0] == "mpg123"
@@ -51,7 +68,7 @@ def test_speak_no_player_available_logs_and_skips(requests_mock, caplog):
         headers={"content-type": "audio/mpeg"},
     )
     with patch("homecal_voice.tts.shutil.which", return_value=None), patch("subprocess.run") as run:
-        speak("hi", model="x", api_key="sk-or-xxx", muted=False)
+        speak("hi", model="x", voice="v", api_key="sk-or-xxx", muted=False)
         run.assert_not_called()
 
 

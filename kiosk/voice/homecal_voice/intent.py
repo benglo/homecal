@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from typing import Iterable
 
-import requests
+from openrouter import OpenRouter
 
 log = logging.getLogger("homecal_voice.intent")
 
@@ -114,20 +114,18 @@ def parse_intent_response(raw: str) -> IntentResult:
 
 
 def call_openrouter(*, system: str, user: str, model: str, api_key: str, timeout_s: int = 15) -> str:
-    r = requests.post(
-        "https://openrouter.ai/api/v1/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json={
-            "model": model,
-            "messages": [
+    with OpenRouter(api_key=api_key) as client:
+        res = client.chat.send(
+            model=model,
+            messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": f"<<<USER>>>{user}<<<END>>>"},
             ],
-            "temperature": 0.0,
-            "max_tokens": 200,
-        },
-        timeout=timeout_s,
-    )
-    r.raise_for_status()
-    js = r.json()
-    return (js.get("choices") or [{}])[0].get("message", {}).get("content", "")
+            temperature=0.0,
+            max_tokens=200,
+        )
+    choices = getattr(res, "choices", None) or []
+    if not choices:
+        return ""
+    msg = getattr(choices[0], "message", None)
+    return (getattr(msg, "content", None) if msg else None) or ""

@@ -83,7 +83,8 @@ WAKE_WORD=hey_mycroft
 WHISPER_MODEL=base.en-q5_1
 WHISPER_SERVER_URL=http://127.0.0.1:8080/inference
 INTENT_MODEL=anthropic/claude-haiku-4.5
-TTS_MODEL=google/gemini-3.1-flash-tts-preview
+TTS_MODEL=hexgrad/kokoro-82m
+TTS_VOICE=af_bella
 DAILY_REQUEST_CAP=200
 AUDIO_DEVICE=default
 ENV

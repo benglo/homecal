@@ -18,6 +18,7 @@ class Config:
     whisper_server_url: str
     intent_model: str
     tts_model: str
+    tts_voice: str
     daily_request_cap: int
     audio_device: str
 
@@ -39,7 +40,12 @@ def load_config() -> Config:
         whisper_model=os.environ.get("WHISPER_MODEL", "base.en-q5_1"),
         whisper_server_url=os.environ.get("WHISPER_SERVER_URL", "http://127.0.0.1:8080/inference"),
         intent_model=os.environ.get("INTENT_MODEL", "anthropic/claude-haiku-4.5"),
-        tts_model=os.environ.get("TTS_MODEL", "google/gemini-3.1-flash-tts-preview"),
+        # Kokoro 82M: cheaper than Gemini TTS Preview, returns MP3 natively (no
+        # PCM decode), and was the documented swap-to fallback in the spec.
+        # Gemini TTS Preview is restricted to response_format=pcm, which would
+        # force a PCM player in the pipeline; not worth it for the savings.
+        tts_model=os.environ.get("TTS_MODEL", "hexgrad/kokoro-82m"),
+        tts_voice=os.environ.get("TTS_VOICE", "af_bella"),
         daily_request_cap=int(os.environ.get("DAILY_REQUEST_CAP", "200")),
         audio_device=os.environ.get("AUDIO_DEVICE", "default"),
     )

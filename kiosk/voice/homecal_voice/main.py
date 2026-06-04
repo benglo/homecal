@@ -253,6 +253,7 @@ def main() -> int:
                 speak=lambda text: tts_speak(
                     text,
                     model=cfg.tts_model,
+                    voice=cfg.tts_voice,
                     api_key=cfg.openrouter_api_key,
                     muted=is_muted_locally(cfg),
                 ),

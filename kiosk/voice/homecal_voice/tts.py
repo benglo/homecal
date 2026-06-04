@@ -9,11 +9,27 @@ import requests
 log = logging.getLogger("homecal_voice.tts")
 
 
-def synthesize(text: str, *, model: str, api_key: str, timeout_s: int = 15) -> bytes:
+def synthesize(
+    text: str,
+    *,
+    model: str,
+    voice: str,
+    api_key: str,
+    response_format: str = "mp3",
+    timeout_s: int = 15,
+) -> bytes:
+    # `voice` is required per OpenRouter's SpeechRequest schema, and
+    # `response_format` is provider-specific (Gemini=pcm only, Kokoro=mp3, …).
+    # Sending "default" / omitting either returned an opaque 500 in production.
     r = requests.post(
         "https://openrouter.ai/api/v1/audio/speech",
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json={"model": model, "input": text, "voice": "default"},
+        json={
+            "model": model,
+            "input": text,
+            "voice": voice,
+            "response_format": response_format,
+        },
         timeout=timeout_s,
     )
     r.raise_for_status()
@@ -38,12 +54,12 @@ def _detect_player() -> list[str] | None:
     return None
 
 
-def speak(text: str, *, model: str, api_key: str, muted: bool = False) -> None:
+def speak(text: str, *, model: str, voice: str, api_key: str, muted: bool = False) -> None:
     if muted:
         log.info("muted; skipping TTS: %r", text)
         return
     try:
-        audio = synthesize(text, model=model, api_key=api_key)
+        audio = synthesize(text, model=model, voice=voice, api_key=api_key)
     except Exception as e:
         log.warning("TTS failed: %s", e)
         return
