@@ -40,3 +40,15 @@ test('requirePiToken: no token configured = service unavailable', async () => {
   assert.equal(r.statusCode, 503);
   await app.close();
 });
+
+test('requirePiToken: 401 when header sent as duplicate (array)', async () => {
+  const app = Fastify();
+  app.addHook('preHandler', requirePiToken('s3cret'));
+  app.get('/ok', async () => ({ ok: true }));
+  const r = await app.inject({
+    method: 'GET', url: '/ok',
+    headers: { 'x-pi-token': ['s3cret', 'extra'] as unknown as string },
+  });
+  assert.equal(r.statusCode, 401);
+  await app.close();
+});

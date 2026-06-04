@@ -7,7 +7,7 @@ export function requirePiToken(token: string) {
       return;
     }
     const provided = req.headers['x-pi-token'];
-    if (provided !== token) {
+    if (typeof provided !== 'string' || provided !== token) {
       reply.code(401).send({ error: { code: 'UNAUTHORIZED', message: 'invalid pi token' } });
       return;
     }
