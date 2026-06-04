@@ -32,6 +32,9 @@ export const config = {
   bomStationName: process.env.BOM_STATION_NAME ?? 'Brisbane',
   weatherCacheTtlMs: Number(process.env.WEATHER_CACHE_TTL_MS ?? 900_000),
 
+  // Pi voice microphone — API token for heartbeat + mute commands.
+  piApiToken: process.env.PI_API_TOKEN ?? '',
+
   timezone: 'Australia/Brisbane',
 } as const;
 
