@@ -11,11 +11,13 @@ import { GridCalendar } from '../components/calendar/GridCalendar';
 import { PhoneHeader } from '../components/controls/PhoneHeader';
 import { TabBar, type PhoneTab } from '../components/controls/TabBar';
 import { Fab } from '../components/controls/Fab';
+import { MuteToggle } from '../components/controls/MuteToggle';
 import { CategoryManager } from '../components/manage/CategoryManager';
 import { ChoreManager } from '../components/manage/ChoreManager';
 import { FamilyMemberManager } from '../components/manage/FamilyMemberManager';
 import { DinnerWeekEditor } from '../components/manage/DinnerWeekEditor';
 import { PhotoManager } from '../components/manage/PhotoManager';
+import { SectionHeading } from '../components/manage/primitives/SectionHeading';
 import { EventEditorSheet } from '../components/sheets/EventEditorSheet';
 import { CategoryEditorSheet } from '../components/sheets/CategoryEditorSheet';
 import { DinnerEditorSheet } from '../components/sheets/DinnerEditorSheet';
@@ -112,6 +114,10 @@ export function PhoneLayout() {
             <ChoreManager />
             <CategoryManager categories={categories} onEdit={(cat) => setCategoryTarget({ cat })} />
             <PhotoManager />
+            <section style={{ marginTop: 24 }}>
+              <SectionHeading>Voice</SectionHeading>
+              <MuteToggle />
+            </section>
             <KioskShutdown />
           </div>
         )}
