@@ -2,17 +2,17 @@
 # kiosk/voice-install.sh — run on the Pi
 set -euo pipefail
 sudo apt-get update -qq
-# R15 — explicit python3.12 (trixie default is 3.13; torch wheels for 3.13 on
-# aarch64 are unreliable). silero-vad ONNX path is torch-free so this is belt+braces.
-sudo apt-get install -y python3.12 python3.12-venv pipewire-audio sox curl \
-                        build-essential cmake git
+# Trixie ships python3.13 only; we use silero ONNX path so torch isn't pulled.
+# pipewire is already running on the kiosk Pi but install pipewire-pulse if needed.
+sudo apt-get install -y python3 python3-venv python3-dev pipewire-pulse sox curl \
+                        build-essential cmake git rsync
 
 # 1. Python service
 DEST="$HOME/homecal-voice"
 mkdir -p "$DEST"
 rsync -a --exclude .venv --exclude __pycache__ kiosk/voice/ "$DEST/"
 cd "$DEST"
-python3.12 -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -U pip wheel
 pip install -e .

@@ -1,9 +1,10 @@
 [project]
 name = "homecal-voice"
 version = "0.1.0"
-# R15 — torch wheels for Python 3.13 on aarch64 are unreliable. Pin to 3.11/3.12.
-# The Pi runs trixie which ships 3.13 by default; install script installs 3.12 via apt.
-requires-python = ">=3.11,<3.13"
+# R15 was conservative — pinned <3.13 in case torch wheels were missing on aarch64.
+# Trixie ships 3.13 only (no python3.12 apt package), and our silero ONNX path
+# avoids torch entirely, so 3.13 is fine and the pin is unnecessary.
+requires-python = ">=3.11"
 dependencies = [
   "openwakeword>=0.6.0",
   "onnxruntime>=1.18",
