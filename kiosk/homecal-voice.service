@@ -10,7 +10,6 @@ EnvironmentFile=/etc/homecal-voice.env
 ExecStart=/home/hbadmin/homecal-voice/.venv/bin/homecal-voice
 Restart=always
 RestartSec=3
-WatchdogSec=120
 KillSignal=SIGTERM
 TimeoutStopSec=10
 
