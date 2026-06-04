@@ -62,6 +62,21 @@ def _intent_payload(intent: IntentResult) -> dict:
     return {"intent": intent.intent, **intent.fields, "confidence": intent.confidence}
 
 
+# Whisper returns these literally for silence/noise — they are not real
+# transcriptions and should never reach the LLM. Punctuation-only outputs
+# get the same treatment (".", "!", "?", "[", etc.).
+_BLANK_TRANSCRIPTS = {"", "[blank_audio]", "[ blank_audio ]"}
+
+
+def _is_blank_transcript(t: str) -> bool:
+    if not t:
+        return True
+    norm = t.strip().lower()
+    if norm in _BLANK_TRANSCRIPTS:
+        return True
+    return not any(c.isalnum() for c in norm)
+
+
 def run_once(d: OneShotDeps) -> None:
     """Block until one wake → utterance → confirmation cycle completes."""
     # 1) wait for a wake event
@@ -79,7 +94,6 @@ def run_once(d: OneShotDeps) -> None:
         if d.endpointer.feed(f):
             break
     pcm = d.endpointer.audio()
-    d.post_state(utterance_id=uid, kind="thinking", payload={"transcript_partial": ""})
 
     started_ms = int(time.time() * 1000)
 
@@ -97,6 +111,19 @@ def run_once(d: OneShotDeps) -> None:
             error=error,
         )
 
+    # 2a) Empty wake: VAD never crossed threshold during the capture window.
+    # This is the dominant false-positive mode (TV, dishwasher, conversation).
+    # Match Alexa/Siri/Google: silently revert to idle, skip the STT round-trip
+    # AND the chip's thinking flash. No audible/visual "didn't catch that".
+    # `had_speech` is exposed by Endpointer; legacy fixtures without the
+    # property fall through to the STT path (treated as if speech was heard).
+    if not getattr(d.endpointer, "had_speech", True):
+        d.post_state(utterance_id=uid, kind="idle", payload={})
+        _audit("", "silent_low_conf", None)
+        return
+
+    d.post_state(utterance_id=uid, kind="thinking", payload={"transcript_partial": ""})
+
     # 3) speech-to-text
     try:
         transcript = d.transcribe(pcm)
@@ -106,12 +133,23 @@ def run_once(d: OneShotDeps) -> None:
         _audit("", "failed", None, error=f"stt:{e}")
         return
 
+    # 3a) Whisper hallucination guard: silence sometimes round-trips as "",
+    # "[BLANK_AUDIO]", or pure punctuation. Skip Haiku — same silent revert.
+    if _is_blank_transcript(transcript):
+        d.post_state(utterance_id=uid, kind="idle", payload={})
+        _audit(transcript, "silent_low_conf", None)
+        return
+
     # 4) intent extraction (parse_intent_response never raises; returns unknown on failure)
     intent = d.extract_intent(transcript)
 
-    # 5) confidence routing
+    # 5) confidence routing. Unknown intent / low confidence happens most when
+    # wake fires mid-conversation and Haiku can't shoehorn the talk into our
+    # schema. Treat the same as no-speech: silent revert. The user didn't
+    # address the wall, the wall stays out of the way. The audit log still
+    # captures it for later review.
     if intent.intent == "unknown" or intent.confidence < SILENT_FAIL_CONFIDENCE:
-        d.post_state(utterance_id=uid, kind="failed", payload={"reason": "low_confidence"})
+        d.post_state(utterance_id=uid, kind="idle", payload={})
         _audit(transcript, "silent_low_conf", intent)
         return
 

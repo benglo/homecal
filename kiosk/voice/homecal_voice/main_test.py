@@ -105,7 +105,11 @@ def test_stt_exception_posts_failed_state_and_audit():
 # --- silent low-confidence -------------------------------------------------
 
 
-def test_low_confidence_silent_fail_does_not_execute_or_speak():
+def test_low_confidence_reverts_silently_to_idle():
+    """Industry-standard behavior (Alexa/Siri/Google): low-confidence intent
+    after wake = silent revert. The chip just calmly returns to its idle
+    invitation state — no 'didn't catch that' flash, no TTS.
+    The audit row still captures it for later review."""
     intent = IntentResult("dinner_set", {"date": "2026-06-04", "meal": "tacos"}, 0.4, "raw")
     execute = MagicMock()
     speak = MagicMock()
@@ -117,21 +121,84 @@ def test_low_confidence_silent_fail_does_not_execute_or_speak():
     execute.assert_not_called()
     speak.assert_not_called()
     kinds = [c.kwargs.get("kind") for c in state.call_args_list]
-    assert kinds[-1] == "failed"
-    assert state.call_args_list[-1].kwargs["payload"]["reason"] == "low_confidence"
+    assert kinds[-1] == "idle"
     assert audit.call_args.kwargs["status"] == "silent_low_conf"
 
 
-def test_unknown_intent_silent_fail():
+def test_unknown_intent_reverts_silently_to_idle():
     intent = IntentResult("unknown", {"reason": "no_json"}, 0.0, "raw")
     execute = MagicMock()
+    speak = MagicMock()
     deps, state, audit = _make_deps(
-        extract_intent=MagicMock(return_value=intent), execute=execute,
+        extract_intent=MagicMock(return_value=intent), execute=execute, speak=speak,
     )
     run_once(deps)
 
     execute.assert_not_called()
+    speak.assert_not_called()
+    kinds = [c.kwargs.get("kind") for c in state.call_args_list]
+    assert kinds[-1] == "idle"
     assert audit.call_args.kwargs["status"] == "silent_low_conf"
+
+
+def test_empty_wake_no_speech_skips_stt_and_reverts_silently():
+    """The dominant false-positive: wake fires on TV/conversation/dishwasher,
+    no actual speech follows. We must NOT pay for STT, must NOT show 'thinking',
+    must NOT say anything. Just listening → idle, quietly."""
+    transcribe = MagicMock()
+    extract_intent = MagicMock()
+    execute = MagicMock()
+    speak = MagicMock()
+    deps, state, audit = _make_deps(
+        transcribe=transcribe, extract_intent=extract_intent, execute=execute, speak=speak,
+    )
+    deps.endpointer.had_speech = False  # type: ignore[attr-defined]
+    run_once(deps)
+
+    transcribe.assert_not_called()
+    extract_intent.assert_not_called()
+    execute.assert_not_called()
+    speak.assert_not_called()
+    kinds = [c.kwargs.get("kind") for c in state.call_args_list]
+    assert kinds == ["listening", "idle"]
+    assert audit.call_args.kwargs["status"] == "silent_low_conf"
+
+
+def test_blank_transcript_skips_intent_and_reverts_silently():
+    """Whisper sometimes returns '' or '[BLANK_AUDIO]' for silent/static input
+    that still has VAD-triggering noise. We must not waste a Haiku call on it."""
+    transcribe = MagicMock(return_value="[BLANK_AUDIO]")
+    extract_intent = MagicMock()
+    deps, state, audit = _make_deps(transcribe=transcribe, extract_intent=extract_intent)
+    run_once(deps)
+
+    extract_intent.assert_not_called()
+    kinds = [c.kwargs.get("kind") for c in state.call_args_list]
+    assert kinds[-1] == "idle"
+    assert audit.call_args.kwargs["status"] == "silent_low_conf"
+
+
+def test_punctuation_only_transcript_treated_as_blank():
+    """`.` / `?` / etc. happen on muffled noise — never a real utterance."""
+    transcribe = MagicMock(return_value=" ... ")
+    extract_intent = MagicMock()
+    deps, _state, _audit = _make_deps(transcribe=transcribe, extract_intent=extract_intent)
+    run_once(deps)
+    extract_intent.assert_not_called()
+
+
+def test_is_blank_transcript_helper():
+    from homecal_voice.main import _is_blank_transcript
+    assert _is_blank_transcript("")
+    assert _is_blank_transcript("   ")
+    assert _is_blank_transcript("[BLANK_AUDIO]")
+    assert _is_blank_transcript("[blank_audio]")
+    assert _is_blank_transcript(".")
+    assert _is_blank_transcript("...")
+    assert _is_blank_transcript(" ?! ")
+    assert not _is_blank_transcript("hi")
+    assert not _is_blank_transcript("Tonight's dinner is tacos.")
+    assert not _is_blank_transcript("ok.")
 
 
 # --- mid-confidence confirm flows ------------------------------------------

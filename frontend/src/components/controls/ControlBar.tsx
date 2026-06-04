@@ -2,7 +2,8 @@ import { ChevronLeft, ChevronRight, Plus } from 'lucide-react';
 import type { DateTime } from 'luxon';
 import type { WallView } from '../../core/model/types';
 import { ZONE } from '../../core/util/time';
-import { MuteToggle } from './MuteToggle';
+import { VoiceChip } from './VoiceChip';
+import type { OverlayState } from '../voice/voiceState';
 
 interface Props {
   view: WallView;
@@ -13,6 +14,7 @@ interface Props {
   onToday: () => void;
   isToday: boolean;
   onQuickAdd: () => void;
+  voiceState: OverlayState;
 }
 
 function periodLabel(view: WallView, anchor: DateTime): string {
@@ -30,7 +32,7 @@ function periodLabel(view: WallView, anchor: DateTime): string {
 
 const VIEWS: WallView[] = ['agenda', 'week', 'month', 'chores'];
 
-export function ControlBar({ view, anchor, onView, onPrev, onNext, onToday, isToday, onQuickAdd }: Props) {
+export function ControlBar({ view, anchor, onView, onPrev, onNext, onToday, isToday, onQuickAdd, voiceState }: Props) {
   return (
     <div className="flex shrink-0 items-center justify-between bg-surface-2 border-t border-border" style={{ height: 88, padding: '0 24px' }}>
       {/* Left: view switcher */}
@@ -67,7 +69,7 @@ export function ControlBar({ view, anchor, onView, onPrev, onNext, onToday, isTo
         <NavBtn onClick={onNext} ariaLabel="Next"><ChevronRight size={26} /></NavBtn>
       </div>
 
-      {/* Right: Today + MuteToggle + FAB */}
+      {/* Right: Today + VoiceChip + FAB */}
       <div className="flex items-center gap-4">
         <button
           type="button"
@@ -85,7 +87,7 @@ export function ControlBar({ view, anchor, onView, onPrev, onNext, onToday, isTo
         >
           Today
         </button>
-        <MuteToggle />
+        <VoiceChip state={voiceState} />
         <button
           type="button"
           onClick={onQuickAdd}
