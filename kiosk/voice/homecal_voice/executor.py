@@ -56,9 +56,10 @@ class Executor:
 
     def _query_agenda(self, f: dict) -> dict:
         date = f["date"]
+        # Brisbane is fixed UTC+10 (spec §0). Send the local-day window with offset.
         items = _unwrap(requests.get(f"{self.base}/api/events",
-                                     params={"start": f"{date}T00:00:00Z",
-                                             "end":   f"{date}T23:59:59Z"}, timeout=10).json())
+                                     params={"start": f"{date}T00:00:00+10:00",
+                                             "end":   f"{date}T23:59:59+10:00"}, timeout=10).json())
         if not items: return {"ok": True, "spoken": f"Nothing on {self._humanise(date)}."}
         bits = []
         for e in items[:3]:
