@@ -31,7 +31,7 @@ This is the binding tradeoff: voice quality requires a cloud LLM, and we accept 
 2. **Wake word:** **openWakeWord** (Python, Apache 2.0). Default model `hey_mycroft_v0.1` from the community pretrained set. Threshold 0.5, 2-of-3 frame consensus to suppress spurious single-frame fires. Custom wake-word training deferred (Colab notebook path documented but not required for v1).
 3. **STT:** **whisper.cpp** running locally on the Pi. Default model `ggml-base.en-q5_1.bin` (~150MB). Config flag to upgrade to `small.en-q5_1` (~250MB) if AU place-name accuracy needs it. Selected because it's offline-capable, cheap, and our v1 vocabulary is narrow.
 4. **Intent extraction:** **Claude Haiku 4.5 via OpenRouter** with strict JSON-mode output. Live context (today's date, family member names, chore names) injected into the system prompt so the LLM resolves entities directly rather than via a separate disambiguator.
-5. **TTS:** **Gemini 2.5 Flash TTS Preview via OpenRouter** ($1/M chars; ~$0.04/day at family usage). Kokoro 82M is the documented swap-to-local fallback if we ever want offline TTS.
+5. **TTS:** **Gemini 3.1 Flash TTS Preview via OpenRouter** (`google/gemini-3.1-flash-tts-preview`, $1/M chars; ~$0.04/day at family usage). Kokoro 82M is the documented swap-to-local fallback if we ever want offline TTS.
 6. **v1 intent surface:** four narrow intents only (dinner_set, chore_complete, query_dinner, query_agenda). Free-form event-add is **explicitly deferred to v2** — per UX persona review, the misparse cost is too high for a v1 trust-building surface.
 7. **Voice confirmation in v1.** Tap-to-confirm degrades the value prop (parent has chicken on hands). After confirmation-card render, the Pi listens for a yes/no utterance; transcript is matched against a small grammar locally.
 8. **Confidence routing:** ≥0.85 auto-apply; 0.6–0.85 shows confirmation card on the wall; <0.6 silently logs and shows a brief "didn't catch that" toast.
@@ -410,7 +410,7 @@ WAKE_WORD=hey_mycroft           # or path to custom .onnx
 WAKE_THRESHOLD=0.5
 WHISPER_MODEL=base.en-q5_1      # or small.en-q5_1
 INTENT_MODEL=anthropic/claude-haiku-4.5
-TTS_MODEL=google/gemini-2.5-flash-tts-preview
+TTS_MODEL=google/gemini-3.1-flash-tts-preview
 DAILY_REQUEST_CAP=200
 ```
 
@@ -432,7 +432,7 @@ DAILY_REQUEST_CAP=200
 
 - **Custom wake word.** v1 ships with `hey_mycroft`. Do we want to spec a v1.1 path to `"hey calendar"` via Colab training, or leave it as a v2 item? Recommendation: v2 — let the family use `hey_mycroft` for a month to gather false-positive baseline before committing training data.
 - **whisper.cpp packaging on trixie.** Bookworm packages whisper.cpp; trixie may or may not. If not, the install script builds from source (~3 min on Pi 5). Confirm during implementation; fall back to a Dockerised whisper-server on the Pi if compilation is painful.
-- **TTS voice choice.** Gemini Flash TTS Preview has multiple voice presets. Pick a default (recommendation: a calm AU-adjacent voice) — final selection deferred to implementation.
+- **TTS voice choice.** Gemini 3.1 Flash TTS Preview has multiple voice presets. Pick a default (recommendation: a calm AU-adjacent voice) — final selection deferred to implementation.
 
 ---
 
