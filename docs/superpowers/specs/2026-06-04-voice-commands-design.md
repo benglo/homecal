@@ -28,10 +28,10 @@ This is the binding tradeoff: voice quality requires a cloud LLM, and we accept 
 ## 3. Locked decisions (binding — read these before changing behaviour)
 
 1. **All audio handling on the Pi.** Mic, wake word, recording, STT, TTS playback all live on the Pi. The Fastify server never sees a WAV. Audio bytes never leave the LAN — only transcript text and TTS audio cross the WAN to OpenRouter.
-2. **Wake word:** **openWakeWord** (Python, Apache 2.0). Default model `hey_mycroft_v0.1` from the community pretrained set. Threshold 0.5, 2-of-3 frame consensus to suppress spurious single-frame fires. Custom wake-word training deferred (Colab notebook path documented but not required for v1).
-3. **STT:** **whisper.cpp** running locally on the Pi. Default model `ggml-base.en-q5_1.bin` (~150MB). Config flag to upgrade to `small.en-q5_1` (~250MB) if AU place-name accuracy needs it. Selected because it's offline-capable, cheap, and our v1 vocabulary is narrow.
-4. **Intent extraction:** **Claude Haiku 4.5 via OpenRouter** with strict JSON-mode output. Live context (today's date, family member names, chore names) injected into the system prompt so the LLM resolves entities directly rather than via a separate disambiguator.
-5. **TTS:** **Gemini 3.1 Flash TTS Preview via OpenRouter** (`google/gemini-3.1-flash-tts-preview`, $1/M chars; ~$0.04/day at family usage). Kokoro 82M is the documented swap-to-local fallback if we ever want offline TTS.
+2. **Wake word:** **openWakeWord** (Python, Apache 2.0), used directly via `openwakeword.model.Model(wakeword_model_paths=[...])` — feasibility-validated API surface. Default model `hey_mycroft_v0.1` (empirically scored 0.998 on this hardware — see §11). Threshold 0.5, `trigger_level=1` (single-activation; Wyoming convention for this engine), refractory window 2.0s post-fire. **Alternative deployment path:** `wyoming-openwakeword` (the Home Assistant production server) — same engine, exposes `okay_nabu` / `hey_jarvis` / `hey_mycroft` / `hey_rhasspy` / `alexa` / `computer` over the Wyoming TCP protocol; adopt this if we ever want HA Voice Pipeline interop. v1 stays with the raw library for simplicity. Custom wake-word training deferred (Colab notebook path documented but not required for v1).
+3. **STT:** **whisper.cpp** (`ggml-org/whisper.cpp`) running locally on the Pi via its `whisper-server` HTTP mode (model pre-loaded at boot, kept in memory; flags `-m ggml-base.en-q5_1.bin -t 4 -l en --host 127.0.0.1 --port 8080`). Default model `ggml-base.en-q5_1.bin` (~150MB), produced by `./build/bin/quantize models/ggml-base.en.bin models/ggml-base.en-q5_1.bin q5_1`. Config flag to upgrade to `small.en-q5_1` (~250MB) if AU place-name accuracy needs it. Selected because it's offline-capable, cheap, and our v1 vocabulary is narrow.
+4. **Intent extraction:** **Claude Haiku 4.5 via OpenRouter** (`anthropic/claude-haiku-4.5`, $1/M input + $5/M output tokens — verified on OpenRouter 2026-06-04) with strict JSON-mode output. Live context (today's date, family member names, chore names) injected into the system prompt so the LLM resolves entities directly rather than via a separate disambiguator.
+5. **TTS:** **Gemini 3.1 Flash TTS Preview via OpenRouter** (`google/gemini-3.1-flash-tts-preview`, released 2026-04-24; $1/M input + $20/M output tokens — billing unit for audio output not clearly documented on OpenRouter pricing page, verify at implementation). Outputs PCM 24kHz/16-bit mono, 70+ languages, up to 2 speakers, SynthID watermarked. Kokoro 82M (`hexgrad/kokoro-82m`, $0.62/M input + $0 output, Apache-licensed, 54 voices, 8 languages, 4096-token context) is the documented swap-to-local fallback — and is dramatically cheaper if Gemini billing ends up surprising us.
 6. **v1 intent surface:** four narrow intents only (dinner_set, chore_complete, query_dinner, query_agenda). Free-form event-add is **explicitly deferred to v2** — per UX persona review, the misparse cost is too high for a v1 trust-building surface.
 7. **Voice confirmation in v1.** Tap-to-confirm degrades the value prop (parent has chicken on hands). After confirmation-card render, the Pi listens for a yes/no utterance; transcript is matched against a small grammar locally.
 8. **Confidence routing:** ≥0.85 auto-apply; 0.6–0.85 shows confirmation card on the wall; <0.6 silently logs and shows a brief "didn't catch that" toast.
@@ -102,7 +102,7 @@ This is the binding tradeoff: voice quality requires a cloud LLM, and we accept 
 
 - `mic.py` — opens `pw-record` subprocess piping 16kHz PCM16 mono on stdout; chunks to 80ms frames. Chosen over `sounddevice`+`scipy.resample_poly` because feasibility test showed scipy resample caused PortAudio overflow on Pi 5 (§11). Recovers on USB disconnect by respawning the subprocess.
 - `wake.py` — feeds frames to openWakeWord. On wake fire (2-of-3 frames ≥ 0.5), emits a `wake_start` event with a fresh UUIDv7 `utterance_id` and rejects further wakes until the current utterance completes.
-- `endpointer.py` — Silero v4 VAD, threshold 0.5, min silence 700ms, speech pad 200ms, hard cap 8s.
+- `endpointer.py` — Silero VAD v6.2 (current PyPI `silero-vad>=6.2.1`, ONNX backend), threshold 0.5, min silence 700ms, speech pad 200ms, hard cap 8s. Note: `whisper.cpp`'s `whisper-server` mode also supports VAD natively (`--vad --vad-model FNAME` flags); we keep a separate Silero process for clearer module boundaries, but the merged-into-whisper option is the obvious simplification if this becomes operationally painful.
 - `stt.py` — wraps `whisper.cpp` invoked as a subprocess against a pre-warmed model (model loaded at service start, kept in memory via the `whisper-server` mode of whisper.cpp). Returns transcript + duration.
 - `intent.py` — calls OpenRouter Haiku 4.5 with the live-context system prompt (§7.2). Returns parsed intent + confidence. On non-200 or timeout: returns `{intent: 'unknown', reason: 'cloud_unreachable'}` and the service sets `voice_offline=true`.
 - `tts.py` — calls OpenRouter Gemini Flash TTS, writes the MP3 to `/tmp/`, plays it via `aplay`. Skipped if `quiet_hours_active` or if `voice_offline`.
@@ -433,6 +433,7 @@ DAILY_REQUEST_CAP=200
 - **Custom wake word.** v1 ships with `hey_mycroft`. Do we want to spec a v1.1 path to `"hey calendar"` via Colab training, or leave it as a v2 item? Recommendation: v2 — let the family use `hey_mycroft` for a month to gather false-positive baseline before committing training data.
 - **whisper.cpp packaging on trixie.** Bookworm packages whisper.cpp; trixie may or may not. If not, the install script builds from source (~3 min on Pi 5). Confirm during implementation; fall back to a Dockerised whisper-server on the Pi if compilation is painful.
 - **TTS voice choice.** Gemini 3.1 Flash TTS Preview has multiple voice presets. Pick a default (recommendation: a calm AU-adjacent voice) — final selection deferred to implementation.
+- **TTS billing unit.** OpenRouter shows `$20/M` output for Gemini 3.1 Flash TTS Preview but the pricing page does not say whether that's per-million text tokens, per-million audio tokens, per-million characters, or seconds. Cost-modelled assuming output tokens; verify against a real-bill test before declaring v1 ready. If billing is per-second of audio, costs could be 5–10× higher than estimated (still trivial at family usage, but worth knowing).
 
 ---
 
@@ -441,8 +442,32 @@ DAILY_REQUEST_CAP=200
 1. Free-form event-add by voice.
 2. Custom wake word `"hey calendar"` via openWakeWord Colab.
 3. Phone push-to-talk surface.
-4. Local Kokoro TTS for full offline operation.
-5. Multi-turn dialogue ("add an event... at 5... no, change to 6").
-6. Voice-driven event/dinner *editing* (not just creation).
-7. "What chores are left today" / "who has the most stars" — agenda-style query expansion.
-8. Per-family-member voice ID / personalised confirmation.
+4. Local Kokoro TTS for full offline operation (model is Apache-licensed and runs on Pi 5; pricing makes this an easy swap when we want offline).
+5. Wyoming-protocol wake-word service path (interop with Home Assistant Voice Pipeline).
+6. Multi-turn dialogue ("add an event... at 5... no, change to 6").
+7. Voice-driven event/dinner *editing* (not just creation).
+8. "What chores are left today" / "who has the most stars" — agenda-style query expansion.
+9. Per-family-member voice ID / personalised confirmation.
+
+---
+
+## 16. Verification trail
+
+External claims in this spec were ground-truthed 2026-06-04 against live sources:
+
+| Claim | Source | Result |
+|---|---|---|
+| `anthropic/claude-haiku-4.5` exists on OpenRouter | `https://openrouter.ai/anthropic/claude-haiku-4.5` | ✅ confirmed, $1/M in + $5/M out |
+| `google/gemini-3.1-flash-tts-preview` exists | OpenRouter model page + web search | ✅ confirmed, $1/M in + $20/M out, released 2026-04-24, PCM 24kHz/16-bit, SynthID watermarked |
+| `hexgrad/kokoro-82m` exists on OpenRouter | OpenRouter model page | ✅ confirmed, $0.62/M in + $0 out, Apache-licensed, 54 voices, 8 languages, 4096-token ctx |
+| openWakeWord API (`Model(wakeword_model_paths=...)`) | Feasibility test §11 + Wyoming-openwakeword docs via Context7 | ✅ verified |
+| Built-in wake-word model names | Wyoming-openwakeword docs | `okay_nabu`, `hey_jarvis`, `hey_mycroft`, `hey_rhasspy`, `alexa`, `computer` |
+| `whisper.cpp` repo location | Context7 → `ggml-org/whisper.cpp` (moved from ggerganov) | ✅ updated in §3 |
+| `whisper-server` HTTP mode flags | Context7 whisper.cpp docs | ✅ flags documented in §3, defaults match (4 threads, port 8080) |
+| Silero VAD current version | PyPI / GitHub | `silero-vad>=6.2.1` (was wrongly claimed v4 in first draft) |
+| TTS billing unit | OpenRouter pricing page + API page | ❌ ambiguous; flagged in §14 open questions |
+
+Unverified (deferred to implementation):
+- whisper.cpp packaging availability on Debian trixie (may need source build — script in §13.1 handles both).
+- OpenRouter JSON-mode support for Haiku 4.5 specifically (vs. relying on the model's instruction-following).
+- Actual Gemini TTS billed cost at family usage (verify against first month's OpenRouter invoice).
