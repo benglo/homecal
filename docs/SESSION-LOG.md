@@ -4,6 +4,52 @@ Running log of work per session. Newest first. Pair with `git log` for exact dif
 
 ---
 
+## 2026-06-04 — Recurrence overrides: design locked (no code yet)
+
+### What happened
+- Shipped dinner upgrade to the Pi (`docker compose up -d --build` +
+  `bash kiosk/reload.sh`).
+- Brainstormed the next roadmap item: **single-occurrence event overrides**
+  (the long-deferred v2 from spec §10). Scoped tighter than expected once
+  the existing code was read.
+
+### Discovery (what's already done)
+- `event_exceptions` table has `kind/title/start/end_at/location` columns
+  (migration v1).
+- `recurrence.ts:67` already overlays `kind='modified'` exceptions on read.
+- `cancelOccurrence` write path and `DELETE /api/events/:id/occurrences/:date`
+  already wired (kind='cancelled').
+- **Gap is just the write path for `modified`** + the editor UX flow.
+
+### Locked design decisions
+- **Scope:** "this event only" edit (modify exception). "This-and-following"
+  edit/delete remain deferred — not on this work.
+- **API:** `PUT /api/events/:id/occurrences/:date` body
+  `{title?, start?, end?, location?}` (only present fields overridden).
+  `DELETE /api/events/:id/occurrences/:date` collapsed to delete-whatever-
+  kind-exists (PK is `(event_id, date)` so one row max).
+- **UX:** Prompt on Save (Apple-style). User edits the form freely; pressing
+  Save opens a small scope sheet — "This event only / All in series" —
+  reusing the existing delete-scope pattern. A "Reset to series default"
+  footer button appears when the occurrence has an existing modified
+  exception.
+- **No visual marker** on overridden occurrences (user call) — they just
+  render with the overridden values. Family trusts the wall.
+- **Not overridable:** category, all_day, rrule (schema doesn't support;
+  YAGNI). `start`/`end` can shift time but not move to a different day —
+  cross-day moves = delete + create.
+- **iCal RECURRENCE-ID export** — out of scope; separate follow-up.
+
+### Status
+- Brainstorming complete; spec doc + implementation plan not yet written.
+- Container is running the dinner upgrade in prod on the LAN.
+
+### Next session
+- Write `docs/superpowers/specs/2026-06-04-recurrence-overrides-design.md`,
+  user reviews, then `writing-plans` → subagent-driven execution.
+
+---
+
 ## 2026-06-03 — Dinner planning upgrade
 
 ### What was built
