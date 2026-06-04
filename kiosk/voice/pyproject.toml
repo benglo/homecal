@@ -1,0 +1,32 @@
+[project]
+name = "homecal-voice"
+version = "0.1.0"
+# R15 — torch wheels for Python 3.13 on aarch64 are unreliable. Pin to 3.11/3.12.
+# The Pi runs trixie which ships 3.13 by default; install script installs 3.12 via apt.
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "openwakeword>=0.6.0",
+  "onnxruntime>=1.18",
+  "numpy>=1.26",
+  "requests>=2.32",
+  "python-dotenv>=1.0",
+  "uuid-utils>=0.10",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-mock>=3.14", "requests-mock>=1.12"]
+
+[project.scripts]
+homecal-voice = "homecal_voice.main:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["homecal_voice*"]
+
+[tool.pytest.ini_options]
+testpaths = ["homecal_voice"]
+python_files = ["*_test.py"]
