@@ -21,19 +21,30 @@ class Endpointer:
         self._pad_frames = max(0, speech_pad_ms // FRAME_MS)
         self._buf: list[np.ndarray] = []
         self._silent_run = 0
+        self._seen_speech = False  # gate silence-end on having heard speech first
+        log.debug("Endpointer: silence_frames_needed=%d cap_frames=%d threshold=%.2f",
+                  self._silence_frames_needed, self._cap_frames, self._threshold)
 
     def feed(self, frame: np.ndarray) -> bool:
         self._buf.append(frame)
         prob = self._vad(frame, SAMPLE_RATE)
         if prob >= self._threshold:
             self._silent_run = 0
+            if not self._seen_speech:
+                log.debug("endpoint: first speech at frame %d (prob=%.2f)",
+                          len(self._buf), prob)
+            self._seen_speech = True
         else:
             self._silent_run += 1
-        if self._silent_run >= self._silence_frames_needed:
-            log.info("endpoint: silence")
+        # Don't end on silence until we've heard at least one frame of speech.
+        # Otherwise the pre-speech silence backlog (the gap between wake-word
+        # and the rest of the command) terminates the recording immediately.
+        if self._seen_speech and self._silent_run >= self._silence_frames_needed:
+            log.info("endpoint: silence after %d frames (had speech)", len(self._buf))
             return True
         if len(self._buf) >= self._cap_frames:
-            log.warning("endpoint: hard cap")
+            log.warning("endpoint: hard cap (%d frames, seen_speech=%s)",
+                        len(self._buf), self._seen_speech)
             return True
         return False
 
