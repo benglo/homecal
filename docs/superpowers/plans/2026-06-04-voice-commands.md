@@ -16,6 +16,35 @@
 
 ---
 
+## Revision history
+
+**Plan rev 2** (post 3-persona review — implementation engineer / codebase-fit / seams critic). Findings keyed below; corrections applied inline to the affected tasks.
+
+- **R1 (impl + seams) — `broker.poke()` is single-arg + payloadless.** Without a payload channel, the entire SSE→VoiceOverlay flow is dead on arrival. **Task 5 expanded** to widen `Poke` with `payload?: unknown`, widen `broker.poke(kind, payload?)`, and add a `useSsePoke(kind, cb)` hook on the frontend so the overlay can subscribe. Tasks 4 + 8 simplified accordingly.
+- **R2 (impl + seams) — `subscribeToSseKind` is fiction.** Replaced with the real `useSsePoke` hook from R1 (lives next to `useRealtime`). Task 8 no longer invents a frontend broker singleton.
+- **R3 (impl + seams) — homecal list endpoints return bare arrays, not `{data:[...]}`.** Executor (Task 19) + main.py prompt-context fetch (Task 20) read responses directly. All `r.json().get("data", [])` → `r.json()`.
+- **R4 (impl + seams) — Chores have `title` not `name`, `assignedTo` not `familyMemberId`.** Executor + prompt builder updated.
+- **R5 (impl + seams) — `POST /api/chores/:id/complete` requires `{date: 'YYYY-MM-DD'}` body.** Executor sends today's Brisbane date.
+- **R6 (codebase-fit) — Frontend tokens invented.** Replaced everywhere: `--ink`→`--text`, `--surface-1`→`--surface`, `--surface-2`→`--surface-2` (this one was real), `--muted`→`--text-muted`. Verified token list against `frontend/src/styles/`. `--accent`, `--accent-weak`, `--accent-ink` confirmed real.
+- **R7 (codebase-fit) — `MuteToggle` should reuse `TogglePill`** (`frontend/src/components/ui/TogglePill.tsx`). Task 9 rewritten to wrap it.
+- **R8 (codebase-fit) — `nowIso()` already exists in `backend/src/util/time.ts`.** Drop the duplicated regex stripper in Tasks 3 + 4. Import the canonical helper.
+- **R9 (codebase-fit) — Migration v3 missing `created_at` default.** `voice_utterances.created_at` now matches the v1/v2 convention `DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))`.
+- **R10 (impl + codebase-fit) — `createTestApp` is route-agnostic.** Task 4 no longer mutates `bootstrap.ts`; voice tests register `voiceRoutes` themselves (mirror `familyMembers.test.ts`). The non-existent `realtime-bootstrap` import in the Task 4 test is replaced by `import { broker } from '../realtime'`.
+- **R11 (codebase-fit) — `useMuteVoice` uses project's `onSettled` pattern**, not `onSuccess`.
+- **R12 (codebase-fit) — `KIND_TO_KEYS` is flat `string[]`.** `voice: ['voice-status']` (not `[['voice-status']]`).
+- **R13 (impl) — Wake-word key from `oWW Model.predict()` is versioned** (`hey_mycroft_v0.1`, not `hey_mycroft`). `WakeDetector` now stores the model's actual scoring key (basename-without-extension). Otherwise wake never fires (silently scores 0).
+- **R14 (impl) — `pw-record --target` is not a stable flag.** `mic.py` now uses the default source (no `--target`), invocation: `pw-record --rate 16000 --channels 1 --format=s16 -`. Device override via env var `PIPEWIRE_NODE` documented in the env file. Verified working on the feasibility-test Pi.
+- **R15 (impl) — `silero-vad` ONNX-only path; no torch.** Python pinned `>=3.11,<3.13` (avoids the torch-on-3.13-aarch64 wheel gap). `endpointer.py` `load_silero_vad()` rewritten to call the ONNX model directly via `onnxruntime`, no torch import.
+- **R16 (impl + seams) — Mute lag.** Pi now opens an SSE client to `/api/stream` (read-only) and clears its mute cache on `voice` poke; 5s cache stays as the backstop. `main.py` adds a tiny background SSE reader.
+- **R17 (impl) — whisper.cpp build needs explicit targets.** Install script uses `cmake -B build -DGGML_NATIVE=ON -DWHISPER_BUILD_SERVER=ON` then `cmake --build build -j --target whisper-server quantize`.
+- **R18 (codebase-fit) — Lucide icons, not emoji.** `EarGlyph` uses `Mic` / `MicOff` / `Loader2`; `MuteToggle` uses `Mic` / `MicOff`. Codebase pattern (chores, photos, weather) is lucide-react.
+- **R19 (codebase-fit) — `useVoiceStatus` drops `refetchInterval`.** Relies on SSE invalidation via R1+R2. `staleTime` set to project default (`5 * 60_000`).
+- **R20 (codebase-fit) — Voice routes use plain plugin shape**, not DI factory. Reads `broker` and `voiceState` from module singletons. Matches `choreRoutes` / `familyMemberRoutes`.
+
+Task count: 23 → 23 (Task 5 expanded, no new tasks added — SSE plumbing folded into the existing PokeKind work).
+
+---
+
 ## File structure
 
 ### Backend (modify)
@@ -121,7 +150,7 @@ Edit `backend/src/db/migrate.ts`, append to the `MIGRATIONS` array after the v2 
     db.exec(`
       CREATE TABLE voice_utterances (
         id            TEXT PRIMARY KEY,
-        created_at    TEXT NOT NULL,
+        created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),  -- R9: match v1/v2 convention
         transcript    TEXT NOT NULL,
         intent_json   TEXT,
         confidence    REAL,
@@ -435,6 +464,7 @@ npm --workspace backend test 2>&1 | grep -E "voice|FAIL" | tail -10
 
 ```ts
 import { getDb } from '../db';
+import { nowIso } from '../util/time';   // R8 — canonical helper, do not duplicate
 
 export interface VoiceUtteranceInsert {
   id: string;
@@ -448,10 +478,6 @@ export interface VoiceUtteranceInsert {
 
 export interface VoiceUtterance extends VoiceUtteranceInsert {
   createdAt: string;
-}
-
-function nowIso(): string {
-  return new Date().toISOString().replace(/\.\d+Z$/, 'Z');
 }
 
 export function insertUtterance(u: VoiceUtteranceInsert): void {
@@ -503,10 +529,7 @@ test('voiceSettings.setMuteUntil + getMuteUntil round-trip', async (t) => {
 
 ```ts
 import { getDb } from '../db';
-
-function nowIso(): string {
-  return new Date().toISOString().replace(/\.\d+Z$/, 'Z');
-}
+import { nowIso } from '../util/time';   // R8
 
 export function getMuteUntil(): string | null {
   const row = getDb().prepare('SELECT mute_until FROM voice_settings WHERE id = 1').get() as { mute_until: string | null } | undefined;
@@ -577,19 +600,28 @@ export const voiceMuteBody = z.object({
 
 - [ ] **Step 2: Write the route tests first**
 
-Create `backend/src/routes/voice.test.ts`:
+Create `backend/src/routes/voice.test.ts`. Mirrors `familyMembers.test.ts` — builds a fresh Fastify app and registers `voiceRoutes` itself rather than touching `bootstrap.ts` (R10).
 
 ```ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createTestApp, setupIsolatedDb } from '../test/util/bootstrap';
+import Fastify from 'fastify';
+import { setupIsolatedDb } from '../test/util/bootstrap';
+import { voiceRoutes } from './voice';
+import { broker } from '../realtime';            // R10 — module singleton
 
 const PI = { 'x-pi-token': 'test-token' };
 
+async function buildApp() {
+  process.env.PI_API_TOKEN = 'test-token';
+  const app = Fastify();
+  await app.register(voiceRoutes);
+  return app;
+}
+
 test('POST /api/voice/heartbeat: records heartbeat + 200', async (t) => {
   setupIsolatedDb(t, 'voice-heartbeat');
-  process.env.PI_API_TOKEN = 'test-token';
-  const app = await createTestApp();
+  const app = await buildApp();
   const r = await app.inject({
     method: 'POST',
     url: '/api/voice/heartbeat',
@@ -605,8 +637,7 @@ test('POST /api/voice/heartbeat: records heartbeat + 200', async (t) => {
 
 test('POST /api/voice/heartbeat: 401 without token', async (t) => {
   setupIsolatedDb(t, 'voice-heartbeat-401');
-  process.env.PI_API_TOKEN = 'test-token';
-  const app = await createTestApp();
+  const app = await buildApp();
   const r = await app.inject({
     method: 'POST',
     url: '/api/voice/heartbeat',
@@ -618,8 +649,7 @@ test('POST /api/voice/heartbeat: 401 without token', async (t) => {
 
 test('POST /api/voice/audit: inserts row + 201', async (t) => {
   setupIsolatedDb(t, 'voice-audit');
-  process.env.PI_API_TOKEN = 'test-token';
-  const app = await createTestApp();
+  const app = await buildApp();
   const r = await app.inject({
     method: 'POST',
     url: '/api/voice/audit',
@@ -639,8 +669,7 @@ test('POST /api/voice/audit: inserts row + 201', async (t) => {
 
 test('POST /api/voice/audit: validation 400 on bad status', async (t) => {
   setupIsolatedDb(t, 'voice-audit-validate');
-  process.env.PI_API_TOKEN = 'test-token';
-  const app = await createTestApp();
+  const app = await buildApp();
   const r = await app.inject({
     method: 'POST',
     url: '/api/voice/audit',
@@ -657,13 +686,11 @@ test('POST /api/voice/audit: validation 400 on bad status', async (t) => {
   await app.close();
 });
 
-test('POST /api/voice/state: pokes broker', async (t) => {
+test('POST /api/voice/state: pokes broker with payload', async (t) => {
   setupIsolatedDb(t, 'voice-state-poke');
-  process.env.PI_API_TOKEN = 'test-token';
-  const app = await createTestApp();
+  const app = await buildApp();
   let poked: any = null;
-  const { getBroker } = await import('../realtime-bootstrap');
-  getBroker().subscribe((p) => { poked = p; });
+  const unsub = broker.subscribe((p) => { poked = p; });   // R10
   const r = await app.inject({
     method: 'POST',
     url: '/api/voice/state',
@@ -672,12 +699,15 @@ test('POST /api/voice/state: pokes broker', async (t) => {
   });
   assert.equal(r.statusCode, 200);
   assert.equal(poked?.kind, 'voice');
+  assert.deepEqual(poked?.payload, { utterance_id: 'u1', kind: 'listening', payload: { vu: 0.4 } });  // R1
+  unsub();
   await app.close();
 });
 
 test('PUT /api/voice/mute: stores + GET reflects', async (t) => {
   setupIsolatedDb(t, 'voice-mute');
-  const app = await createTestApp();
+  process.env.PI_API_TOKEN = 'test-token';
+  const app = await buildApp();
   const r = await app.inject({
     method: 'PUT',
     url: '/api/voice/mute',
@@ -698,82 +728,79 @@ npm --workspace backend test 2>&1 | grep -E "voice/routes|FAIL" | tail -20
 
 - [ ] **Step 4: Implement `voice.ts`**
 
-Create `backend/src/routes/voice.ts`:
+Create `backend/src/routes/voice.ts`. Plain plugin shape (R20) — matches `choreRoutes` / `familyMemberRoutes`. Reads `broker`, `voiceState`, and `config.piApiToken` from module imports rather than DI.
 
 ```ts
 import type { FastifyInstance } from 'fastify';
 import { parseBody } from './helpers';
 import {
-  voiceStateBody,
-  voiceAuditBody,
-  voiceHeartbeatBody,
-  voiceMuteBody,
+  voiceStateBody, voiceAuditBody, voiceHeartbeatBody, voiceMuteBody,
 } from '../schemas';
 import { insertUtterance } from '../repos/voiceUtterances';
 import { getMuteUntil, setMuteUntil } from '../repos/voiceSettings';
-import type { Broker } from '../realtime';
-import type { VoiceState } from '../voice/state';
+import { broker } from '../realtime';
+import { voiceState } from '../voice/state';     // module singleton — add a `export const voiceState = createVoiceState()` line in state.ts
 import { requirePiToken } from '../voice/auth';
+import { config } from '../config';
 
-export interface VoiceRouteDeps {
-  broker: Broker;
-  voiceState: VoiceState;
-  piToken: string;
+export async function voiceRoutes(app: FastifyInstance): Promise<void> {
+  const piGuard = requirePiToken(config.piApiToken);
+
+  // Pi → server: state for SSE fan-out — payload is forwarded to subscribers (R1)
+  app.post('/api/voice/state', { preHandler: piGuard }, async (req, reply) => {
+    const body = parseBody(voiceStateBody, req.body);
+    broker.poke('voice', body);                   // R1 — full body becomes the SSE payload
+    reply.code(200).send({ ok: true });
+  });
+
+  // Pi → server: audit log
+  app.post('/api/voice/audit', { preHandler: piGuard }, async (req, reply) => {
+    const body = parseBody(voiceAuditBody, req.body);
+    insertUtterance({
+      id: body.id,
+      transcript: body.transcript,
+      intentJson: body.intent_json ?? null,
+      confidence: body.confidence ?? null,
+      status: body.status,
+      durationMs: body.duration_ms ?? null,
+      error: body.error ?? null,
+    });
+    reply.code(201).send({ ok: true });
+  });
+
+  // Pi → server: heartbeat
+  app.post('/api/voice/heartbeat', { preHandler: piGuard }, async (req, reply) => {
+    const body = parseBody(voiceHeartbeatBody, req.body);
+    voiceState.recordHeartbeat(new Date(body.at));
+    reply.code(200).send({ ok: true });
+  });
+
+  // Wall / phone → server: liveness + mute state
+  app.get('/api/voice/status', async () => {
+    const now = new Date();
+    const mu = getMuteUntil();
+    return {
+      mic_online: voiceState.micOnline(now),
+      last_heartbeat_at: voiceState.lastHeartbeatAt(),
+      mute_until: mu,
+      muted: !!mu && new Date(mu).getTime() > now.getTime(),
+    };
+  });
+
+  // Wall / phone → server: mute toggle
+  app.put('/api/voice/mute', async (req) => {
+    const body = parseBody(voiceMuteBody, req.body);
+    setMuteUntil(body.until);
+    broker.poke('voice', { kind: 'mute_changed', mute_until: body.until });   // R16 — Pi clears local cache on this
+    return { ok: true, mute_until: body.until };
+  });
 }
+```
 
-export function voiceRoutes(deps: VoiceRouteDeps) {
-  return async function plugin(app: FastifyInstance) {
-    const piGuard = requirePiToken(deps.piToken);
+Also append to `backend/src/voice/state.ts` (from Task 2):
 
-    // Pi → server: state for SSE fan-out
-    app.post('/api/voice/state', { preHandler: piGuard }, async (req, reply) => {
-      const body = parseBody(voiceStateBody, req.body);
-      deps.broker.poke('voice');
-      reply.code(200).send({ ok: true });
-    });
-
-    // Pi → server: audit log
-    app.post('/api/voice/audit', { preHandler: piGuard }, async (req, reply) => {
-      const body = parseBody(voiceAuditBody, req.body);
-      insertUtterance({
-        id: body.id,
-        transcript: body.transcript,
-        intentJson: body.intent_json ?? null,
-        confidence: body.confidence ?? null,
-        status: body.status,
-        durationMs: body.duration_ms ?? null,
-        error: body.error ?? null,
-      });
-      reply.code(201).send({ ok: true });
-    });
-
-    // Pi → server: heartbeat
-    app.post('/api/voice/heartbeat', { preHandler: piGuard }, async (req, reply) => {
-      const body = parseBody(voiceHeartbeatBody, req.body);
-      deps.voiceState.recordHeartbeat(new Date(body.at));
-      reply.code(200).send({ ok: true });
-    });
-
-    // Wall / phone → server: liveness + mute state
-    app.get('/api/voice/status', async () => {
-      const now = new Date();
-      return {
-        mic_online: deps.voiceState.micOnline(now),
-        last_heartbeat_at: deps.voiceState.lastHeartbeatAt(),
-        mute_until: getMuteUntil(),
-        muted: !!getMuteUntil() && new Date(getMuteUntil()!).getTime() > now.getTime(),
-      };
-    });
-
-    // Wall / phone → server: mute toggle
-    app.put('/api/voice/mute', async (req, reply) => {
-      const body = parseBody(voiceMuteBody, req.body);
-      setMuteUntil(body.until);
-      deps.broker.poke('voice');
-      return { ok: true, mute_until: body.until };
-    });
-  };
-}
+```ts
+export const voiceState: VoiceState = createVoiceState();   // module singleton (R20)
 ```
 
 - [ ] **Step 5: Register in `server.ts`**
@@ -782,57 +809,171 @@ In `backend/src/server.ts`, near the other route registrations:
 
 ```ts
 import { voiceRoutes } from './routes/voice';
-import { createVoiceState } from './voice/state';
-import { config } from './config';
 
 // ... existing setup
-const voiceState = createVoiceState();
-await app.register(voiceRoutes({ broker, voiceState, piToken: config.piApiToken }));
+await app.register(voiceRoutes);
 ```
 
-- [ ] **Step 6: Update `createTestApp` to wire deps**
+(No deps to thread — `voiceRoutes` reads `broker` / `voiceState` / `config.piApiToken` from module imports.)
 
-In `backend/src/test/util/bootstrap.ts`, if it doesn't already register voice routes, add the same `app.register(voiceRoutes(...))` call so test injection works.
-
-- [ ] **Step 7: Tests green + commit**
+- [ ] **Step 6: Tests green + commit**
 
 ```bash
 npm --workspace backend test 2>&1 | tail -8
-git add backend/src/schemas.ts backend/src/server.ts backend/src/routes/voice.ts backend/src/routes/voice.test.ts backend/src/test/util/bootstrap.ts
+git add backend/src/schemas.ts backend/src/server.ts \
+        backend/src/routes/voice.ts backend/src/routes/voice.test.ts \
+        backend/src/voice/state.ts
 git commit -m "feat(backend): voice routes (state, audit, heartbeat, status, mute)"
 ```
 
 ---
 
-### Task 5: `PokeKind` gains `'voice'`
+### Task 5: SSE foundation — `PokeKind +'voice'` + payload channel + `useSsePoke` hook
 
 **Files:**
-- Modify: `backend/src/realtime.ts`
-- Modify: `frontend/src/core/hooks/useRealtime.ts`
+- Modify: `backend/src/realtime.ts` — widen `Poke` + `poke()` to carry an optional payload (R1).
+- Modify: `backend/src/routes/stream.ts` — verify `JSON.stringify(poke)` already forwards the payload (no change needed; confirm only).
+- Modify: `frontend/src/core/hooks/useRealtime.ts` — add `KIND_TO_KEYS.voice` (flat shape, R12) **and** expose a `useSsePoke(kind, cb)` hook (R2) so non-query subscribers (like `VoiceOverlay`) can receive payloads.
 
-- [ ] **Step 1: Add to backend PokeKind union**
+The existing `useRealtime` only invalidates query keys on poke; the overlay needs to receive the actual `{utterance_id, intent, ...}` payload. Rather than invent a new broker, we lift the `EventSource` to a module-scope singleton and expose a typed subscribe hook alongside the existing invalidate behaviour.
+
+- [ ] **Step 1: Widen the backend Poke type**
 
 In `backend/src/realtime.ts`:
 
 ```ts
 export type PokeKind = 'events' | 'dinners' | 'categories' | 'photos' | 'chores' | 'family-members' | 'voice';
+
+export interface Poke {
+  kind: PokeKind;
+  at: string;             // ISO-8601 UTC, server-stamped
+  payload?: unknown;      // optional per-kind blob; used by 'voice' for utterance state
+}
+
+type Listener = (poke: Poke) => void;
+
+export interface Broker {
+  subscribe(fn: Listener): () => void;
+  poke(kind: PokeKind, payload?: unknown): void;
+  size(): number;
+}
+
+export function createBroker(): Broker {
+  const listeners = new Set<Listener>();
+  return {
+    subscribe(fn) { listeners.add(fn); return () => { listeners.delete(fn); }; },
+    poke(kind, payload) {
+      const p: Poke = { kind, at: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'), payload };
+      for (const fn of listeners) fn(p);
+    },
+    size: () => listeners.size,
+  };
+}
+
+export const broker: Broker = createBroker();
 ```
 
-- [ ] **Step 2: Add frontend fanout**
+(The exported singleton `broker` may already exist — reuse it; only the `poke()` signature changes. Verify with `grep "export.*broker" backend/src/realtime.ts`.)
 
-In `frontend/src/core/hooks/useRealtime.ts`, find the `KIND_TO_KEYS` map and add:
+- [ ] **Step 2: Confirm `stream.ts` already forwards the full poke**
+
+```bash
+grep "JSON.stringify(poke)" backend/src/routes/stream.ts
+# Expected: one match — the subscribe handler writes the whole poke incl. payload.
+```
+
+No code change needed in `stream.ts`.
+
+- [ ] **Step 3: Update existing callers to ignore the new arg (no breaking change)**
+
+All existing `broker.poke('chores')` etc. still compile — the second arg is optional. **Do not** retro-fit existing kinds with payloads in this task.
+
+- [ ] **Step 4: Refactor `useRealtime.ts` to expose `useSsePoke`**
+
+Rewrite `frontend/src/core/hooks/useRealtime.ts`:
 
 ```ts
-  voice: [['voice-status']],
+import { useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+
+interface Poke { kind: string; at: string; payload?: unknown; }
+type Handler = (p: Poke) => void;
+
+const KIND_TO_KEYS: Record<string, string[]> = {
+  chores: ['chores', 'chore-board'],
+  'family-members': ['family-members', 'chore-board'],
+  dinners: ['dinners', 'dinner-suggestions'],
+  voice: ['voice-status'],                              // R12 — flat, not nested
+};
+
+// Module-scope singleton EventSource + listener set.
+const listeners = new Set<Handler>();
+let es: EventSource | null = null;
+let connectCount = 0;
+
+function ensureConnected(): void {
+  if (es) return;
+  es = new EventSource('/api/stream');
+  es.addEventListener('poke', (e) => {
+    try {
+      const poke: Poke = JSON.parse((e as MessageEvent).data);
+      for (const fn of listeners) fn(poke);
+    } catch { /* silent */ }
+  });
+}
+
+function maybeClose(): void {
+  if (connectCount === 0 && listeners.size === 0 && es) {
+    es.close(); es = null;
+  }
+}
+
+/** Existing behaviour: register a subscriber that invalidates matching query keys
+ *  on every poke. Multiple useRealtime() mounts share the same EventSource. */
+export function useRealtime(): void {
+  const qc = useQueryClient();
+  useEffect(() => {
+    ensureConnected();
+    connectCount++;
+    const onPoke: Handler = (poke) => {
+      const keys = KIND_TO_KEYS[poke.kind] ?? [poke.kind];
+      for (const k of keys) void qc.invalidateQueries({ queryKey: [k] });
+    };
+    listeners.add(onPoke);
+    return () => { listeners.delete(onPoke); connectCount--; maybeClose(); };
+  }, [qc]);
+}
+
+/** Subscribe a typed payload handler for a specific kind (used by VoiceOverlay). */
+export function useSsePoke<T = unknown>(kind: string, cb: (payload: T, poke: Poke) => void): void {
+  useEffect(() => {
+    ensureConnected();
+    connectCount++;
+    const h: Handler = (poke) => { if (poke.kind === kind) cb(poke.payload as T, poke); };
+    listeners.add(h);
+    return () => { listeners.delete(h); connectCount--; maybeClose(); };
+  }, [kind, cb]);
+}
 ```
 
-(The actual query key is defined in Task 6; this entry pre-wires it.)
+- [ ] **Step 5: Verify the existing wall+phone still receive pokes**
 
-- [ ] **Step 3: Commit**
+```bash
+npm run build && rm -rf /tmp/d && DATA_DIR=/tmp/d STATIC_DIR=frontend/dist PORT=8787 node backend/dist/server.js &
+sleep 2
+# Open http://localhost:8787/?mode=wall in a browser, then in another terminal:
+curl -X POST -H 'content-type: application/json' \
+  http://localhost:8787/api/categories \
+  -d '{"name":"Smoke","color":"#000000"}'
+# Expected: the wall's categories query invalidates (visible in devtools network).
+kill %1
+```
+
+- [ ] **Step 6: Commit**
 
 ```bash
 git add backend/src/realtime.ts frontend/src/core/hooks/useRealtime.ts
-git commit -m "feat: PokeKind +'voice'; SSE fans to voice-status query"
+git commit -m "feat: PokeKind +'voice'; Poke gains optional payload; useSsePoke hook"
 ```
 
 ---
@@ -886,12 +1027,12 @@ In `frontend/src/core/api/client.ts`, alongside other endpoints:
 In `frontend/src/core/hooks/useData.ts`:
 
 ```ts
+// R19 — no refetchInterval; SSE invalidation via KIND_TO_KEYS.voice (Task 5).
 export function useVoiceStatus() {
   return useQuery({
     queryKey: ['voice-status'],
     queryFn: () => api.voiceStatus(),
-    refetchInterval: 30_000,  // 30s poll backstop; SSE pokes invalidate too
-    staleTime: 10_000,
+    staleTime: 5 * 60_000,
   });
 }
 ```
@@ -899,11 +1040,12 @@ export function useVoiceStatus() {
 In `frontend/src/core/hooks/useMutations.ts`:
 
 ```ts
+// R11 — use project's onSettled pattern (matches useDinnerMutations, useChoreMutations).
 export function useMuteVoice() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (until: string | null) => api.setVoiceMute(until),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['voice-status'] }); },
+    onSettled: () => { void qc.invalidateQueries({ queryKey: ['voice-status'] }); },
   });
 }
 ```
@@ -1033,44 +1175,64 @@ export function reduceOverlay(state: OverlayState, action: OverlayAction): Overl
 
 - [ ] **Step 4: Tests green; build the visual components**
 
-Create `frontend/src/components/voice/EarGlyph.tsx`:
+Create `frontend/src/components/voice/EarGlyph.tsx`. **R6** uses real tokens (`--surface-2`, `--text`, `--text-muted`, `--accent`, `--accent-ink`). **R18** uses `lucide-react` icons (`Mic`, `MicOff`, `Loader2`, `Check`) instead of emoji.
 
 ```tsx
+import { Mic, MicOff, Loader2, Check, AlertCircle } from 'lucide-react';
 import type { OverlayState } from './voiceState';
 
 interface Props { state: OverlayState; muted: boolean; }
 
-export function EarGlyph({ state, muted }: Props) {
-  const ringColor =
-    state.kind === 'listening' ? 'var(--accent)' :
-    state.kind === 'thinking'  ? 'var(--accent)' :
-    state.kind === 'applied'   ? 'var(--accent-ink)' :
-    state.kind === 'failed' || state.kind === 'mic_offline' || state.kind === 'voice_offline' ? 'var(--muted)' :
-    'var(--muted)';
+const ringFor = (k: OverlayState['kind']) =>
+  k === 'listening' || k === 'thinking'  ? 'var(--accent)' :
+  k === 'applied'                        ? 'var(--accent-ink)' :
+  /* failed / mic_offline / voice_offline / idle */ 'var(--text-muted)';
 
+export function EarGlyph({ state, muted }: Props) {
   const pulsing = state.kind === 'listening' || state.kind === 'thinking';
+  const Icon =
+    muted                              ? MicOff :
+    state.kind === 'thinking'          ? Loader2 :
+    state.kind === 'applied'           ? Check :
+    state.kind === 'failed' || state.kind === 'mic_offline' || state.kind === 'voice_offline' ? AlertCircle :
+    Mic;
+
+  const label =
+    muted                              ? 'voice muted' :
+    state.kind === 'idle'              ? 'say “hey mycroft”' :
+    state.kind === 'listening'         ? 'listening…' :
+    state.kind === 'thinking'          ? 'thinking…' :
+    state.kind === 'confirming'        ? 'confirm?' :
+    state.kind === 'applied'           ? 'done' :
+    state.kind === 'failed'            ? 'didn’t catch that' :
+    state.kind === 'mic_offline'       ? 'mic offline' :
+    /* voice_offline */                  'voice offline';
 
   return (
-    <div style={{
-      position: 'fixed', bottom: 16, right: 16, display: 'flex', alignItems: 'center', gap: 8,
-      padding: '8px 14px', borderRadius: 999, background: 'rgba(0,0,0,0.6)', color: 'white',
-      fontSize: 13, opacity: state.kind === 'idle' ? 0.4 : 0.95, transition: 'opacity 200ms',
-    }}>
-      <span style={{
-        width: 18, height: 18, borderRadius: 999, border: `2px solid ${ringColor}`,
-        animation: pulsing ? 'voicePulse 1.2s ease-in-out infinite' : 'none',
-      }} />
-      <span>
-        {state.kind === 'idle' && (muted ? 'voice muted' : 'say "hey mycroft"')}
-        {state.kind === 'listening' && 'listening…'}
-        {state.kind === 'thinking' && 'thinking…'}
-        {state.kind === 'confirming' && 'confirm?'}
-        {state.kind === 'applied' && 'done ✓'}
-        {state.kind === 'failed' && 'didn’t catch that'}
-        {state.kind === 'mic_offline' && 'mic offline'}
-        {state.kind === 'voice_offline' && 'voice offline'}
-      </span>
-      <span style={{ opacity: 0.6, fontSize: 11 }}>
+    <div
+      role="status"
+      style={{
+        position: 'fixed', bottom: 16, right: 16,
+        display: 'flex', alignItems: 'center', gap: 10,
+        padding: '8px 14px',
+        borderRadius: 'var(--r-pill)',
+        background: 'var(--surface-2)',
+        color: 'var(--text)',
+        boxShadow: 'var(--shadow-sm)',
+        fontSize: 13, fontWeight: 500,
+        opacity: state.kind === 'idle' && !muted ? 0.55 : 0.95,
+        transition: 'opacity 200ms var(--ease)',
+      }}
+    >
+      <Icon
+        size={18}
+        color={ringFor(state.kind)}
+        style={{ animation: state.kind === 'thinking' ? 'spin 1s linear infinite'
+                          : pulsing ? 'voicePulse 1.2s var(--ease) infinite'
+                          : undefined }}
+      />
+      <span>{label}</span>
+      <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>
         {state.kind === 'voice_offline' ? 'no network' : 'device-only · LAN'}
       </span>
     </div>
@@ -1078,20 +1240,24 @@ export function EarGlyph({ state, muted }: Props) {
 }
 ```
 
-Add to `frontend/src/index.css` (or wherever global keyframes live):
+Append to global keyframes (if not already present):
 
 ```css
 @keyframes voicePulse {
   0%, 100% { transform: scale(1);    opacity: 1; }
-  50%      { transform: scale(1.25); opacity: 0.6; }
+  50%      { transform: scale(1.25); opacity: 0.55; }
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 ```
 
 - [ ] **Step 5: ConfirmCard**
 
-Create `frontend/src/components/voice/ConfirmCard.tsx`:
+Create `frontend/src/components/voice/ConfirmCard.tsx`. **R6** uses real tokens; **R18** uses a lucide `Mic` icon for the title.
 
 ```tsx
+import { Mic } from 'lucide-react';
 import type { ParsedIntent } from '../../core/model/types';
 
 interface Props {
@@ -1104,7 +1270,7 @@ interface Props {
 function describe(intent: ParsedIntent): string {
   switch (intent.intent) {
     case 'dinner_set':     return `${intent.date} dinner: ${intent.meal}`;
-    case 'chore_complete': return `${intent.person} — ${intent.chore} ✓`;
+    case 'chore_complete': return `${intent.person} — ${intent.chore}`;
     case 'query_dinner':   return `What's for dinner ${intent.date}?`;
     case 'query_agenda':   return `What's on ${intent.date}?`;
     case 'unknown':        return `(didn’t parse: ${intent.reason})`;
@@ -1113,23 +1279,49 @@ function describe(intent: ParsedIntent): string {
 
 export function ConfirmCard({ intent, transcript, onConfirm, onCancel }: Props) {
   return (
-    <div style={{
-      position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-      background: 'rgba(0,0,0,0.4)', zIndex: 100,
-    }}>
+    <div
+      role="dialog"
+      style={{
+        position: 'fixed', inset: 0, display: 'flex',
+        alignItems: 'center', justifyContent: 'center',
+        background: 'rgba(0,0,0,0.4)', zIndex: 100,
+      }}
+    >
       <div style={{
-        background: 'var(--surface-1)', padding: 24, borderRadius: 16, minWidth: 480,
-        boxShadow: '0 12px 48px rgba(0,0,0,0.4)',
+        background: 'var(--surface)',
+        color: 'var(--text)',
+        padding: 24,
+        borderRadius: 'var(--r-lg)',
+        minWidth: 560,
+        boxShadow: 'var(--shadow)',
+        border: '1px solid var(--border)',
       }}>
-        <div style={{ fontSize: 22, fontWeight: 600 }}>🎤 {describe(intent)}</div>
-        <div style={{ marginTop: 8, fontSize: 14, color: 'var(--muted)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 22, fontWeight: 600 }}>
+          <Mic size={22} color="var(--accent)" />
+          <span>{describe(intent)}</span>
+        </div>
+        <div style={{ marginTop: 8, fontSize: 14, color: 'var(--text-muted)' }}>
           Heard: “{transcript}” · {Math.round(intent.confidence * 100)}%
         </div>
         <div style={{ marginTop: 16, display: 'flex', gap: 12 }}>
-          <button onClick={onConfirm} style={{ flex: 1, minHeight: 52, fontSize: 17, fontWeight: 600, background: 'var(--accent)', color: 'white', border: 0, borderRadius: 10 }}>
-            Say "yes" or tap Confirm
+          <button
+            onClick={onConfirm}
+            style={{
+              flex: 1, minHeight: 52, fontSize: 17, fontWeight: 600,
+              background: 'var(--accent)', color: 'white',
+              border: 0, borderRadius: 'var(--r-md)', cursor: 'pointer',
+            }}
+          >
+            Say “yes” or tap Confirm
           </button>
-          <button onClick={onCancel} style={{ minHeight: 52, padding: '0 24px', fontSize: 17, background: 'var(--surface-2)', border: 0, borderRadius: 10 }}>
+          <button
+            onClick={onCancel}
+            style={{
+              minHeight: 52, padding: '0 24px', fontSize: 17,
+              background: 'var(--surface-2)', color: 'var(--text)',
+              border: '1px solid var(--border)', borderRadius: 'var(--r-md)', cursor: 'pointer',
+            }}
+          >
             Cancel
           </button>
         </div>
@@ -1237,42 +1429,69 @@ Add `suppress` to the screensaver hook signature; early-return from the idle eff
 
 - [ ] **Step 3: Wire `WallLayout` to mount the overlay**
 
-In `frontend/src/layouts/WallLayout.tsx`:
+In `frontend/src/layouts/WallLayout.tsx`. **R1 / R2** — uses the `useSsePoke` hook added in Task 5 (no fictional helper):
 
 ```tsx
-import { useCallback, useState } from 'react';
+import { useCallback, useReducer, useState } from 'react';
 import { VoiceOverlay } from '../components/voice/VoiceOverlay';
-import type { OverlayAction } from '../components/voice/voiceState';
-import { subscribeToSseKind } from '../core/sse/subscribe'; // existing util; pattern matches useRealtime
+import { reduceOverlay, initialOverlay, type OverlayAction } from '../components/voice/voiceState';
+import { useSsePoke } from '../core/hooks/useRealtime';
 
 // ... inside the component:
+const [overlay, dispatch] = useReducer(reduceOverlay, initialOverlay());
 const [voiceActive, setVoiceActive] = useState(false);
 
-const subscribeVoice = useCallback((dispatch: (a: OverlayAction) => void) => {
-  return subscribeToSseKind('voice', (poke) => {
-    // poke.payload comes from server's broker.poke('voice', payload)
-    dispatch({ type: 'sse', ...(poke.payload as any) });
-  });
-}, []);
+// Receive the full voice payload pushed by `POST /api/voice/state` (Task 4).
+useSsePoke<{ utterance_id: string; kind: string; payload?: unknown }>(
+  'voice',
+  useCallback((p) => {
+    // Pi posts {utterance_id, kind, payload}; reducer keys off `kind` and
+    // hoists payload fields (vu/transcript/intent/transcript_partial/reason)
+    // into the action.
+    if (p && typeof p === 'object' && 'kind' in p) {
+      dispatch({ type: 'sse', kind: p.kind as any, utterance_id: p.utterance_id,
+                 ...(p.payload as object || {}) } as OverlayAction);
+    }
+  }, []),
+);
 
 useIdleReset({ onReset: () => { /* existing */ }, suppress: voiceActive });
 useScreensaver({ suppress: voiceActive });
 
-// in JSX:
-<VoiceOverlay onSubscribe={subscribeVoice} onActiveChange={setVoiceActive} />
+// in JSX (note: VoiceOverlay no longer needs an `onSubscribe` prop because the
+// wall now owns the SSE wiring; the component just renders from props.):
+<VoiceOverlay state={overlay} onActiveChange={setVoiceActive} dispatch={dispatch} />
 ```
 
-If `subscribeToSseKind` doesn't exist, add a small helper in `frontend/src/core/sse/subscribe.ts`:
+This requires a small **simplification of `VoiceOverlay`** (in Task 7 Step 6): drop the `onSubscribe` prop, accept `state` + `dispatch` instead:
 
-```ts
-import { broker } from '../hooks/useRealtime'; // or wherever SSE singleton lives
-
-export function subscribeToSseKind(kind: string, handler: (p: any) => void) {
-  return broker.subscribe((poke) => { if (poke.kind === kind) handler(poke); });
+```tsx
+interface Props {
+  state: OverlayState;
+  dispatch: (a: OverlayAction) => void;
+  onActiveChange?: (active: boolean) => void;
+}
+export function VoiceOverlay({ state, dispatch, onActiveChange }: Props) {
+  const { data: status } = useVoiceStatus();
+  const muted = !!status?.muted;
+  useEffect(() => { onActiveChange?.(state.kind !== 'idle'); }, [state.kind, onActiveChange]);
+  useEffect(() => {
+    if (state.kind !== 'applied') return;
+    const t = setTimeout(() => dispatch({ type: 'auto-fade' }), 2000);
+    return () => clearTimeout(t);
+  }, [state.kind, dispatch]);
+  return (
+    <>
+      <EarGlyph state={state} muted={muted} />
+      {state.kind === 'confirming' && (
+        <ConfirmCard intent={state.intent} transcript={state.transcript}
+          onConfirm={() => dispatch({ type: 'auto-fade' })}
+          onCancel={() => dispatch({ type: 'cancel' })} />
+      )}
+    </>
+  );
 }
 ```
-
-(Adapt to the actual SSE plumbing in `useRealtime.ts`. If `useRealtime` doesn't expose a subscribe primitive, refactor it to do so in this task — pure addition, no breakage to existing kinds.)
 
 - [ ] **Step 4: Manual verify**
 
@@ -1304,50 +1523,73 @@ git commit -m "feat(frontend): mount VoiceOverlay on wall + suppress idle/screen
 - Modify: `frontend/src/components/controls/ControlBar.tsx` — add mute toggle.
 - Modify: `frontend/src/layouts/PhoneLayout.tsx` — add mute toggle to Manage tab.
 
-- [ ] **Step 1: Build the toggle**
+- [ ] **Step 1: Build the toggle on `TogglePill`**
+
+**R7** — reuse the existing `TogglePill` primitive (`frontend/src/components/ui/TogglePill.tsx`) so the styling matches the rest of the app. **R6** uses real tokens; **R18** uses lucide icons.
+
+Read `TogglePill.tsx` first to confirm its prop shape (likely `{ active, onClick, children }` or similar). The example below assumes a `{ active, onClick }` shape with children — adapt the call signature to match.
 
 Create `frontend/src/components/controls/MuteToggle.tsx`:
 
 ```tsx
 import { useState } from 'react';
+import { Mic, MicOff } from 'lucide-react';
 import { useVoiceStatus } from '../../core/hooks/useData';
 import { useMuteVoice } from '../../core/hooks/useMutations';
+import { TogglePill } from '../ui/TogglePill';
 
-const PRESETS: Array<{ label: string; mins: number | null }> = [
-  { label: '1 hour',     mins: 60 },
-  { label: 'Until 7am',  mins: 0 /* computed */ },
-  { label: 'Forever',    mins: 60 * 24 * 365 },
+type Preset = { label: string; compute: () => string };
+const PRESETS: Preset[] = [
+  { label: '1 hour',    compute: () => new Date(Date.now() + 60 * 60_000).toISOString() },
+  { label: 'Until 7am', compute: () => {
+      const d = new Date(); d.setHours(7, 0, 0, 0);
+      if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
+      return d.toISOString();
+    } },
+  { label: 'Forever',   compute: () => new Date(Date.now() + 365 * 24 * 60 * 60_000).toISOString() },
 ];
-
-function untilIso(preset: typeof PRESETS[number]): string {
-  if (preset.label === 'Until 7am') {
-    const d = new Date();
-    d.setHours(7, 0, 0, 0);
-    if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
-    return d.toISOString();
-  }
-  return new Date(Date.now() + (preset.mins ?? 0) * 60_000).toISOString();
-}
 
 export function MuteToggle() {
   const { data: status } = useVoiceStatus();
   const mute = useMuteVoice();
   const [open, setOpen] = useState(false);
   const muted = !!status?.muted;
+  const Icon = muted ? MicOff : Mic;
   return (
     <div style={{ position: 'relative' }}>
-      <button
+      <TogglePill
+        active={muted}
         onClick={() => muted ? mute.mutate(null) : setOpen(!open)}
-        style={{ minHeight: 48, minWidth: 48, padding: '0 14px', borderRadius: 10, border: 0, background: muted ? 'var(--surface-2)' : 'transparent', color: 'var(--ink)' }}
-        title={muted ? `Muted until ${status?.mute_until}` : 'Mute voice'}
+        aria-label={muted ? `Voice muted until ${status?.mute_until}` : 'Mute voice'}
       >
-        {muted ? '🔇' : '🎤'}
-      </button>
+        <Icon size={16} />
+        <span>{muted ? 'muted' : 'voice'}</span>
+      </TogglePill>
       {open && !muted && (
-        <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 8, background: 'var(--surface-1)', borderRadius: 10, boxShadow: '0 8px 24px rgba(0,0,0,0.3)', minWidth: 180 }}>
+        <div
+          role="menu"
+          style={{
+            position: 'absolute', top: '100%', right: 0, marginTop: 8,
+            background: 'var(--surface)', color: 'var(--text)',
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--r-md)', boxShadow: 'var(--shadow)',
+            minWidth: 200, padding: 4, zIndex: 50,
+          }}
+        >
           {PRESETS.map(p => (
-            <button key={p.label} onClick={() => { mute.mutate(untilIso(p)); setOpen(false); }}
-              style={{ display: 'block', width: '100%', padding: 12, textAlign: 'left', border: 0, background: 'transparent' }}>
+            <button
+              key={p.label}
+              role="menuitem"
+              onClick={() => { mute.mutate(p.compute()); setOpen(false); }}
+              style={{
+                display: 'block', width: '100%', padding: '12px 14px',
+                textAlign: 'left', border: 0, background: 'transparent',
+                color: 'var(--text)', cursor: 'pointer',
+                borderRadius: 'var(--r-sm)',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface-2)')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+            >
               Mute · {p.label}
             </button>
           ))}
@@ -1395,16 +1637,16 @@ git commit -m "feat(frontend): shared MuteToggle in ControlBar + phone Manage"
 [project]
 name = "homecal-voice"
 version = "0.1.0"
-requires-python = ">=3.11"
+# R15 — torch wheels for Python 3.13 on aarch64 are unreliable. Pin to 3.11/3.12.
+# The Pi runs trixie which ships 3.13 by default; install script installs 3.12 via apt.
+requires-python = ">=3.11,<3.13"
 dependencies = [
   "openwakeword>=0.6.0",
-  "silero-vad>=6.2.1",
-  "sounddevice>=0.4.6",  # for fixture playback in tests; runtime uses pw-record
-  "scipy>=1.13",          # silero requires
+  "onnxruntime>=1.18",      # R15 — silero-vad ONNX path (no torch)
   "numpy>=1.26",
   "requests>=2.32",
   "python-dotenv>=1.0",
-  "uuid-utils>=0.10",     # UUIDv7
+  "uuid-utils>=0.10",       # UUIDv7
 ]
 
 [project.optional-dependencies]
@@ -1604,7 +1846,7 @@ def test_mic_stream_yields_frames(monkeypatch):
 
 ```python
 # mic.py
-import subprocess, logging
+import os, subprocess, logging
 from typing import Iterator
 import numpy as np
 
@@ -1625,16 +1867,21 @@ class MicStream:
         self._proc: subprocess.Popen | None = None
 
     def start(self) -> None:
+        # R14 — `--target` is unreliable across pw-record versions; rely on the
+        # PipeWire default source. Override via env var `PIPEWIRE_NODE=<name>`
+        # if a specific device is needed.
         cmd = [
             "pw-record",
-            "--target", self.device,
             "--rate", str(SAMPLE_RATE),
             "--channels", "1",
-            "--format", "s16",
-            "--raw", "-",
+            "--format=s16",
+            "-",                          # stdout
         ]
-        log.info("starting %s", " ".join(cmd))
-        self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        env = os.environ.copy()
+        if self.device and self.device != "default":
+            env["PIPEWIRE_NODE"] = self.device
+        log.info("starting %s (PIPEWIRE_NODE=%s)", " ".join(cmd), env.get("PIPEWIRE_NODE", "<default>"))
+        self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env)
 
     def stop(self) -> None:
         if self._proc:
@@ -1724,24 +1971,26 @@ def test_refractory_clears_after_n_frames(silence_frame):
 ```python
 # wake.py
 import logging, glob, os
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Tuple
 import numpy as np
 
 log = logging.getLogger("homecal_voice.wake")
 
 @dataclass
 class WakeDetector:
-    model: object              # openwakeword.model.Model or compatible
-    wake_name: str             # e.g. "hey_mycroft_v0.1"
+    """R13 — `wake_name` is the versioned scoring key returned by
+    Model.predict() (e.g. 'hey_mycroft_v0.1'), not the user-facing short name.
+    Use `load_default_model` to get both the Model and its correct scoring key."""
+    model: object
+    wake_name: str
     threshold: float = 0.5
-    trigger_level: int = 1     # consecutive >= threshold required
-    refractory_frames: int = 25  # ~2 seconds at 80ms/frame
+    trigger_level: int = 1
+    refractory_frames: int = 25
     _activations: int = 0
     _refractory: int = 0
 
     def step(self, frame: np.ndarray) -> bool:
-        """Feed an 80ms int16 frame; return True iff a fresh wake fired this frame."""
         if self._refractory > 0:
             self._refractory -= 1
             return False
@@ -1752,22 +2001,25 @@ class WakeDetector:
             if self._activations >= self.trigger_level:
                 self._activations = 0
                 self._refractory = self.refractory_frames
-                log.info("WAKE fired score=%.3f", s)
+                log.info("WAKE fired (%s) score=%.3f", self.wake_name, s)
                 return True
         else:
             self._activations = 0
         return False
 
-def load_default_model(wake_name: str = "hey_mycroft"):
-    """Locate the .onnx in the installed openwakeword package and return a Model."""
+def load_default_model(wake_name_prefix: str = "hey_mycroft") -> Tuple[object, str]:
+    """R13 — return (Model, scoring_key). `wake_name_prefix` is matched
+    against the ONNX file basename; the scoring key is the basename without
+    the .onnx suffix (e.g. 'hey_mycroft_v0.1')."""
     import openwakeword
     from openwakeword.model import Model
     pkg = os.path.dirname(openwakeword.__file__)
     candidates = glob.glob(os.path.join(pkg, "resources", "models", "*.onnx"))
-    matches = [p for p in candidates if wake_name in os.path.basename(p)]
+    matches = [p for p in candidates if wake_name_prefix in os.path.basename(p)]
     if not matches:
-        raise RuntimeError(f"no oWW model on disk matches {wake_name!r}: {candidates}")
-    return Model(wakeword_model_paths=matches)
+        raise RuntimeError(f"no oWW model on disk matches {wake_name_prefix!r}: {candidates}")
+    scoring_key = os.path.splitext(os.path.basename(matches[0]))[0]   # e.g. 'hey_mycroft_v0.1'
+    return Model(wakeword_model_paths=matches), scoring_key
 ```
 
 - [ ] **Step 4: Tests green + commit**
@@ -1875,13 +2127,20 @@ class Endpointer:
         return np.concatenate(self._buf) if self._buf else np.zeros(0, dtype=np.int16)
 
 def load_silero_vad() -> VadFn:
-    from silero_vad import load_silero_vad
-    model = load_silero_vad(onnx=True)
+    """R15 — pure ONNX (no torch). Silero ships a tiny ONNX model in the package;
+    we run it through onnxruntime directly so the install doesn't pull torch."""
+    import onnxruntime as ort
+    import importlib.resources as pkg_resources
+    import silero_vad
+    # Locate bundled ONNX model
+    with pkg_resources.as_file(pkg_resources.files(silero_vad) / "data" / "silero_vad.onnx") as p:
+        sess = ort.InferenceSession(str(p), providers=["CPUExecutionProvider"])
+    state = np.zeros((2, 1, 128), dtype=np.float32)   # LSTM state — VAD is stateful per stream
     def vad(frame: np.ndarray, sr: int) -> float:
-        # silero expects float32 in [-1, 1]
-        import torch
-        t = torch.from_numpy(frame.astype(np.float32) / 32768.0).unsqueeze(0)
-        return float(model(t, sr).item())
+        nonlocal state
+        x = (frame.astype(np.float32) / 32768.0).reshape(1, -1)
+        out, state = sess.run(None, {"input": x, "state": state, "sr": np.array(sr, dtype=np.int64)})
+        return float(out.squeeze())
     return vad
 ```
 
@@ -2298,7 +2557,7 @@ git commit -m "feat(pi-voice): confirmation grammar (yes/no/edit/ambiguous)"
 - [ ] **Step 1: Test executor**
 
 ```python
-# executor_test.py
+# executor_test.py — R3, R4, R5: bare-array responses, title/assignedTo fields, complete body
 from homecal_voice.executor import Executor
 from homecal_voice.intent import IntentResult
 
@@ -2310,21 +2569,32 @@ def test_dinner_set_posts_to_dinners(requests_mock):
     assert out["ok"] is True
 
 def test_chore_complete_resolves_then_posts(requests_mock):
-    requests_mock.get("http://api/api/family-members", json={"data": [{"id": "fm1", "name": "Mia"}]})
-    requests_mock.get("http://api/api/chores", json={"data": [{"id": "c1", "name": "Bathroom", "familyMemberId": "fm1"}]})
-    requests_mock.post("http://api/api/chores/c1/complete", json={"ok": True})
+    # R3 — list endpoints return bare arrays, not {data:[...]}
+    # R4 — chores have `title` + `assignedTo` (not `name` + `familyMemberId`)
+    requests_mock.get("http://api/api/family-members",
+                      json=[{"id": "fm1", "name": "Mia", "icon": ""}])
+    requests_mock.get("http://api/api/chores",
+                      json=[{"id": "c1", "title": "Bathroom", "assignedTo": "fm1"}])
+    # R5 — complete requires {date}
+    posted = []
+    def post_cb(request, _ctx):
+        posted.append(request.json())
+        return {"ok": True}
+    requests_mock.post("http://api/api/chores/c1/complete", json=post_cb)
     ex = Executor(base="http://api", token="t")
     res = IntentResult("chore_complete", {"person": "Mia", "chore": "Bathroom"}, 0.95, "")
     out = ex.apply(res)
     assert out["ok"] is True
+    assert posted and "date" in posted[0]   # R5
 
 def test_query_dinner_returns_meal_or_none(requests_mock):
-    requests_mock.get("http://api/api/dinners?start=2026-06-04&end=2026-06-04",
-                      json={"data": [{"date": "2026-06-04", "meal": "tacos"}]})
+    # R3 — bare array
+    requests_mock.get("http://api/api/dinners",
+                      json=[{"date": "2026-06-04", "meal": "tacos"}])
     ex = Executor(base="http://api", token="t")
     res = IntentResult("query_dinner", {"date": "2026-06-04"}, 0.95, "")
     out = ex.apply(res)
-    assert out["spoken"].startswith("Tonight") or "tacos" in out["spoken"].lower()
+    assert "tacos" in out["spoken"].lower()
 ```
 
 - [ ] **Step 2: Implement executor**
@@ -2336,6 +2606,15 @@ from datetime import date as Date
 from homecal_voice.intent import IntentResult
 
 log = logging.getLogger("homecal_voice.executor")
+
+def _unwrap(json_body):
+    """R3 — defensive: homecal list endpoints return bare arrays today.
+    Tolerate either bare array or {data:[...]} so the test fixtures and the
+    real API both work."""
+    if isinstance(json_body, list): return json_body
+    if isinstance(json_body, dict) and isinstance(json_body.get("data"), list):
+        return json_body["data"]
+    return []
 
 class Executor:
     def __init__(self, *, base: str, token: str):
@@ -2356,43 +2635,57 @@ class Executor:
         return {"ok": True, "spoken": f"Saved {f['meal']} for {self._humanise(f['date'])}."}
 
     def _chore_complete(self, f: dict) -> dict:
-        members = requests.get(f"{self.base}/api/family-members", timeout=10).json().get("data", [])
-        chores  = requests.get(f"{self.base}/api/chores", timeout=10).json().get("data", [])
+        # R3 / R4 — bare-array responses; chores use `title` + `assignedTo`.
+        members = _unwrap(requests.get(f"{self.base}/api/family-members", timeout=10).json())
+        chores  = _unwrap(requests.get(f"{self.base}/api/chores",          timeout=10).json())
         person = next((m for m in members if m["name"].lower() == f["person"].lower()), None)
         if not person: return {"ok": False, "spoken": f"I don't know {f['person']}."}
         chore = next((c for c in chores
-                      if c["name"].lower() == f["chore"].lower() and c.get("familyMemberId") == person["id"]), None)
+                      if c.get("title", "").lower() == f["chore"].lower()
+                      and c.get("assignedTo") == person["id"]), None)
         if not chore: return {"ok": False, "spoken": f"I don't know that chore for {person['name']}."}
-        r = requests.post(f"{self.base}/api/chores/{chore['id']}/complete", headers=self.headers, timeout=10)
+        # R5 — POST body requires {date}.
+        today_br = self._today_brisbane()
+        r = requests.post(f"{self.base}/api/chores/{chore['id']}/complete",
+                          json={"date": today_br}, headers=self.headers, timeout=10)
         r.raise_for_status()
         return {"ok": True, "spoken": f"Nice work {person['name']}."}
 
     def _query_dinner(self, f: dict) -> dict:
         date = f["date"]
-        r = requests.get(f"{self.base}/api/dinners",
-                         params={"start": date, "end": date}, timeout=10).json()
-        rows = r.get("data") or []
+        rows = _unwrap(requests.get(f"{self.base}/api/dinners",
+                                    params={"start": date, "end": date}, timeout=10).json())
         meal = next((row["meal"] for row in rows if row["date"] == date), None)
         if not meal: return {"ok": True, "spoken": f"Nothing planned for {self._humanise(date)} yet."}
         return {"ok": True, "spoken": f"{self._humanise(date).capitalize()} dinner: {meal}."}
 
     def _query_agenda(self, f: dict) -> dict:
         date = f["date"]
-        r = requests.get(f"{self.base}/api/events",
-                         params={"start": f"{date}T00:00:00Z", "end": f"{date}T23:59:59Z"}, timeout=10).json()
-        items = r.get("data") or []
+        items = _unwrap(requests.get(f"{self.base}/api/events",
+                                     params={"start": f"{date}T00:00:00Z",
+                                             "end":   f"{date}T23:59:59Z"}, timeout=10).json())
         if not items: return {"ok": True, "spoken": f"Nothing on {self._humanise(date)}."}
-        bits = [f"{e.get('title','event')} at {e['start'][11:16]}" for e in items[:3]]
+        bits = []
+        for e in items[:3]:
+            title = e.get("title", "event")
+            start = e.get("start", "")
+            # All-day events store start as YYYY-MM-DD (date-only); skip the time fragment then.
+            time_str = f" at {start[11:16]}" if len(start) >= 16 and start[10] == "T" else ""
+            bits.append(f"{title}{time_str}")
         return {"ok": True, "spoken": f"On {self._humanise(date)}: " + ", ".join(bits) + "."}
 
     def _humanise(self, iso_date: str) -> str:
-        today = Date.today().isoformat()
+        today = self._today_brisbane()
         if iso_date == today: return "today"
-        # cheap relative: tomorrow / N days
         from datetime import date as D
         d = D.fromisoformat(iso_date) - D.fromisoformat(today)
         if d.days == 1: return "tomorrow"
         return iso_date
+
+    def _today_brisbane(self) -> str:
+        # Brisbane is fixed UTC+10. Match backend/src/util/time.ts:todayBrisbane().
+        import time
+        return time.strftime("%Y-%m-%d", time.gmtime(time.time() + 10 * 3600))
 ```
 
 - [ ] **Step 3: Test + implement server_state**
@@ -2605,6 +2898,9 @@ def main() -> int:
     endpointer_factory = lambda: Endpointer(vad=load_silero_vad())
     executor = Executor(base=cfg.homecal_api_base, token=cfg.pi_api_token)
 
+    # R16 — start SSE listener so mute changes propagate instantly
+    _start_mute_sse(cfg)
+
     # heartbeat daemon — 30s cadence
     def _hb():
         while not _shutdown:
@@ -2635,10 +2931,10 @@ def main() -> int:
                     call_openrouter(
                         system=build_system_prompt(
                             today_brisbane=time.strftime("%Y-%m-%d", time.gmtime(time.time() + 10 * 3600)),
-                            family=[m["name"] for m in
-                                    requests_get_json(f"{cfg.homecal_api_base}/api/family-members").get("data", [])],
-                            chores=[f"{c['name']} ({c.get('familyMemberName','?')})" for c in
-                                    requests_get_json(f"{cfg.homecal_api_base}/api/chores").get("data", [])],
+                            family=[m["name"] for m in _list_bare(f"{cfg.homecal_api_base}/api/family-members")],
+                            # R3 / R4 — chores: bare array, `title` + `assignedTo`.
+                            # Join member name in-process so the prompt shows "Bathroom (Mia)".
+                            chores=_chore_strings(cfg.homecal_api_base),
                         ),
                         user=text, model=cfg.intent_model, api_key=cfg.openrouter_api_key,
                     )
@@ -2661,22 +2957,61 @@ def main() -> int:
     return 0
 
 import requests as _requests
-def requests_get_json(url: str) -> dict:
+def _list_bare(url: str) -> list:
+    """R3 — homecal list endpoints return bare arrays. Tolerate {data:[...]} too."""
     try:
-        r = _requests.get(url, timeout=5); r.raise_for_status(); return r.json()
+        r = _requests.get(url, timeout=5); r.raise_for_status(); j = r.json()
+        if isinstance(j, list): return j
+        if isinstance(j, dict) and isinstance(j.get("data"), list): return j["data"]
+        return []
     except Exception as e:
-        log.warning("GET %s failed: %s", url, e); return {}
+        log.warning("GET %s failed: %s", url, e); return []
 
+def _chore_strings(base: str) -> list:
+    """Return ["Bathroom (Mia)", ...] by joining chores → members in-process. R4."""
+    members = {m["id"]: m["name"] for m in _list_bare(f"{base}/api/family-members")}
+    out = []
+    for c in _list_bare(f"{base}/api/chores"):
+        title = c.get("title", "?")
+        assigned = c.get("assignedTo")
+        out.append(f"{title} ({members.get(assigned, '?')})")
+    return out
+
+# R16 — mute cache is cleared by an SSE subscriber, not pure polling.
+_mute_state = {"muted": False, "checked_at": 0.0}
 def is_muted_locally(cfg) -> bool:
-    # poll /api/voice/status — single GET, fast; cache 5s to avoid hammering
     now = time.time()
-    if not hasattr(is_muted_locally, "_cache") or now - is_muted_locally._cache[0] > 5:
+    # 5s backstop poll (in case the SSE connection drops)
+    if now - _mute_state["checked_at"] > 5:
         try:
             r = _requests.get(f"{cfg.homecal_api_base}/api/voice/status", timeout=3).json()
-            is_muted_locally._cache = (now, bool(r.get("muted")))
+            _mute_state["muted"] = bool(r.get("muted"))
         except Exception:
-            is_muted_locally._cache = (now, False)
-    return is_muted_locally._cache[1]
+            pass
+        _mute_state["checked_at"] = now
+    return _mute_state["muted"]
+
+def _start_mute_sse(cfg) -> None:
+    """R16 — open an SSE client to /api/stream and clear the mute cache when a
+    voice poke arrives. Survives reconnects via the outer while-loop."""
+    import threading
+    def loop():
+        while not _shutdown:
+            try:
+                with _requests.get(f"{cfg.homecal_api_base}/api/stream", stream=True, timeout=None) as r:
+                    for line in r.iter_lines():
+                        if line and line.startswith(b"data: "):
+                            try:
+                                import json as _json
+                                poke = _json.loads(line[6:].decode())
+                                if poke.get("kind") == "voice":
+                                    _mute_state["checked_at"] = 0.0   # force refresh on next is_muted_locally call
+                            except Exception:
+                                pass
+            except Exception as e:
+                log.warning("SSE client error: %s; reconnecting in 5s", e)
+                time.sleep(5)
+    threading.Thread(target=loop, daemon=True).start()
 
 if __name__ == "__main__":
     sys.exit(main())
@@ -2849,25 +3184,32 @@ WantedBy=default.target
 # kiosk/voice-install.sh — run on the Pi
 set -euo pipefail
 sudo apt-get update -qq
-sudo apt-get install -y python3-venv pipewire-audio libportaudio2 sox curl build-essential cmake git
+# R15 — explicit python3.12 (trixie default is 3.13; torch wheels for 3.13 on
+# aarch64 are unreliable). silero-vad ONNX path is torch-free so this is belt+braces.
+sudo apt-get install -y python3.12 python3.12-venv pipewire-audio sox curl \
+                        build-essential cmake git
 
 # 1. Python service
 DEST="$HOME/homecal-voice"
 mkdir -p "$DEST"
 rsync -a --exclude .venv --exclude __pycache__ kiosk/voice/ "$DEST/"
 cd "$DEST"
-python3 -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -U pip wheel
 pip install -e .
 deactivate
 
-# 2. whisper.cpp built locally (Bookworm/trixie may not package it)
+# 2. whisper.cpp built locally (Bookworm/trixie may not package it). R17.
 WCPP="$HOME/whisper.cpp"
 if [ ! -d "$WCPP" ]; then
   git clone --depth 1 https://github.com/ggml-org/whisper.cpp "$WCPP"
 fi
-( cd "$WCPP" && cmake -B build && cmake --build build -j --config Release )
+(
+  cd "$WCPP"
+  cmake -B build -DGGML_NATIVE=ON -DWHISPER_BUILD_SERVER=ON
+  cmake --build build -j --config Release --target whisper-server quantize
+)
 ( cd "$WCPP" && ./models/download-ggml-model.sh base.en )
 ( cd "$WCPP" && ./build/bin/quantize models/ggml-base.en.bin models/ggml-base.en-q5_1.bin q5_1 )
 
@@ -3011,7 +3353,7 @@ git commit -m "docs: voice v1 — CLAUDE.md inventory + session-log entry"
 
 ---
 
-## Self-review notes
+## Self-review notes (rev 2)
 
 Run through the spec section-by-section against the plan:
 
@@ -3030,4 +3372,6 @@ Run through the spec section-by-section against the plan:
 - **Spec §15 non-goals** — explicitly out of scope.
 
 **No placeholders.** Every step contains complete code or commands. Type names match between tasks (`OverlayState`, `IntentResult`, `Executor`, `VoiceState`).
+
+**Persona-review findings (R1–R20) folded in** — every item in the revision history is now satisfied by inline edits to the affected task(s). The plan is executable as written.
 
