@@ -27,7 +27,7 @@ export function createVoiceState(): VoiceState {
   };
 }
 
-/** Module singleton consumed by `routes/voice.ts` and tests. Routes must use
- *  this instance — calling `createVoiceState()` from a route would create a
- *  parallel state machine that diverges from what tests assert against. */
+/** Module singleton — routes and tests must use this instance. Calling
+ *  `createVoiceState()` from a route would create a parallel state machine
+ *  that diverges from what tests assert against. */
 export const voiceState: VoiceState = createVoiceState();
