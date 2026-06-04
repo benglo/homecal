@@ -181,8 +181,11 @@ describe('pokeToAction', () => {
   });
 
   it('accepts states with no payload (idle / mic_offline / voice_offline)', () => {
-    expect(pokeToAction({ kind: 'mic_offline' })?.kind).toBe('mic_offline');
-    expect(pokeToAction({ kind: 'voice_offline' })?.kind).toBe('voice_offline');
-    expect(pokeToAction({ kind: 'idle' })?.kind).toBe('idle');
+    const mic = pokeToAction({ kind: 'mic_offline' });
+    const voice = pokeToAction({ kind: 'voice_offline' });
+    const idle = pokeToAction({ kind: 'idle' });
+    expect(mic?.type === 'sse' && mic.kind).toBe('mic_offline');
+    expect(voice?.type === 'sse' && voice.kind).toBe('voice_offline');
+    expect(idle?.type === 'sse' && idle.kind).toBe('idle');
   });
 });
