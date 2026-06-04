@@ -47,6 +47,7 @@ test('POST /api/voice/heartbeat: records heartbeat + 200, GET status reflects mi
   // Stamp heartbeat at "now" so micOnline check (within 60s) passes regardless
   // of wall clock drift between this and the status request.
   const at = new Date().toISOString();
+  const expectedStored = at.replace(/\.\d{3}Z$/, 'Z'); // storage strips millis (spec §0)
   const r = await app.inject({
     method: 'POST',
     url: '/api/voice/heartbeat',
@@ -57,7 +58,7 @@ test('POST /api/voice/heartbeat: records heartbeat + 200, GET status reflects mi
   const status = await app.inject({ method: 'GET', url: '/api/voice/status' });
   const body = status.json() as { mic_online: boolean; last_heartbeat_at: string | null };
   assert.equal(body.mic_online, true);
-  assert.equal(body.last_heartbeat_at, at);
+  assert.equal(body.last_heartbeat_at, expectedStored);
 });
 
 test('POST /api/voice/audit: inserts row + 201', async () => {
