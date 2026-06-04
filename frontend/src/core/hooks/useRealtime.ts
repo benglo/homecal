@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 
 /** Some poke kinds fan out to additional query keys (e.g. a chore change also
@@ -25,11 +25,21 @@ function ensureConnected(): void {
   if (es) return;
   es = new EventSource('/api/stream');
   es.addEventListener('poke', (e) => {
+    let poke: Poke;
     try {
-      const poke: Poke = JSON.parse((e as MessageEvent).data);
-      for (const fn of [...listeners]) fn(poke);
-    } catch {
-      /* silent: malformed poke must not break the stream */
+      poke = JSON.parse((e as MessageEvent).data);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('useRealtime: malformed SSE poke payload', err);
+      return;
+    }
+    for (const fn of [...listeners]) {
+      try {
+        fn(poke);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('useRealtime: listener threw on poke', { kind: poke.kind, err });
+      }
     }
   });
 }
@@ -68,11 +78,13 @@ export function useSsePoke<T = unknown>(
   kind: string,
   cb: (payload: T, poke: Poke) => void,
 ): void {
+  const cbRef = useRef(cb);
+  cbRef.current = cb;
   useEffect(() => {
     ensureConnected();
     connectCount++;
     const h: Handler = (poke) => {
-      if (poke.kind === kind) cb(poke.payload as T, poke);
+      if (poke.kind === kind) cbRef.current(poke.payload as T, poke);
     };
     listeners.add(h);
     return () => {
@@ -80,5 +92,5 @@ export function useSsePoke<T = unknown>(
       connectCount--;
       maybeClose();
     };
-  }, [kind, cb]);
+  }, [kind]);
 }
