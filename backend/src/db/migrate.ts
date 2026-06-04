@@ -97,6 +97,32 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX idx_chore_completions_date   ON chore_completions(completed_date);
     `);
   },
+  // v3 — voice utterances (append-only audit log) + voice_settings singleton (spec §6)
+  (db) => {
+    db.exec(`
+      CREATE TABLE voice_utterances (
+        id            TEXT PRIMARY KEY,
+        created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+        transcript    TEXT NOT NULL,
+        intent_json   TEXT,
+        confidence    REAL,
+        status        TEXT NOT NULL CHECK (status IN (
+                        'applied','confirmed','cancelled','pending','failed','silent_low_conf'
+                      )),
+        duration_ms   INTEGER,
+        error         TEXT
+      );
+      CREATE INDEX idx_voice_utterances_created_at ON voice_utterances(created_at);
+
+      CREATE TABLE voice_settings (
+        id            INTEGER PRIMARY KEY CHECK (id = 1),
+        mute_until    TEXT,
+        updated_at    TEXT NOT NULL
+      );
+      INSERT OR IGNORE INTO voice_settings (id, updated_at)
+      VALUES (1, strftime('%Y-%m-%dT%H:%M:%SZ','now'));
+    `);
+  },
 ];
 
 /** Seed categories — idempotent, Okabe–Ito palette from the design system. */
