@@ -59,9 +59,15 @@ def test_confirm_returns_ambiguous_for_unrelated_speech():
 
 
 def test_confirm_returns_timeout_after_n_seconds_no_speech():
-    """Endpointer never fires within the window — pure silence the whole time."""
+    """Endpointer never fires within the window — pure silence the whole time.
+
+    Use a generator (not a fixed-length list) for `next_frame` because the
+    tight Python loop can iterate millions of times within a 200ms window.
+    """
     ep = _ep_silent_only()
-    next_frame = iter([speech()] * 1000).__next__
+    import itertools
+
+    next_frame = lambda _it=itertools.repeat(speech()): next(_it)
     stt = MagicMock(return_value="")
     r = confirm_listen(
         next_frame=next_frame, endpointer_factory=lambda: ep, transcribe=stt, timeout_s=0.2,
