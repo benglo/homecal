@@ -10,6 +10,7 @@ import type {
   EventOccurrence,
   FamilyMember,
   Photo,
+  VoiceStatus,
   WeatherData,
 } from '../model/types';
 
@@ -104,5 +105,13 @@ export function useDinnerSuggestions() {
     queryKey: ['dinner-suggestions'],
     queryFn: () => api.dinnerSuggestions(),
     staleTime: 60_000,
+  });
+}
+
+export function useVoiceStatus() {
+  return useQuery<VoiceStatus>({
+    queryKey: ['voice-status'],
+    queryFn: () => api.voiceStatus(),
+    staleTime: 5 * 60_000,
   });
 }

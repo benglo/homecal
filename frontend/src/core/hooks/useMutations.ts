@@ -265,3 +265,11 @@ export function usePhotoMutations() {
 
   return { remove };
 }
+
+export function useMuteVoice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (until: string | null) => api.setVoiceMute(until),
+    onSettled: () => void qc.invalidateQueries({ queryKey: ['voice-status'] }),
+  });
+}

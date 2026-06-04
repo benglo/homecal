@@ -15,6 +15,7 @@ import type {
   FamilyMember,
   FamilyMemberInput,
   Photo,
+  VoiceStatus,
   WeatherData,
 } from '../model/types';
 
@@ -129,4 +130,9 @@ export const api = {
     send<ChoreCompletion>('POST', `/api/chores/${id}/complete`, { date }),
   uncompleteChore: (id: string, date: string) =>
     send<void>('DELETE', `/api/chores/${id}/complete/${date}`),
+
+  // voice
+  voiceStatus: () => get<VoiceStatus>('/api/voice/status'),
+  setVoiceMute: (until: string | null) =>
+    send<{ ok: true; mute_until: string | null }>('PUT', '/api/voice/mute', { until }),
 };
