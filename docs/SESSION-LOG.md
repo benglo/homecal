@@ -4,6 +4,38 @@ Running log of work per session. Newest first. Pair with `git log` for exact dif
 
 ---
 
+## 2026-06-04 (cont.) — Voice v1: implemented on `feat/voice-v1` branch
+
+### Built
+- **Backend (T1–T5):** migration v3 (`voice_utterances` + `voice_settings`); Pi-token auth helper + voice state singleton; voice repos; 5 new routes (`/api/voice/{state,audit,heartbeat,status,mute}`); SSE foundation widened (`broker.poke(kind, payload?)`, frontend `useSsePoke` hook).
+- **Frontend (T6–T9):** voice types + hooks (`useVoiceStatus`, `useMuteVoice`); `VoiceOverlay` + `EarGlyph` + `ConfirmCard` + pure reducer (4 vitest cases); wall integration (`useSsePoke` wiring, `useIdleReset` + `useScreensaver` suppress while voice active); `MuteToggle` on `TogglePill` in ControlBar + phone Manage.
+- **Pi service (T10–T20b):** Python 3.12 service under `kiosk/voice/`. Modules: `mic.py` (pw-record subprocess), `wake.py` (openWakeWord WakeDetector), `endpointer.py` (Silero VAD ONNX), `stt.py` (whisper-server client), `intent.py` (Haiku via OpenRouter), `tts.py` (Gemini TTS), `confirm.py` (yes/no/edit grammar), `executor.py` (per-intent dispatch with real homecal API contract: bare arrays, chores.title/assignedTo, chore-complete {date} body), `server_state.py` (state/audit/heartbeat posters), `main.py` (orchestration loop + SIGTERM + heartbeat thread + SSE mute listener + daily request cap), `confirm_loop.py` (5s listening window for mid-confidence confirmations).
+- **Deploy (T21):** systemd unit `kiosk/homecal-voice.service` + install script `kiosk/voice-install.sh` (also installs whisper-server systemd unit).
+
+### Design process
+- Brainstormed via `superpowers:brainstorming` skill with 3-persona review (senior engineer / voice-audio / family-UX).
+- Hardware ground-truthed: USB PCM2902 + Pi 5 + hey_mycroft = 0.998 peak score at 1m.
+- Spec + plan went through 2 review rounds; rev 2 folded 20 persona-review findings (R1–R20) inline before execution.
+- Subagent-driven execution: fresh implementer per task, two-stage review (spec compliance + code quality) per task; 1 inline fix loop per task on average.
+
+### Tests
+- Backend: 145/145 pass (incl. 8 new voice route tests + voice repo tests + state/auth tests).
+- Frontend: 33/33 pass (incl. 4 voiceState reducer tests).
+- Pi service: 30+ pytest tests written; runs on Pi only (Python 3.12). Local syntax verified via `python3 -m py_compile`.
+- Build: backend tsc + frontend vite both clean.
+
+### Spec & Plan
+- Spec: `docs/superpowers/specs/2026-06-04-voice-commands-design.md` (a6ca56b → 2fec177)
+- Plan: `docs/superpowers/plans/2026-06-04-voice-commands.md` (2610824 → 367af35 rev 2)
+
+### Deploy + next session
+- All work on `feat/voice-v1` branch; needs merge to master.
+- Pi install: `bash kiosk/voice-install.sh` (creates venv with python3.12, builds whisper.cpp, installs both systemd units).
+- Env file `/etc/homecal-voice.env` needs: OPENROUTER_API_KEY, HOMECAL_API_BASE, PI_API_TOKEN.
+- Acceptance gate before merging: 24h kitchen FP test (target <2 false wakes/day) + 10-utterance per-family-member accuracy ≥80%.
+
+---
+
 ## 2026-06-04 — Recurrence overrides: design locked (no code yet)
 
 ### What happened
