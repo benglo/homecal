@@ -1,0 +1,18 @@
+[Unit]
+Description=homecal voice service
+After=pipewire.service network-online.target
+Wants=pipewire.service
+
+[Service]
+Type=simple
+User=hbadmin
+EnvironmentFile=/etc/homecal-voice.env
+ExecStart=/home/hbadmin/homecal-voice/.venv/bin/homecal-voice
+Restart=always
+RestartSec=3
+WatchdogSec=120
+KillSignal=SIGTERM
+TimeoutStopSec=10
+
+[Install]
+WantedBy=default.target
