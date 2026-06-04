@@ -15,6 +15,9 @@ dependencies = [
   "requests>=2.32",
   "python-dotenv>=1.0",
   "uuid-utils>=0.10",
+  # NOTE: silero-vad is installed separately via install script with --no-deps
+  # because it incorrectly pulls torch + CUDA toolkit (~900MB) — we only need
+  # the bundled silero_vad.onnx file, which works fine through onnxruntime alone.
 ]
 
 [project.optional-dependencies]

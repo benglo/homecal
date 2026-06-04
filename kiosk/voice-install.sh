@@ -16,6 +16,10 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -U pip wheel
 pip install -e .
+# silero-vad provides the ONNX model bundle we load directly via onnxruntime in
+# endpointer.py. Install with --no-deps to avoid torch + CUDA toolkit pull
+# (which is ~900MB of wheels — overflows the Pi's 1GB tmpfs /tmp during extract).
+pip install --no-deps silero-vad
 deactivate
 
 # 2. whisper.cpp built locally (Bookworm/trixie may not package it). R17.
@@ -26,10 +30,11 @@ fi
 (
   cd "$WCPP"
   cmake -B build -DGGML_NATIVE=ON -DWHISPER_BUILD_SERVER=ON
-  cmake --build build -j --config Release --target whisper-server quantize
+  # Modern whisper.cpp renamed `quantize` -> `whisper-quantize`.
+  cmake --build build -j --config Release --target whisper-server whisper-quantize
 )
 ( cd "$WCPP" && ./models/download-ggml-model.sh base.en )
-( cd "$WCPP" && ./build/bin/quantize models/ggml-base.en.bin models/ggml-base.en-q5_1.bin q5_1 )
+( cd "$WCPP" && ./build/bin/whisper-quantize models/ggml-base.en.bin models/ggml-base.en-q5_1.bin q5_1 )
 
 # 3. systemd units
 sudo cp kiosk/homecal-voice.service /etc/systemd/system/
