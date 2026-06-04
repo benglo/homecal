@@ -70,10 +70,19 @@ def load_silero_vad(onnx_path: str | None = None) -> VadFn:
 
     sess = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
     state = np.zeros((2, 1, 128), dtype=np.float32)
+    # Silero VAD v5/v6 ONNX requires a fixed 512-sample chunk at 16kHz (256 at 8kHz).
+    # Our 80ms frames are 1280 samples — split into 2× 512, drop the remainder.
+    CHUNK_16K = 512
+    sr_arr = np.array(16000, dtype=np.int64)
 
     def vad(frame: np.ndarray, sr: int) -> float:
         nonlocal state
-        x = (frame.astype(np.float32) / 32768.0).reshape(1, -1)
-        out, state = sess.run(None, {"input": x, "state": state, "sr": np.array(sr, dtype=np.int64)})
-        return float(out.squeeze())
+        samples = frame.astype(np.float32) / 32768.0
+        probs = []
+        # iterate in 512-sample steps; ignore any tail < 512
+        for i in range(0, len(samples) - CHUNK_16K + 1, CHUNK_16K):
+            x = samples[i:i + CHUNK_16K].reshape(1, -1)
+            out, state = sess.run(None, {"input": x, "state": state, "sr": sr_arr})
+            probs.append(float(out.squeeze()))
+        return max(probs) if probs else 0.0
     return vad
