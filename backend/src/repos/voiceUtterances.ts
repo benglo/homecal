@@ -1,6 +1,11 @@
 import { getDb } from '../db';
 import { nowIso } from '../util/time';
 
+// 'matcher' = regex bypassed Haiku; 'llm' = Haiku produced the intent.
+// Distinct from null (non-intent paths: blank STT, hallucination, STT
+// exception) so hit-rate metrics aren't inflated by no-intent rows.
+export type IntentSource = 'matcher' | 'llm';
+
 export interface VoiceUtteranceInsert {
   id: string;
   transcript: string;
@@ -9,9 +14,7 @@ export interface VoiceUtteranceInsert {
   status: 'applied' | 'confirmed' | 'cancelled' | 'pending' | 'failed' | 'silent_low_conf';
   durationMs: number | null;
   error: string | null;
-  // 'matcher' = regex bypassed Haiku; 'llm' = Haiku produced the intent.
-  // null for non-intent paths (blank STT, hallucination, STT exception).
-  source: 'matcher' | 'llm' | null;
+  source: IntentSource | null;
 }
 
 export interface VoiceUtterance extends VoiceUtteranceInsert {

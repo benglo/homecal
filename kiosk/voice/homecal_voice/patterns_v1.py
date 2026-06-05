@@ -80,8 +80,12 @@ def _extract_query_dinner(m, text, ctx):
 
 # --- query_agenda ------------------------------------------------------
 
+# Trailing anchor required: without it, "whats on netflix" / "anything on the
+# menu" all match and falsely trigger an agenda lookup defaulted to today.
+# Allowed tail: optional date phrase, optional sentence punctuation, EOL.
 _QUERY_AGENDA_ON_RE = re.compile(
-    rf"\b(?:what['’]?s|whats|anything)\s+(?:on|happening|scheduled)(?:\s+(?:on\s+)?(?P<date>{_DATE_WORDS}))?\b",
+    rf"\b(?:what['’]?s|whats|anything)\s+(?:on|happening|scheduled)"
+    rf"(?:\s+(?:on\s+)?(?P<date>{_DATE_WORDS}))?\s*[?.!]?\s*$",
     re.IGNORECASE,
 )
 _QUERY_AGENDA_DAY_RE = re.compile(
@@ -99,10 +103,12 @@ def _extract_query_agenda(m, text, ctx):
 
 # --- chore_complete ----------------------------------------------------
 
-# Permissive shape: any utterance containing a completion verb. The
-# extractor disambiguates using match_person + match_chore against the
-# live family/chores lists; on miss it returns None and the matcher loop
-# continues, eventually falling through to the LLM.
+# Deliberately permissive: any past-tense completion verb fires this
+# pattern. The extractor relies entirely on match_person + match_chore
+# returning None to reject false positives like "I finished work" or
+# "we did the shopping". Tightening the regex (e.g. requiring a known
+# name before the verb) loses real utterances like "Mia's bathroom is
+# done" — let the aliases do the work.
 _CHORE_COMPLETE_RE = re.compile(
     r"\b(?:did|done|finished|completed|complete)\b",
     re.IGNORECASE,
@@ -116,10 +122,14 @@ def _extract_chore_complete(m, text, ctx):
     chore = match_chore(text, person, ctx.chores)
     if not chore:
         return None
+    # 0.8 (below main.py's AUTO_APPLY_CONFIDENCE=0.85) because the verb
+    # regex is permissive: "did Mia do the bathroom?" (a question) matches
+    # the same shape as "Mia did the bathroom". Sub-threshold routes through
+    # the confirm card so questions don't silently award a star.
     return IntentResult(
         "chore_complete",
         {"person": person["name"], "chore": chore["title"]},
-        1.0,
+        0.8,
         text,
     )
 

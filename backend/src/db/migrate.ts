@@ -123,12 +123,16 @@ const MIGRATIONS: Migration[] = [
       VALUES (1, strftime('%Y-%m-%dT%H:%M:%SZ','now'));
     `);
   },
-  // v4 — audit source ("matcher" vs "llm") so we can measure the regex
-  // matcher's hit rate from the audit log without re-parsing transcripts.
-  // Nullable: pre-matcher rows + non-intent paths (blank STT, hallucination)
-  // legitimately have no source.
+  // v4 — audit source so we can measure regex-matcher hit rate from the
+  // audit log without re-parsing transcripts. CHECK mirrors the existing
+  // status enum so a future direct-SQL or seed-script insert can't write
+  // garbage past the Zod boundary. Nullable: pre-matcher rows + non-intent
+  // paths (blank STT, hallucination) legitimately have no source.
   (db) => {
-    db.exec(`ALTER TABLE voice_utterances ADD COLUMN source TEXT;`);
+    db.exec(`
+      ALTER TABLE voice_utterances ADD COLUMN source TEXT
+        CHECK (source IN ('matcher','llm') OR source IS NULL);
+    `);
   },
 ];
 

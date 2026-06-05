@@ -159,6 +159,20 @@ def test_query_agenda_anything_on():
     assert r.fields["date"] == "2026-06-05"
 
 
+def test_query_agenda_rejects_whats_on_with_trailing_noun():
+    """The 'on' branch must NOT swallow non-agenda utterances. Pinned because
+    code-review flagged 'whats on netflix' triggering a wrong agenda lookup."""
+    assert _matcher().try_match("whats on netflix", _ctx()) is None
+    assert _matcher().try_match("what's on the menu", _ctx()) is None
+    assert _matcher().try_match("anything on the table", _ctx()) is None
+
+
+def test_query_agenda_accepts_trailing_punctuation():
+    r = _matcher().try_match("what's on today?", _ctx())
+    assert r is not None
+    assert r.fields["date"] == "2026-06-05"
+
+
 def test_query_agenda_day_looking_like():
     r = _matcher().try_match("what does my day look like", _ctx())
     assert r is not None
@@ -174,6 +188,9 @@ def test_chore_complete_did_verb():
     assert r is not None
     assert r.intent == "chore_complete"
     assert r.fields == {"person": "Mia", "chore": "Bathroom"}
+    # Confidence below AUTO_APPLY so questions like "did Mia do the bathroom?"
+    # land in the confirm card rather than auto-awarding a star.
+    assert r.confidence < 0.85
 
 
 def test_chore_complete_finished_verb():

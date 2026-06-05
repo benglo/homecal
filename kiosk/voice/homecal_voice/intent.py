@@ -2,9 +2,11 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Iterable, Literal
 
 from openrouter import OpenRouter
+
+IntentSource = Literal["matcher", "llm"]
 
 log = logging.getLogger("homecal_voice.intent")
 
@@ -60,8 +62,10 @@ class IntentResult:
     raw: str
     # "matcher" when the regex registry produced this result, "llm" when it
     # came from Haiku. Threaded into the audit log so we can measure the
-    # matcher hit rate without re-parsing transcripts.
-    source: str = "llm"
+    # matcher hit rate without re-parsing transcripts. Typed as Literal so
+    # a typo ("match") is caught at the type-check layer instead of silently
+    # producing opaque audit rows.
+    source: IntentSource = "llm"
 
 
 def build_system_prompt(today_brisbane: str, family: Iterable[str], chores: Iterable[str]) -> str:

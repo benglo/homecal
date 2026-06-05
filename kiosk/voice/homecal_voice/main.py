@@ -250,12 +250,19 @@ def _run_after_wake(d: OneShotDeps) -> None:
         return
 
     def _try_execute(audit_status: str) -> None:
-        """Call the executor and handle backend failures cleanly. Without
-        this wrap, a backend 5xx during executor's raise_for_status() would
-        propagate up and crash run_once before any audit row writes —
-        leaving the user with no spoken feedback and no audit trail.
-        Post-state is always 'applied' on success (UX shows ✓); audit_status
-        distinguishes auto-applied from explicitly-confirmed."""
+        """Call the executor, branch on its `ok` flag, and audit accordingly.
+
+        Three outcomes:
+        - exception: backend unreachable; audit `failed`, speak generic error.
+        - ok=False:  executor refused (unknown person/chore, feature not
+                     built); audit `failed` with the executor's error string,
+                     post-state `failed` — must NOT flash the green ✓ or the
+                     audit log becomes a false-success oracle.
+        - ok=True:   audit `audit_status` (applied or confirmed), post-state
+                     `applied`. Order matters — chip's ✓ flash + audit row
+                     write happen BEFORE _speak so they run in parallel with
+                     TTS playback + drain instead of after.
+        """
         try:
             out = d.execute(intent)
         except Exception as e:
@@ -264,8 +271,15 @@ def _run_after_wake(d: OneShotDeps) -> None:
             _audit(transcript, "failed", intent, error=f"executor:{e}")
             _speak("Sorry, I couldn't reach the calendar.")
             return
-        # Post applied + audit BEFORE _speak so the chip's ✓ flash runs in
-        # parallel with TTS+drain instead of after it.
+        if not out.get("ok", False):
+            # Distinguish "couldn't act" from "did act" — the wall state and
+            # audit row both need to reflect the soft failure so hit-rate
+            # metrics don't double-count and the dashboard doesn't lie.
+            err = out.get("error") or "executor_refused"
+            d.post_state(utterance_id=uid, kind="failed", payload={"reason": err})
+            _audit(transcript, "failed", intent, error=err)
+            _speak(out.get("spoken", ""))
+            return
         d.post_state(utterance_id=uid, kind="applied",
                      payload={"intent": _intent_payload(intent)})
         _audit(transcript, audit_status, intent)
@@ -490,10 +504,10 @@ def _extract_with_matcher_first(*, text: str, cfg) -> IntentResult:
 
     The matcher needs the live family + chores lists to resolve person/chore
     references — same fetch the LLM path uses for prompt building, so we hit
-    those endpoints once whichever path wins. A backend outage propagates
-    (caller catches the RuntimeError and surfaces a 'can't reach the
-    calendar' audible error) — silent fallback to empty lists is the bug
-    the 2026-06-05 review caught.
+    those endpoints once and reuse the results whichever path wins. A
+    backend outage must propagate: silent fallback to empty lists makes a
+    real outage indistinguishable from "unknown person", and the caller
+    needs to surface a distinct audible error.
     """
     from homecal_voice.matcher import MatchContext, default_matcher
 

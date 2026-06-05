@@ -1,7 +1,7 @@
 """Regex-first intent matcher.
 
-Short-circuits the Haiku LLM call for the ~90% of utterances that fit a known
-shape ("tonight's dinner is X", "what's for dinner", "Mia did the bathroom").
+Short-circuits the Haiku LLM call for utterances that fit a known shape
+("tonight's dinner is X", "what's for dinner", "Mia did the bathroom").
 On a hit, returns the same IntentResult the LLM path produces, so main.py
 treats the two sources identically downstream.
 
@@ -9,29 +9,50 @@ Patterns are registered against a Matcher instance. Production code uses the
 module-level `default_matcher` singleton; tests instantiate their own to
 stay isolated.
 
-Order of registration is precedence — rigid patterns (full sentence with all
-slots) register first; permissive ones (lone keyword + trailing string) last.
+Order of registration is precedence — first match wins. A permissive
+`\\btimer\\b` pattern registered before `dinner_set:is` would swallow
+"tonight's dinner is timer cake" before the dinner_set extractor ever
+sees it. Register the rigid templates first.
 """
 
+import logging
+import re
 from dataclasses import dataclass, field, replace
-from typing import Callable, Pattern
+from typing import Pattern, Protocol, TypedDict
 
 from homecal_voice.intent import IntentResult
+
+log = logging.getLogger("homecal_voice.matcher")
+
+
+# Structural types — the family/chores endpoints return whatever shape
+# `_list_bare` unwraps; TypedDict documents the keys the matcher actually
+# reads without forcing copies or runtime validation.
+class FamilyMember(TypedDict, total=False):
+    id: str
+    name: str
+
+
+class Chore(TypedDict, total=False):
+    id: str
+    title: str
+    assignedTo: str
 
 
 @dataclass(frozen=True)
 class MatchContext:
-    """Live context the extractors need to resolve dates and validate
-    person/chore references."""
     today: str
-    family: list[dict] = field(default_factory=list)
-    chores: list[dict] = field(default_factory=list)
+    family: list[FamilyMember] = field(default_factory=list)
+    chores: list[Chore] = field(default_factory=list)
 
 
-# Signature: (re.Match, normalised_text, ctx) -> IntentResult | None.
-# Returning None means "the regex matched but the extractor couldn't build a
-# valid intent" — the matcher then tries the next registered pattern.
-Extractor = Callable[..., "IntentResult | None"]
+class Extractor(Protocol):
+    """Extractor protocol — explicit args catch arity drift at type-check
+    time. Returning None means 'regex matched but slot-fill failed; try the
+    next pattern' — the regex-miss case is handled separately."""
+    def __call__(
+        self, match: "re.Match[str]", text: str, ctx: MatchContext
+    ) -> "IntentResult | None": ...
 
 
 @dataclass(frozen=True)
@@ -39,7 +60,10 @@ class IntentPattern:
     intent: str
     regex: Pattern[str]
     extractor: Extractor
-    name: str = ""
+    # Required (no default) — every pattern is referenced by name in logs +
+    # tests, and an unnamed registration would silently bypass debug aids
+    # and break the dedup guard in main_test.py.
+    name: str
 
 
 class Matcher:
@@ -66,6 +90,11 @@ class Matcher:
             if result is not None:
                 # Stamp source centrally so extractors don't have to remember.
                 return replace(result, source="matcher")
+            # Pattern fired but the extractor couldn't fill the slots. Log so
+            # a misfiring regex (matches but never extracts) is debuggable
+            # from the service log instead of presenting as "matcher hit
+            # rate dropped to 0" with no root cause.
+            log.debug("matcher: pattern %r matched but extractor returned None", p.name)
         return None
 
 

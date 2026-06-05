@@ -103,7 +103,7 @@ class Executor:
         chores = _unwrap(requests.get(f"{self.base}/api/chores", timeout=API_TIMEOUT_SEC).json())
         person = next((m for m in members if m["name"].lower() == f["person"].lower()), None)
         if not person:
-            return {"ok": False, "spoken": f"I don't know {f['person']}."}
+            return {"ok": False, "spoken": f"I don't know {f['person']}.", "error": "unknown_person"}
         chore = next(
             (
                 c
@@ -114,7 +114,7 @@ class Executor:
             None,
         )
         if not chore:
-            return {"ok": False, "spoken": f"I don't know that chore for {person['name']}."}
+            return {"ok": False, "spoken": f"I don't know that chore for {person['name']}.", "error": "unknown_chore"}
         r = requests.post(
             f"{self.base}/api/chores/{chore['id']}/complete",
             json={"date": today_brisbane()},
@@ -171,7 +171,9 @@ class Executor:
         return {"ok": True, "spoken": f"{when.capitalize()} you've got " + _join_natural(bits) + "."}
 
     def _timer_not_built(self, f: dict) -> dict:
-        return {"ok": False, "spoken": "I can't set timers yet."}
+        # ok=False so _try_execute audits this as "failed" with the error
+        # tag below — keeps the matcher hit-rate dashboard honest.
+        return {"ok": False, "spoken": "I can't set timers yet.", "error": "timer_not_built"}
 
     def _humanise(self, iso_date: str) -> str:
         today = today_brisbane()

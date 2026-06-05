@@ -1,9 +1,13 @@
 """Duration parsing + timer-label extraction.
 
-Both helpers are used by the matcher's timer_set / timer_query / timer_extend
-patterns. Ported from HomeBuddy's intentExtractorSimple.js (extractDuration +
-extractTimerLabel) with extensions for word-numbers ("ten minutes", "an hour"),
-abbreviations ("min"/"hrs"/"secs"), and multi-word labels ("boiled egg").
+Both helpers feed the matcher's timer_* patterns. parse_duration must accept
+the noisy shapes STT actually produces (word numbers, abbreviations, filler
+words like 'more'/'another' between number and unit) — bare regex on
+`\\d+\\s+minutes?` misses ~half of natural kitchen utterances.
+
+extract_timer_label uses an exclude-word filter at leading/trailing positions
+so query/cancel verbs ("how", "cancel", "what's") and prepositions don't leak
+through as bogus labels when the helper is reused from those intents.
 """
 
 import re

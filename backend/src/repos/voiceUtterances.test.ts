@@ -59,6 +59,22 @@ test('insert: status CHECK rejects garbage', () => {
   );
 });
 
+test('insert: source CHECK rejects garbage', () => {
+  assert.throws(() =>
+    insertUtterance({
+      id: '0191ec00-0000-7000-8000-000000000005',
+      transcript: 'x',
+      intentJson: null,
+      confidence: null,
+      status: 'applied',
+      durationMs: null,
+      error: null,
+      source: 'guessed' as any,
+    }),
+    /CHECK/
+  );
+});
+
 test('insert: source defaults to null when caller passes null', () => {
   insertUtterance({
     id: '0191ec00-0000-7000-8000-000000000003',

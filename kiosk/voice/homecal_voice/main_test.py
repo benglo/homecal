@@ -292,9 +292,11 @@ def test_low_confidence_plays_didnt_catch_clip():
 
 
 def test_wake_reset_called_on_every_exit_path():
-    """The cascade fix lives in run_once's try/finally. Pin it so a
-    refactor moving reset back into _speak alone can't silently regress —
-    that was the exact bug that brought the cascade back in 2026-06-05."""
+    """The wake LSTM reset MUST fire on every run_once exit path — paths
+    that skip _speak (blank/unknown/hallucination/exception) leave the
+    LSTM primed by the user's wake phrase and ambient frames cascade into
+    repeated false wakes. Pin it so a refactor moving reset back into
+    _speak alone can't silently regress."""
     intent_applied = IntentResult("dinner_set", {"date": "2026-06-04", "meal": "tacos"}, 0.95, "raw")
     intent_unknown = IntentResult("unknown", {"reason": "no_json"}, 0.0, "raw")
 
@@ -324,9 +326,9 @@ def test_wake_reset_called_on_every_exit_path():
 
 
 def test_intent_extraction_failure_audits_failed_and_speaks_error():
-    """Previously a backend outage during family/chores fetch returned []
-    silently, so Haiku reported 'unknown person' indistinguishably from a
-    real miss. Now the failure must surface as a distinct spoken error."""
+    """A backend outage during family/chores fetch must surface as a
+    distinct spoken error — silent fallback to empty lists makes an outage
+    indistinguishable from a real 'unknown person/chore' miss."""
     extract_intent = MagicMock(side_effect=RuntimeError("backend 500"))
     speak = MagicMock()
     deps, state, audit = _make_deps(extract_intent=extract_intent, speak=speak)
@@ -541,6 +543,64 @@ def test_mid_confidence_edit_leaves_audit_pending_and_speaks_hint():
     assert state.call_args_list[-1].kwargs["payload"]["reason"] == "edit"
 
 
+def test_executor_ok_false_audits_failed_not_applied():
+    """An executor that returns ok=False (timer not built, unknown person,
+    unknown chore) MUST audit as 'failed' and post-state 'failed' — never
+    'applied'. Otherwise the dashboard treats the soft failure as success
+    and the matcher hit-rate metric lies."""
+    intent = IntentResult("timer_set", {"duration_sec": 600}, 1.0, "raw", source="matcher")
+    execute = MagicMock(return_value={
+        "ok": False, "spoken": "I can't set timers yet.", "error": "timer_not_built",
+    })
+    deps, state, audit = _make_deps(
+        extract_intent=MagicMock(return_value=intent),
+        execute=execute,
+    )
+    run_once(deps)
+    execute.assert_called_once()
+    # Wall must NOT flash the green ✓ — it would be lying.
+    kinds = [c.kwargs.get("kind") for c in state.call_args_list]
+    assert kinds[-1] == "failed"
+    assert state.call_args_list[-1].kwargs["payload"]["reason"] == "timer_not_built"
+    # Audit row carries failed + the executor's error tag for greppability.
+    audit_kwargs = audit.call_args.kwargs
+    assert audit_kwargs["status"] == "failed"
+    assert audit_kwargs["error"] == "timer_not_built"
+    # User still hears the explanation — silent failure on a recognised intent
+    # is the worst UX.
+    deps.speak.assert_called_once_with("I can't set timers yet.")
+
+
+def test_ok_false_without_error_field_falls_back_to_generic_tag():
+    """Defensive: if a handler returns ok=False without naming the error,
+    the audit row still tags something greppable rather than `None`."""
+    intent = IntentResult("dinner_set", {"date": "2026-06-05", "meal": "tacos"}, 0.95, "raw")
+    execute = MagicMock(return_value={"ok": False, "spoken": "nope"})
+    deps, _state, audit = _make_deps(
+        extract_intent=MagicMock(return_value=intent), execute=execute,
+    )
+    run_once(deps)
+    assert audit.call_args.kwargs["error"] == "executor_refused"
+
+
+def test_matcher_high_confidence_auto_applies_no_confirm():
+    """The matcher emits confidence 1.0; main.py auto-applies at >=0.85.
+    Pin that matcher hits skip the confirm card so a future 'soften matcher
+    confidence to 0.8' tweak can't silently route them through confirm."""
+    intent = IntentResult(
+        "dinner_set", {"date": "2026-06-05", "meal": "curry"}, 1.0, "raw", source="matcher",
+    )
+    execute = MagicMock(return_value={"ok": True, "spoken": "Got it."})
+    deps, state, _audit = _make_deps(
+        extract_intent=MagicMock(return_value=intent), execute=execute,
+    )
+    with patch("homecal_voice.confirm_loop.confirm_listen") as cl:
+        run_once(deps)
+    cl.assert_not_called()
+    kinds = [c.kwargs.get("kind") for c in state.call_args_list]
+    assert kinds[-1] == "applied"
+
+
 def test_audit_threads_source_through():
     """source='matcher'|'llm' must reach post_audit so the audit log can
     quantify matcher hit rate. Pinned here so a refactor of `_audit` can't
@@ -568,21 +628,24 @@ def test_audit_source_is_none_when_no_intent():
 # --- matcher-first wiring --------------------------------------------------
 
 
+def _fresh_matcher_with_v1():
+    """Build an isolated matcher so tests don't share singleton state."""
+    from homecal_voice.matcher import Matcher
+    from homecal_voice.patterns_v1 import register_v1
+    m = Matcher()
+    register_v1(m)
+    return m
+
+
 def test_extract_with_matcher_first_returns_matcher_hit_without_calling_llm(monkeypatch):
     """When the regex matches, the LLM must not be called — that's the whole
     point of the matcher (saves the OpenRouter round-trip)."""
     from homecal_voice import main
     cfg = MagicMock(homecal_api_base="http://api", intent_model="x", openrouter_api_key="k")
     monkeypatch.setattr(main, "_list_bare", lambda url: [])
+    monkeypatch.setattr("homecal_voice.matcher.default_matcher", _fresh_matcher_with_v1())
     llm_called = MagicMock()
     monkeypatch.setattr(main, "call_openrouter", llm_called)
-    # The default_matcher singleton already has v1 + timer patterns registered
-    # at main() startup; register them explicitly here since the test bypasses
-    # main() but uses the singleton.
-    from homecal_voice.matcher import default_matcher
-    from homecal_voice.patterns_v1 import register_v1
-    if not any(p.name == "dinner_set:is" for p in default_matcher.patterns()):
-        register_v1(default_matcher)
 
     out = main._extract_with_matcher_first(text="tonight's dinner is curry", cfg=cfg)
     assert out.intent == "dinner_set"
@@ -595,12 +658,37 @@ def test_extract_with_matcher_first_falls_through_to_llm(monkeypatch):
     from homecal_voice import main
     cfg = MagicMock(homecal_api_base="http://api", intent_model="x", openrouter_api_key="k")
     monkeypatch.setattr(main, "_list_bare", lambda url: [])
+    monkeypatch.setattr("homecal_voice.matcher.default_matcher", _fresh_matcher_with_v1())
     monkeypatch.setattr(main, "call_openrouter",
                         lambda **_: '{"intent":"unknown","reason":"no_match","confidence":0.0}')
 
     out = main._extract_with_matcher_first(text="please play some music", cfg=cfg)
     assert out.intent == "unknown"
     assert out.source == "llm"
+
+
+def test_extract_with_matcher_first_propagates_backend_fetch_failure(monkeypatch):
+    """A 5xx from /api/family-members must propagate out of the matcher path —
+    NOT silently fall through to the LLM with empty lists. That's the same
+    silent-failure mode the orchestration layer was hardened against; the
+    matcher inherits the invariant."""
+    from homecal_voice import main
+    cfg = MagicMock(homecal_api_base="http://api", intent_model="x", openrouter_api_key="k")
+    monkeypatch.setattr("homecal_voice.matcher.default_matcher", _fresh_matcher_with_v1())
+    llm = MagicMock()
+    monkeypatch.setattr(main, "call_openrouter", llm)
+
+    def boom(url):
+        raise RuntimeError("backend 503")
+    monkeypatch.setattr(main, "_list_bare", boom)
+
+    try:
+        main._extract_with_matcher_first(text="anything", cfg=cfg)
+    except RuntimeError as e:
+        assert "503" in str(e)
+    else:
+        assert False, "expected RuntimeError to propagate"
+    llm.assert_not_called()
 
 
 def test_mid_confidence_ambiguous_leaves_audit_pending_and_speaks_hint():
