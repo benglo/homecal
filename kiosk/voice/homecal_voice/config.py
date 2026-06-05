@@ -19,6 +19,8 @@ class Config:
     whisper_server_url: str
     stt_model: str
     intent_model: str
+    vad_gain: float
+    energy_rms_threshold: float
     tts_model: str
     tts_voice: str
     daily_request_cap: int
@@ -38,25 +40,26 @@ def load_config() -> Config:
         homecal_api_base=_require("HOMECAL_API_BASE"),
         pi_api_token=_require("PI_API_TOKEN"),
         wake_word=os.environ.get("WAKE_WORD", "hey_mycroft"),
-        # 0.7 + trigger_level=2 was tuned live on 2026-06-05 after observing
-        # ambient false positives at 0.5/1 (room background, BOOM 3 idle hiss)
-        # producing six "(wind blowing)" Haiku calls per minute. Confirmed
-        # real wakes score 0.97+ with the PCM2902 mic at 1m so 0.7 is safe.
+        # Higher than the openWakeWord default — ambient noise + BT idle hiss
+        # produced ~6 false wakes/minute at 0.5. Real wakes score 0.97+ on
+        # this mic so 0.7 leaves plenty of headroom.
         wake_threshold=float(os.environ.get("WAKE_THRESHOLD", "0.7")),
         wake_trigger_level=int(os.environ.get("WAKE_TRIGGER_LEVEL", "2")),
         whisper_model=os.environ.get("WHISPER_MODEL", "small.en-q5_1"),
         whisper_server_url=os.environ.get("WHISPER_SERVER_URL", "http://127.0.0.1:8080/inference"),
-        # STT defaults to Google gemini-3-flash-preview (~2.2s on a 1.6s clip
-        # vs ~13.6s for local whisper.cpp small.en-q5_1 on Pi 5).
-        # Picked by direct head-to-head on a real PCM2902 mic capture
-        # (2026-06-05): gpt-audio-mini, voxtral, gemini-2.5-flash-lite, and
-        # gpt-audio all hallucinated ("Please upload the audio file...",
-        # answered an Italian translation) on the same WAV that gemini-3
-        # transcribed correctly. The mic captures cleanly, but the smaller
-        # / older audio models can't make sense of low-gain input. Local
-        # whisper-server stays as the offline fallback via transcribe_with_fallback.
+        # gemini-3-flash-preview was the only model in the head-to-head that
+        # reliably transcribed low-gain PCM2902 captures — gpt-audio-mini,
+        # voxtral, and gemini-2.5 all hallucinated refusals on the same WAV.
+        # Local whisper.cpp stays as the offline fallback (transcribe_with_fallback).
         stt_model=os.environ.get("STT_MODEL", "google/gemini-3-flash-preview"),
         intent_model=os.environ.get("INTENT_MODEL", "anthropic/claude-haiku-4.5"),
+        # Mic-specific endpointer tuning. Defaults are for the PCM2902 USB
+        # mic; replacing the mic should override these via env. Energy
+        # threshold must sit above the boosted background-noise floor;
+        # setting it too low makes every frame read as speech and the
+        # endpointer never closes before the hard cap.
+        vad_gain=float(os.environ.get("VAD_GAIN", "5.0")),
+        energy_rms_threshold=float(os.environ.get("ENERGY_RMS_THRESHOLD", "5500.0")),
         # Kokoro 82M: cheaper than Gemini TTS Preview, returns MP3 natively (no
         # PCM decode), and was the documented swap-to fallback in the spec.
         # Gemini TTS Preview is restricted to response_format=pcm, which would

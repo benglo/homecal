@@ -22,12 +22,8 @@ AGENDA_MAX_ITEMS = 3
 
 
 def _canon_meal(s: str) -> str:
-    """Canonicalise a meal name for storage and display.
-
-    STT returns whatever case the model emitted ("tacos", "pasta") — usually
-    lowercase. We title-case it, but preserve all-caps tokens (BBQ, PB&J)
-    rather than mangling them via plain `.title()`.
-    """
+    """Title-case but preserve all-caps tokens (BBQ, PB&J) which plain
+    .title() would mangle. STT lower-cases by default."""
     s = (s or "").strip()
     if not s:
         return s
@@ -35,7 +31,7 @@ def _canon_meal(s: str) -> str:
 
 
 def _speak_time(hhmm: str) -> str:
-    """Render HH:MM as a TTS-friendly time. '17:00' → '5pm', '09:30' → '9:30am'."""
+    """'17:00' → '5pm', '09:30' → '9:30am'. TTS reads 24h times stiffly."""
     try:
         h, m = (int(x) for x in hhmm.split(":"))
     except ValueError:
@@ -46,7 +42,7 @@ def _speak_time(hhmm: str) -> str:
 
 
 def _join_natural(items: list[str]) -> str:
-    """`['a', 'b', 'c']` → `'a, b, and c'`. One or two items get the obvious join."""
+    """Oxford-comma join: ['a','b','c'] → 'a, b, and c'."""
     if not items:
         return ""
     if len(items) == 1:
@@ -57,11 +53,8 @@ def _join_natural(items: list[str]) -> str:
 
 
 def _unwrap(json_body):
-    """Backend list endpoints (`/api/family-members`, `/api/chores`,
-    `/api/dinners`, `/api/events`) currently return bare arrays. Accept
-    `{data:[...]}` defensively so test fixtures and a future envelope
-    migration don't tightly couple the Pi service to the current shape.
-    """
+    """Accept bare arrays AND `{data:[...]}` envelopes — backend currently
+    returns the former but a future envelope migration shouldn't break us."""
     if isinstance(json_body, list):
         return json_body
     if isinstance(json_body, dict) and isinstance(json_body.get("data"), list):
@@ -136,9 +129,8 @@ class Executor:
         when = self._humanise(date)
         if not meal:
             return {"ok": True, "spoken": f"Nothing planned for dinner {when} yet."}
-        # Possessive sounds natural for relative words ("Tonight's dinner is
-        # curry") but not for an ISO fallback ("2026-06-12's dinner is curry"
-        # is jarring) — fall back to a prepositional phrase there.
+        # Possessive form only for relative words — "2026-06-12's dinner" reads
+        # awkwardly so the ISO fallback uses a prepositional phrase instead.
         if when in ("today", "tonight", "tomorrow"):
             phrase = {"today": "Tonight's", "tonight": "Tonight's", "tomorrow": "Tomorrow's"}[when]
             return {"ok": True, "spoken": f"{phrase} dinner is {meal}."}

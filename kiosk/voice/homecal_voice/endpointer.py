@@ -10,27 +10,15 @@ VadFn = Callable[[np.ndarray, int], float]
 class Endpointer:
     """Buffer speech until N ms of silence OR hard cap reached.
 
-    `vad_gain` boosts the int16 audio before VAD scoring. The PCM2902 USB mic
-    captures at low gain (peaks ~3800/32768 ≈ 0.12 normalised); Silero needs
-    |x| ≳ 0.05 sustained for reliable speech detection. A fixed 5× boost
-    brings real speech up to ~0.6 normalised without clipping at typical
-    levels. Measured live 2026-06-05 — peak max=3796 on "what's for dinner
-    tonight" → VAD scored 0.001 across all 100 frames before the fix.
+    Speech is detected if EITHER Silero fires OR per-frame RMS exceeds
+    `energy_rms_threshold`. Silero alone is unreliable on low-gain mics
+    (its spectral model needs healthy signal); the energy gate covers the
+    gap. The gate must sit above the boosted background-noise floor — if
+    it's below, every frame reads as speech and silence-end never fires.
 
-    `energy_rms_threshold` is a SECONDARY signal: a frame counts as speech if
-    Silero fires OR its RMS (on the boosted audio) exceeds this value. Silero
-    only knows spectral structure and was tuned on healthy-gain mics, so on
-    this rig even a boosted signal frequently scores < 0.1 on actual speech.
-    A bare-bones energy gate catches the cases Silero misses without needing
-    a healthy mic. Loud-noise misfires (TV, music) are tolerable for a
-    kitchen wall: worst case a silent-low-conf cycle that costs ~$0.002.
-    Measured live 2026-06-05 (PCM2902 mic, vad_gain=5):
-      - background RMS: ~4000-4500 (kitchen at rest)
-      - normal speech burst RMS: ~6000-17000 (peaks)
-      - p90 across a capture sits at the background floor
-    Threshold 5500 separates background from real speech bursts. A value
-    *below* background means every frame reads as speech, silent_run never
-    accumulates, and we always hit the hard cap (defeating the whole point).
+    `vad_gain` boosts int16 audio before BOTH the Silero call and the RMS
+    measurement. Default 5× is tuned for the PCM2902 USB mic; override via
+    Config / `VAD_GAIN` env when the hardware changes.
     """
     def __init__(self, vad: VadFn, *,
                  threshold: float = 0.5,

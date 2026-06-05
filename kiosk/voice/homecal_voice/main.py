@@ -9,6 +9,7 @@ mic and exits cleanly.
 """
 
 import logging
+import re
 import signal
 import sys
 import time
@@ -56,15 +57,10 @@ class OneShotDeps:
     post_audit: Callable
     utterance_id: Callable[[], str]
     muted: Callable[[], bool]
-    # Stop/start the pw-record subprocess. We close the mic entirely during
-    # TTS playback so the pipe never buffers TTS-echo audio that would
-    # cascade into post-reply false wakes. Simpler than any drain/reset
-    # scheme — there's literally no audio to process. See _speak in run_once.
+    # Mic is fully closed during playback (TTS or clip) — the pw-record pipe
+    # would otherwise buffer playback echo and cascade post-reply wakes.
     mic_off: Callable
     mic_on: Callable
-    # Play a pre-rendered MP3 file (e.g. the "didn't catch that" fallback).
-    # Pre-recorded rather than synthesised so the fallback path doesn't depend
-    # on the same cloud TTS that may have failed alongside STT.
     play_clip: Callable
 
 
@@ -72,17 +68,37 @@ def _intent_payload(intent: IntentResult) -> dict:
     return {"intent": intent.intent, **intent.fields, "confidence": intent.confidence}
 
 
-# Whisper returns these literally for silence/noise — they are not real
-# transcriptions and should never reach the LLM. Punctuation-only outputs
-# get the same treatment (".", "!", "?", "[", etc.).
+# Whisper sentinel outputs on silence/noise; never real speech.
 _BLANK_TRANSCRIPTS = {"", "[blank_audio]", "[ blank_audio ]"}
 
-# Whisper's bracketed/parenthesised stage directions ("(wind blowing)",
-# "(music playing)", "[silence]", "(applause)") are model artefacts from
-# training on subtitled video — they're never real user speech. Match the
-# whole-string pattern so we don't filter "(yes)" inside a real reply.
-import re as _re
-_PAREN_HALLUCINATION = _re.compile(r"^\s*[\(\[][^\)\]]+[\)\]]\.?\s*$")
+# Whisper's parenthesised stage directions ("(wind blowing)", "[silence]") are
+# artefacts of training on subtitled video. Whole-string match so "(yes)"
+# inside a real reply still flows through.
+_PAREN_HALLUCINATION = re.compile(r"^\s*[\(\[][^\)\]]+[\)\]]\.?\s*$")
+
+# Cloud audio models (gpt-audio-mini, Voxtral, Gemini Flash) sometimes
+# *answer* an audio question instead of transcribing it, or refuse with a
+# stock chat reply. These never appear in real spoken commands so we filter
+# them before the intent stage — otherwise we waste a Haiku call on the
+# refusal text and the audit log can't distinguish hallucination from a
+# genuine "unknown intent". Substring match against lowercased transcript;
+# patterns chosen from observed live outputs.
+_HALLUCINATION_FRAGMENTS = (
+    "i'm an assistant",
+    "i'm here to help",
+    "i'm sorry, but i can",
+    "i don't have the capability",
+    "i don't have real-time information",
+    "please provide the audio",
+    "please go ahead and upload",
+    "please upload",
+    "as an ai",
+    "i cannot transcribe",
+    "i can't transcribe",
+    "i can't listen",
+    "no audio is provided",
+    "no audio provided",
+)
 
 
 def _is_blank_transcript(t: str) -> bool:
@@ -96,13 +112,20 @@ def _is_blank_transcript(t: str) -> bool:
     return not any(c.isalnum() for c in norm)
 
 
+def _is_hallucination(t: str) -> bool:
+    """True if the transcript matches a known refusal/meta-chat pattern that
+    cloud audio models emit instead of transcribing. Run this AFTER the
+    blank check (real silence is blank, not a refusal)."""
+    if not t:
+        return False
+    norm = t.strip().lower()
+    return any(frag in norm for frag in _HALLUCINATION_FRAGMENTS)
+
+
 def run_once(d: OneShotDeps) -> None:
     """Block until one wake → utterance → confirmation cycle completes."""
-    # 1) wait for a wake event. While muted, we still drain frames (so the
-    # pw-record pipe doesn't back up) but never fire wake — the entire
-    # downstream pipeline (STT, Haiku, TTS) is gated. Previously mute only
-    # blocked TTS; ambient wake cascades during a mute period still billed
-    # OpenRouter for "(wind blowing)" Haiku calls.
+    # Mute gates the whole pipeline (STT/intent/TTS), not just TTS — frames
+    # still drain so the pw-record pipe doesn't back up.
     while True:
         f = d.next_frame()
         if d.muted():
@@ -113,14 +136,9 @@ def run_once(d: OneShotDeps) -> None:
     try:
         _run_after_wake(d)
     finally:
-        # Reset the wake model's LSTM/feature buffers on every utterance, not
-        # just when TTS plays. Without this, any path that exits without a
-        # `_speak` call (blank transcript, unknown intent, STT hallucination,
-        # STT error) leaves openWakeWord primed by the user's "Hey Mycroft"
-        # speech → ambient frames score 0.99+ within ~3s and cascade. Voxtral
-        # surfaced this: its refusals on silent audio ("I'm an assistant...")
-        # aren't blank, so they bypassed the blank-transcript revert and exited
-        # at the unknown-intent branch with the wake state still primed.
+        # Reset on EVERY exit (not just TTS) — otherwise paths that skip
+        # _speak (blank, unknown, hallucination, error) leave the wake LSTM
+        # primed by the user's "Hey Mycroft" and ambient frames cascade.
         reset = getattr(d.wake, "reset", None)
         if callable(reset):
             reset()
@@ -154,41 +172,34 @@ def _run_after_wake(d: OneShotDeps) -> None:
         )
 
     def _speak(text: str) -> None:
-        """Close mic, speak, wait for the speaker to settle, reopen mic.
-
-        Two failure modes addressed here:
-          - TTS echo audio buffering in the pw-record pipe → `mic_off`/`mic_on`
-          - Bluetooth playback chain still draining after mpg123 returns →
-            `time.sleep(2.0)` (covers BT codec latency + BOOM 3 speaker decay)
-
-        The wake LSTM reset is handled by `run_once`'s outer try/finally so
-        every utterance path (not just TTS) clears the model state.
-        """
+        """Close mic during playback (avoids TTS echo cascading wake), sleep
+        2s to cover BT codec latency + BOOM 3 speaker decay, then reopen.
+        try/finally so a playback exception can't strand the mic closed.
+        Wake LSTM reset is the outer run_once try/finally's job."""
         d.mic_off()
-        d.speak(text)
-        time.sleep(2.0)
-        d.mic_on()
+        try:
+            d.speak(text)
+            time.sleep(2.0)
+        finally:
+            d.mic_on()
 
     def _play_didnt_catch() -> None:
-        """Audible fallback for silent_low_conf paths (blank STT, unknown
-        intent). The user gets a clear 'I heard you but didn't understand'
-        signal instead of staring at an inert wall. Uses the same mic-off
-        dance as _speak to avoid the playback re-triggering wake."""
+        """Audible fallback when STT was blank/hallucinated/unintelligible.
+        Same mic-off dance + try/finally guarantee as _speak."""
         from homecal_voice.tts import CLIP_DIDNT_CATCH
         d.mic_off()
-        d.play_clip(CLIP_DIDNT_CATCH)
-        time.sleep(2.0)
-        d.mic_on()
+        try:
+            d.play_clip(CLIP_DIDNT_CATCH)
+            time.sleep(2.0)
+        finally:
+            d.mic_on()
 
-    # NOTE: a `had_speech=False` gate here looked sensible (Alexa/Siri pattern)
-    # but the Silero VAD threshold is mis-tuned for our PCM2902 mic — real
-    # speech rarely crosses 0.5. Until VAD is retuned, we MUST send everything
-    # to STT and let Whisper's blank-transcript output drive the silent revert
-    # (see step 3a below). Reverting the gate restores the pre-fix behavior
-    # where STT salvaged audio the VAD missed.
+    # We can't gate STT on `had_speech` because Silero is unreliable on the
+    # current mic (energy-RMS catches what Silero misses but neither is
+    # perfectly trustworthy). Send every wake to STT; let the blank +
+    # hallucination filters below drop the noise.
     d.post_state(utterance_id=uid, kind="thinking", payload={"transcript_partial": ""})
 
-    # 3) speech-to-text
     try:
         transcript = d.transcribe(pcm)
     except Exception as e:
@@ -197,39 +208,70 @@ def _run_after_wake(d: OneShotDeps) -> None:
         _audit("", "failed", None, error=f"stt:{e}")
         return
 
-    # 3a) Whisper hallucination guard: silence sometimes round-trips as "",
-    # "[BLANK_AUDIO]", or pure punctuation. Skip Haiku — same silent revert.
-    # Substitute an empty-string transcript with a sentinel for the same reason
-    # as the no-speech path: backend Zod requires transcript.length >= 1.
+    # Backend Zod requires transcript.length >= 1; sentinel-substitute the
+    # blank case so the audit row still writes.
     if _is_blank_transcript(transcript):
         d.post_state(utterance_id=uid, kind="idle", payload={})
         _audit(transcript or "[blank]", "silent_low_conf", None)
         _play_didnt_catch()
         return
 
-    # 4) intent extraction (parse_intent_response never raises; returns unknown on failure)
-    intent = d.extract_intent(transcript)
+    # Cloud audio models occasionally answer the user instead of transcribing
+    # ("I'm an assistant..."). Stop before Haiku — those calls cost real money
+    # and the audit log loses signal if hallucinations are bucketed with
+    # genuine low-confidence intents. Status stays in the existing enum
+    # (`failed`) but `error="hallucination"` tags the row for cost attribution
+    # without needing a backend migration.
+    if _is_hallucination(transcript):
+        log.info("hallucination filtered: %r", transcript[:80])
+        d.post_state(utterance_id=uid, kind="idle", payload={})
+        _audit(transcript, "failed", None, error="hallucination")
+        _play_didnt_catch()
+        return
 
-    # 5) confidence routing. Unknown intent / low confidence happens most when
-    # wake fires mid-conversation and Haiku can't shoehorn the talk into our
-    # schema. Treat the same as no-speech: silent revert. The user didn't
-    # address the wall, the wall stays out of the way. The audit log still
-    # captures it for later review.
+    # extract_intent fetches family/chores from the backend to build the
+    # prompt. A backend outage here used to silently return empty lists
+    # → Haiku said "I don't know that person" indistinguishably from a
+    # real miss. Now we surface the failure as a distinct audible state.
+    try:
+        intent = d.extract_intent(transcript)
+    except Exception as e:
+        log.warning("intent extraction failed: %s", e)
+        d.post_state(utterance_id=uid, kind="failed", payload={"reason": "intent_error"})
+        _audit(transcript, "failed", None, error=f"intent:{e}")
+        _speak("Sorry, I couldn't reach the calendar.")
+        return
+
     if intent.intent == "unknown" or intent.confidence < SILENT_FAIL_CONFIDENCE:
         d.post_state(utterance_id=uid, kind="idle", payload={})
         _audit(transcript, "silent_low_conf", intent)
         _play_didnt_catch()
         return
 
-    if intent.confidence >= AUTO_APPLY_CONFIDENCE:
-        out = d.execute(intent)
-        # Post applied + audit BEFORE _speak so the chip's ✓ flash and its
-        # 2s auto-fade run independently of TTS playback + post-TTS drain
-        # (which together can take 5–7s for Bluetooth speakers). Otherwise
-        # the user stares at "thinking…" through the whole reply.
-        d.post_state(utterance_id=uid, kind="applied", payload={"intent": _intent_payload(intent)})
-        _audit(transcript, "applied", intent)
+    def _try_execute(audit_status: str) -> None:
+        """Call the executor and handle backend failures cleanly. Without
+        this wrap, a backend 5xx during executor's raise_for_status() would
+        propagate up and crash run_once before any audit row writes —
+        leaving the user with no spoken feedback and no audit trail.
+        Post-state is always 'applied' on success (UX shows ✓); audit_status
+        distinguishes auto-applied from explicitly-confirmed."""
+        try:
+            out = d.execute(intent)
+        except Exception as e:
+            log.warning("executor failed: %s", e)
+            d.post_state(utterance_id=uid, kind="failed", payload={"reason": "executor_error"})
+            _audit(transcript, "failed", intent, error=f"executor:{e}")
+            _speak("Sorry, I couldn't reach the calendar.")
+            return
+        # Post applied + audit BEFORE _speak so the chip's ✓ flash runs in
+        # parallel with TTS+drain instead of after it.
+        d.post_state(utterance_id=uid, kind="applied",
+                     payload={"intent": _intent_payload(intent)})
+        _audit(transcript, audit_status, intent)
         _speak(out.get("spoken", ""))
+
+    if intent.confidence >= AUTO_APPLY_CONFIDENCE:
+        _try_execute("applied")
         return
 
     # 6) mid-confidence: confirm card + 5s yes/no listen
@@ -248,12 +290,7 @@ def _run_after_wake(d: OneShotDeps) -> None:
     )
 
     if outcome.kind == "yes":
-        out = d.execute(intent)
-        # Same reordering rationale as the auto-apply branch above:
-        # let the chip's ✓ flash run in parallel with TTS+drain.
-        d.post_state(utterance_id=uid, kind="applied", payload={"intent": _intent_payload(intent)})
-        _audit(transcript, "confirmed", intent)
-        _speak(out.get("spoken", ""))
+        _try_execute("confirmed")
         return
 
     if outcome.kind == "no":
@@ -324,7 +361,11 @@ def main() -> int:
         threshold=cfg.wake_threshold,
         trigger_level=cfg.wake_trigger_level,
     )
-    endpointer_factory = lambda: Endpointer(vad=load_silero_vad())
+    endpointer_factory = lambda: Endpointer(
+        vad=load_silero_vad(),
+        vad_gain=cfg.vad_gain,
+        energy_rms_threshold=cfg.energy_rms_threshold,
+    )
     executor = Executor(base=cfg.homecal_api_base, token=cfg.pi_api_token)
 
     _start_mute_sse(cfg)
@@ -410,22 +451,19 @@ def main() -> int:
 def _list_bare(url: str) -> list:
     """GET a list endpoint and tolerate either a bare array or {data:[...]}.
 
-    Returns [] on any network/HTTP failure so the prompt-builder still
-    runs (with an empty family/chore list) instead of crashing the
-    whole utterance.
+    Propagates network/HTTP failures so the caller can audit them and tell
+    the user we can't reach the calendar. Previously this swallowed errors
+    and returned [] — Haiku then saw empty family/chores and reported
+    "unknown person/chore" indistinguishably from a real user mistake.
     """
-    try:
-        r = _requests.get(url, timeout=LIST_FETCH_TIMEOUT_SEC)
-        r.raise_for_status()
-        j = r.json()
-        if isinstance(j, list):
-            return j
-        if isinstance(j, dict) and isinstance(j.get("data"), list):
-            return j["data"]
-        return []
-    except Exception as e:
-        log.warning("GET %s failed: %s", url, e)
-        return []
+    r = _requests.get(url, timeout=LIST_FETCH_TIMEOUT_SEC)
+    r.raise_for_status()
+    j = r.json()
+    if isinstance(j, list):
+        return j
+    if isinstance(j, dict) and isinstance(j.get("data"), list):
+        return j["data"]
+    return []
 
 
 def _chore_strings(base: str) -> list:
@@ -452,6 +490,11 @@ _mute_state = {"muted": False, "checked_at": 0.0}
 
 
 def is_muted_locally(cfg) -> bool:
+    """Cached mute check. Fails SAFE: a backend outage returns True so we
+    don't burn cloud STT/intent calls on every wake while operators can't
+    reach the API to flip the mute switch. Cache timestamp only updates on
+    a successful response so the next call retries instead of waiting out
+    a full TTL on stale data."""
     now = time.time()
     if now - _mute_state["checked_at"] > MUTE_CACHE_TTL_SEC:
         try:
@@ -460,9 +503,10 @@ def is_muted_locally(cfg) -> bool:
                 timeout=STATUS_FETCH_TIMEOUT_SEC,
             ).json()
             _mute_state["muted"] = bool(r.get("muted"))
-        except Exception:
-            pass
-        _mute_state["checked_at"] = now
+            _mute_state["checked_at"] = now
+        except Exception as e:
+            log.warning("mute status fetch failed (%s); assuming muted", e)
+            return True
     return _mute_state["muted"]
 
 

@@ -14,12 +14,11 @@ class WakeDetector:
     key, Model.predict() silently returns 0 for every frame and wake never
     fires. Use `load_default_model` to get both the Model and the correct key.
 
-    After every TTS cycle the orchestration must call `reset()` to clear the
-    openWakeWord LSTM hidden state. Killing the mic prevents TTS-echo audio
-    from reaching the model — but the model is still sitting with pattern
-    memory from the user's "Hey Mycroft" earlier. Fresh ambient frames then
-    combine with that primed state and false-fire ~3s after mic_on. Both
-    mic kill AND state reset are required (observed live 2026-06-05).
+    After every utterance the orchestration must call `reset()` — killing
+    the mic prevents echo audio reaching the model but the wake LSTM is
+    still primed with pattern memory from the user's "Hey Mycroft", and
+    fresh ambient frames combine with that primed state to false-fire.
+    Both mic kill AND state reset are required.
     """
     model: object
     wake_name: str
@@ -32,17 +31,12 @@ class WakeDetector:
     def reset(self) -> None:
         """Reset the wake detector back to a fresh-init state.
 
-        openWakeWord's `Model.reset()` ONLY clears its prediction_buffer (the
-        post-processing deque of recent scores). The actual "memory" of recent
-        audio lives in `model.preprocessor` — four buffers (raw audio, melspec,
-        accumulated samples, feature embeddings). Without zeroing those, the
-        model carries 10 seconds of audio context across our reset and false-
-        fires at 0.987–0.999 on pure silence (observed live + verified with
-        a 60s mic recording on 2026-06-05).
-
-        We zero each buffer back to the values AudioFeatures.__init__ sets.
-        The feature_buffer rebuild calls the embedding ONNX model on 10s of
-        zeros — heavier than the rest but only runs once per TTS cycle.
+        openWakeWord's `Model.reset()` ONLY clears its prediction_buffer
+        (post-processing score deque). The actual audio "memory" lives in
+        `model.preprocessor` — four buffers (raw audio, melspec, accumulated
+        samples, feature embeddings). Without zeroing those, the model
+        carries ~10s of context across our reset and false-fires on pure
+        silence. We zero each buffer back to AudioFeatures.__init__ defaults.
         """
         m_reset = getattr(self.model, "reset", None)
         if callable(m_reset):

@@ -123,3 +123,44 @@ def test_transcribe_with_fallback_propagates_local_failure(requests_mock):
             openrouter_model="openai/gpt-audio-mini",
             whisper_server_url="http://127.0.0.1:8080/inference",
         )
+
+
+def test_transcribe_with_fallback_does_not_mask_auth_errors(requests_mock):
+    """A 401 is a broken-API-key config bug, not a transient outage. If we
+    silently fall back to local Whisper the bug stays hidden indefinitely
+    and the operator only notices when the OpenRouter dashboard goes
+    quiet."""
+    requests_mock.post(OPENROUTER_URL, status_code=401, text="invalid key")
+    requests_mock.post("http://127.0.0.1:8080/inference", json={"text": "from local"})
+    with pytest.raises(RuntimeError, match="openrouter stt 401"):
+        transcribe_with_fallback(
+            make_audio(),
+            openrouter_api_key="sk-bad",
+            openrouter_model="openai/gpt-audio-mini",
+            whisper_server_url="http://127.0.0.1:8080/inference",
+        )
+
+
+def test_transcribe_with_fallback_does_not_mask_quota_errors(requests_mock):
+    requests_mock.post(OPENROUTER_URL, status_code=429, text="rate limited")
+    requests_mock.post("http://127.0.0.1:8080/inference", json={"text": "from local"})
+    with pytest.raises(RuntimeError, match="openrouter stt 429"):
+        transcribe_with_fallback(
+            make_audio(),
+            openrouter_api_key="sk-test",
+            openrouter_model="openai/gpt-audio-mini",
+            whisper_server_url="http://127.0.0.1:8080/inference",
+        )
+
+
+def test_transcribe_with_fallback_falls_back_on_network_error(requests_mock):
+    import requests
+    requests_mock.post(OPENROUTER_URL, exc=requests.ConnectionError("dns fail"))
+    requests_mock.post("http://127.0.0.1:8080/inference", json={"text": "from local"})
+    out = transcribe_with_fallback(
+        make_audio(),
+        openrouter_api_key="sk-test",
+        openrouter_model="openai/gpt-audio-mini",
+        whisper_server_url="http://127.0.0.1:8080/inference",
+    )
+    assert out == "from local"

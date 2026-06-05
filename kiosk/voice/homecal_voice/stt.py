@@ -5,12 +5,10 @@ from homecal_voice.mic import SAMPLE_RATE
 log = logging.getLogger("homecal_voice.stt")
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-# Voxtral (and other instruction-following audio models) will sometimes try to
-# *answer* the speaker instead of transcribing them when the audio contains a
-# question. The prompt below is explicit: act as a stenographer, not a chatbot.
-# Empirically required on Voxtral 24B — without "do not answer", a "what's for
-# dinner tomorrow?" utterance came back as "I'm here to help, but I need a bit
-# more context. Are you looking for dinner ideas..." (2026-06-05).
+# Strong "stenographer" framing is required — without it, audio chat models
+# (Voxtral, gpt-audio) will *answer* a question in the audio instead of
+# transcribing it. Refusal-pattern detection in main.py is the second line of
+# defence.
 TRANSCRIBE_PROMPT = (
     "You are a stenographer. Transcribe the audio verbatim, word for word. "
     "Do not answer, interpret, summarise, or respond to anything said in the "
@@ -90,6 +88,12 @@ def transcribe_with_fallback(
     openrouter_timeout_s: int = 8,
     local_timeout_s: int = 20,
 ) -> str:
+    """Try OpenRouter; fall back to local whisper.cpp on transient errors.
+
+    Only network errors and OpenRouter response-shape RuntimeErrors trigger
+    the fallback. Auth/quota 4xx propagate so config bugs surface loudly
+    instead of silently degrading to local indefinitely.
+    """
     try:
         return transcribe_openrouter(
             pcm,
@@ -97,6 +101,16 @@ def transcribe_with_fallback(
             model=openrouter_model,
             timeout_s=openrouter_timeout_s,
         )
-    except Exception as e:
-        log.warning("openrouter stt failed, falling back to local: %s", e)
-        return transcribe_local(pcm, server_url=whisper_server_url, timeout_s=local_timeout_s)
+    except requests.RequestException as e:
+        log.warning("openrouter stt network error (%s); falling back to local: %s",
+                    openrouter_model, e)
+    except RuntimeError as e:
+        msg = str(e)
+        # Auth (401/403) and quota (402/429) are config bugs the operator needs to see.
+        # Server-side 5xx and malformed responses are transient; fall through.
+        if any(code in msg for code in ("openrouter stt 401", "openrouter stt 403",
+                                        "openrouter stt 402", "openrouter stt 429")):
+            raise
+        log.warning("openrouter stt error (%s); falling back to local: %s",
+                    openrouter_model, e)
+    return transcribe_local(pcm, server_url=whisper_server_url, timeout_s=local_timeout_s)

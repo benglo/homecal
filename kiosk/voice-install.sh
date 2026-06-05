@@ -84,6 +84,9 @@ WHISPER_MODEL=small.en-q5_1
 WHISPER_SERVER_URL=http://127.0.0.1:8080/inference
 STT_MODEL=google/gemini-3-flash-preview
 INTENT_MODEL=anthropic/claude-haiku-4.5
+# Mic-specific endpointer tuning — defaults are for the PCM2902 USB mic.
+VAD_GAIN=5.0
+ENERGY_RMS_THRESHOLD=5500.0
 TTS_MODEL=hexgrad/kokoro-82m
 TTS_VOICE=af_bella
 DAILY_REQUEST_CAP=200
