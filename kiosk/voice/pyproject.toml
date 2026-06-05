@@ -11,6 +11,10 @@ dependencies = [
   "requests>=2.32",
   "python-dotenv>=1.0",
   "uuid-utils>=0.10",
+  # Official OpenRouter Python SDK — used by intent.py for chat completions.
+  # The /audio/speech (TTS) endpoint is NOT yet wrapped (added to OR after the
+  # SDK's 0.9.1 release in April 2026), so tts.py still uses `requests` directly.
+  "openrouter>=0.9.1",
   # silero_vad.onnx is vendored directly by the install script (curl from
   # github raw). The silero-vad pypi package imports torch transitively, so
   # we read the ONNX file through onnxruntime alone — keeps torch out of
@@ -30,6 +34,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["homecal_voice*"]
+
+[tool.setuptools.package-data]
+homecal_voice = ["clips/*.mp3"]
 
 [tool.pytest.ini_options]
 testpaths = ["homecal_voice"]

@@ -61,6 +61,11 @@ curl localhost:8787/api/voice/status    # mic_online + mute state
 - **DB lives in a host-mounted DIRECTORY** (`/data`), never a single file — `.db` + `-wal` + `-shm` must
   persist together. It's gitignored; `data/` may be root-owned (created by the container).
 - Tests-first for anything touching recurrence; that engine is the riskiest code (`backend/src/recurrence.ts`).
+- **Comments explain WHY, not WHAT** — only add one when the reason isn't obvious from the code: a hidden
+  constraint, a library footgun, a vendor quirk that produced a real bug. Skip everything else: no dated
+  debug logs ("Measured live 2026-06-05"), no specific measured numbers that rot when hardware changes
+  ("peak ~3800/32768"), no narrative referencing past sessions or "the X saga". Research-log content goes
+  in `docs/SESSION-LOG.md`; the code keeps the rule, not the story behind it.
 
 ## Status (2026-06-04, post-voice v1 implementation)
 - **M0** scaffold + container — done (`f419063`)

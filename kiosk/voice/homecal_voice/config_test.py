@@ -10,8 +10,12 @@ def test_load_config_from_env(monkeypatch):
     assert c.homecal_api_base == "http://192.168.1.94:8787"
     assert c.pi_api_token == "abc123"
     assert c.wake_word == "hey_mycroft"
-    assert c.wake_threshold == 0.5
-    assert c.whisper_model == "base.en-q5_1"
+    assert c.wake_threshold == 0.7
+    assert c.wake_trigger_level == 2
+    assert c.whisper_model == "small.en-q5_1"
+    assert c.stt_model == "google/gemini-3-flash-preview"
+    assert c.vad_gain == 5.0
+    assert c.energy_rms_threshold == 5500.0
     assert c.daily_request_cap == 200
 
 def test_load_config_missing_required(monkeypatch):

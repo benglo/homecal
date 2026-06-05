@@ -39,8 +39,8 @@ fi
   # Modern whisper.cpp renamed `quantize` -> `whisper-quantize`.
   cmake --build build -j --config Release --target whisper-server whisper-quantize
 )
-( cd "$WCPP" && ./models/download-ggml-model.sh base.en )
-( cd "$WCPP" && ./build/bin/whisper-quantize models/ggml-base.en.bin models/ggml-base.en-q5_1.bin q5_1 )
+( cd "$WCPP" && ./models/download-ggml-model.sh small.en )
+( cd "$WCPP" && ./build/bin/whisper-quantize models/ggml-small.en.bin models/ggml-small.en-q5_1.bin q5_1 )
 
 # 3. systemd units
 sudo cp kiosk/homecal-voice.service /etc/systemd/system/
@@ -51,7 +51,7 @@ After=network-online.target
 [Service]
 Type=simple
 User=hbadmin
-ExecStart=$HOME/whisper.cpp/build/bin/whisper-server -m $HOME/whisper.cpp/models/ggml-base.en-q5_1.bin -t 4 -l en --host 127.0.0.1 --port 8080
+ExecStart=$HOME/whisper.cpp/build/bin/whisper-server -m $HOME/whisper.cpp/models/ggml-small.en-q5_1.bin -t 4 -l en --host 127.0.0.1 --port 8080
 Restart=always
 [Install]
 WantedBy=default.target
@@ -80,10 +80,15 @@ OPENROUTER_API_KEY=sk-or-...
 HOMECAL_API_BASE=http://192.168.1.94:8787
 PI_API_TOKEN=...
 WAKE_WORD=hey_mycroft
-WHISPER_MODEL=base.en-q5_1
+WHISPER_MODEL=small.en-q5_1
 WHISPER_SERVER_URL=http://127.0.0.1:8080/inference
+STT_MODEL=google/gemini-3-flash-preview
 INTENT_MODEL=anthropic/claude-haiku-4.5
-TTS_MODEL=google/gemini-3.1-flash-tts-preview
+# Mic-specific endpointer tuning — defaults are for the PCM2902 USB mic.
+VAD_GAIN=5.0
+ENERGY_RMS_THRESHOLD=5500.0
+TTS_MODEL=hexgrad/kokoro-82m
+TTS_VOICE=af_bella
 DAILY_REQUEST_CAP=200
 AUDIO_DEVICE=default
 ENV

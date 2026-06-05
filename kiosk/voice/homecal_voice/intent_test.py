@@ -103,17 +103,42 @@ def test_parse_null_confidence_returns_unknown():
     assert r.fields["reason"] == "bad_confidence"
 
 
-def test_call_openrouter_posts_messages(requests_mock):
-    from homecal_voice.intent import call_openrouter
-    requests_mock.post(
-        "https://openrouter.ai/api/v1/chat/completions",
-        json={
-            "choices": [
-                {"message": {"content": '{"intent":"query_dinner","date":"2026-06-04","confidence":0.95}'}}
-            ]
-        },
-    )
-    out = call_openrouter(
+class _FakeMessage:
+    def __init__(self, content): self.content = content
+
+
+class _FakeChoice:
+    def __init__(self, content): self.message = _FakeMessage(content)
+
+
+class _FakeResponse:
+    def __init__(self, content): self.choices = [_FakeChoice(content)]
+
+
+class _FakeChat:
+    def __init__(self, content="", raise_exc=None):
+        self._content = content
+        self._raise = raise_exc
+        self.last_call = None
+
+    def send(self, **kwargs):
+        self.last_call = kwargs
+        if self._raise is not None:
+            raise self._raise
+        return _FakeResponse(self._content)
+
+
+class _FakeClient:
+    def __init__(self, chat): self.chat = chat
+    def __enter__(self): return self
+    def __exit__(self, *exc): return False
+
+
+def test_call_openrouter_sends_messages(monkeypatch):
+    from homecal_voice import intent
+    chat = _FakeChat(content='{"intent":"query_dinner","date":"2026-06-04","confidence":0.95}')
+    monkeypatch.setattr(intent, "OpenRouter", lambda api_key: _FakeClient(chat))
+    out = intent.call_openrouter(
         system="sys",
         user="what's for dinner",
         model="anthropic/claude-haiku-4.5",
@@ -121,16 +146,32 @@ def test_call_openrouter_posts_messages(requests_mock):
         timeout_s=10,
     )
     assert "query_dinner" in out
+    assert chat.last_call["model"] == "anthropic/claude-haiku-4.5"
+    assert chat.last_call["messages"][0]["role"] == "system"
+    assert "<<<USER>>>" in chat.last_call["messages"][1]["content"]
+    assert chat.last_call["temperature"] == 0.0
 
 
-def test_call_openrouter_raises_on_5xx(requests_mock):
-    from homecal_voice.intent import call_openrouter
-    import requests as _requests
-    requests_mock.post("https://openrouter.ai/api/v1/chat/completions", status_code=502)
+def test_call_openrouter_propagates_sdk_exceptions(monkeypatch):
+    """SDK errors must bubble up so the caller can mark the utterance failed
+    instead of silently treating a server outage as 'no intent'."""
+    from homecal_voice import intent
+    chat = _FakeChat(raise_exc=RuntimeError("upstream 502"))
+    monkeypatch.setattr(intent, "OpenRouter", lambda api_key: _FakeClient(chat))
     try:
-        call_openrouter(
+        intent.call_openrouter(
             system="sys", user="text", model="x", api_key="sk-or-xxx", timeout_s=2,
         )
-    except _requests.HTTPError:
+    except RuntimeError:
         return
-    assert False, "expected HTTPError on 5xx"
+    assert False, "expected RuntimeError to propagate from SDK"
+
+
+def test_call_openrouter_returns_empty_string_for_empty_response(monkeypatch):
+    from homecal_voice import intent
+    chat = _FakeChat(content="")
+    monkeypatch.setattr(intent, "OpenRouter", lambda api_key: _FakeClient(chat))
+    out = intent.call_openrouter(
+        system="sys", user="hi", model="x", api_key="sk-or-xxx", timeout_s=2,
+    )
+    assert out == ""

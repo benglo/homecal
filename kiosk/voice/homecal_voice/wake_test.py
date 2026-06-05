@@ -29,7 +29,7 @@ def test_no_wake_below_threshold(silence_frame):
 
 
 def test_wake_fires_once_at_threshold(silence_frame):
-    """Second call: refractory > 0, no predict, no fire."""
+    """Second call: refractory > 0, predict NOT called, no fire."""
     d = make_detector([{"hey_mycroft_v0.1": 0.6}, {"hey_mycroft_v0.1": 0.9}])
     assert d.step(silence_frame) is True
     # Refractory active — second high score must NOT fire.
@@ -37,11 +37,9 @@ def test_wake_fires_once_at_threshold(silence_frame):
 
 
 def test_refractory_blocks_for_exactly_n_frames(silence_frame):
-    """Fire once, then `refractory_frames` consecutive False returns (no
-    predict calls), then a fresh trigger fires."""
+    """Fire once, then `refractory_frames` consecutive False returns (predict
+    not called during refractory), then a fresh trigger fires."""
     refractory_n = 5
-    # 1 score for the initial fire, then 1 score for the post-refractory trigger.
-    # During refractory, predict is NOT called → no scores consumed.
     scores = [{"hey_mycroft_v0.1": 0.9}, {"hey_mycroft_v0.1": 0.9}]
     d = make_detector(scores, refractory_frames=refractory_n)
     assert d.step(silence_frame) is True
@@ -62,3 +60,5 @@ def test_refractory_low_score_after_drain_does_not_fire(silence_frame):
     assert d.step(silence_frame) is False
     # Second is above — fires.
     assert d.step(silence_frame) is True
+
+

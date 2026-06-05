@@ -19,3 +19,4 @@ data/
 # harness
 .claude/
 .superpowers/
+debug/

@@ -5,7 +5,7 @@ Pi-side voice command service for homecal. Runs as a systemd unit on the Raspber
 ## Stack
 - openWakeWord (wake word detection, `hey_mycroft`)
 - silero-vad (ONNX, endpointing)
-- whisper.cpp `whisper-server` (local STT, base.en-q5_1)
+- whisper.cpp `whisper-server` (local STT, small.en-q5_1)
 - OpenRouter (Haiku 4.5 for intent extraction, Gemini 3.1 Flash TTS Preview for speech)
 
 ## Deploy

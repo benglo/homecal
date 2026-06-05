@@ -13,6 +13,12 @@ class WakeDetector:
     (e.g. 'hey_mycroft_v0.1'), NOT the user-facing short name. With the wrong
     key, Model.predict() silently returns 0 for every frame and wake never
     fires. Use `load_default_model` to get both the Model and the correct key.
+
+    After every utterance the orchestration must call `reset()` — killing
+    the mic prevents echo audio reaching the model but the wake LSTM is
+    still primed with pattern memory from the user's "Hey Mycroft", and
+    fresh ambient frames combine with that primed state to false-fire.
+    Both mic kill AND state reset are required.
     """
     model: object
     wake_name: str
@@ -21,6 +27,33 @@ class WakeDetector:
     refractory_frames: int = 25
     _activations: int = field(default=0, init=False)
     _refractory: int = field(default=0, init=False)
+
+    def reset(self) -> None:
+        """Reset the wake detector back to a fresh-init state.
+
+        openWakeWord's `Model.reset()` ONLY clears its prediction_buffer
+        (post-processing score deque). The actual audio "memory" lives in
+        `model.preprocessor` — four buffers (raw audio, melspec, accumulated
+        samples, feature embeddings). Without zeroing those, the model
+        carries ~10s of context across our reset and false-fires on pure
+        silence. We zero each buffer back to AudioFeatures.__init__ defaults.
+        """
+        m_reset = getattr(self.model, "reset", None)
+        if callable(m_reset):
+            m_reset()
+        prep = getattr(self.model, "preprocessor", None)
+        if prep is not None:
+            try:
+                import numpy as np  # local import keeps the dataclass import-time light
+                prep.raw_data_buffer.clear()
+                prep.melspectrogram_buffer = np.ones((76, 32))
+                prep.accumulated_samples = 0
+                if hasattr(prep, "_get_embeddings"):
+                    prep.feature_buffer = prep._get_embeddings(np.zeros(160000).astype(np.int16))
+            except Exception as e:
+                log.warning("preprocessor reset failed (carrying on): %s", e)
+        self._activations = 0
+        self._refractory = 0
 
     def step(self, frame: np.ndarray) -> bool:
         if self._refractory > 0:

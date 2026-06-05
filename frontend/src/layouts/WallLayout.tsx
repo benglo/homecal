@@ -151,6 +151,7 @@ export function WallLayout() {
         onToday={goToday}
         isToday={isToday}
         onQuickAdd={openChooser}
+        voiceState={overlay}
       />
 
       <AddChooser

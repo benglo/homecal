@@ -1,7 +1,5 @@
 import { useEffect } from 'react';
-import { useVoiceStatus } from '../../core/hooks/useData';
 import type { OverlayState, OverlayAction } from './voiceState';
-import { EarGlyph } from './EarGlyph';
 import { ConfirmCard } from './ConfirmCard';
 
 /** How long the `applied` state stays on screen before fading back to idle. */
@@ -13,10 +11,13 @@ interface Props {
   onActiveChange?: (active: boolean) => void;
 }
 
+/**
+ * Modal overlay piece of the voice UI: shows the `ConfirmCard` when a
+ * mid-confidence intent needs a yes/no, and runs the auto-fade timer for
+ * `applied`. The persistent status pill (icon + label + mute control) lives
+ * in `VoiceChip` inside the ControlBar, NOT here.
+ */
 export function VoiceOverlay({ state, dispatch, onActiveChange }: Props) {
-  const { data: status } = useVoiceStatus();
-  const muted = !!status?.muted;
-
   useEffect(() => {
     onActiveChange?.(state.kind !== 'idle');
   }, [state.kind, onActiveChange]);
@@ -32,21 +33,13 @@ export function VoiceOverlay({ state, dispatch, onActiveChange }: Props) {
     return () => clearTimeout(t);
   }, [state.kind, dispatch, utteranceId]);
 
-  if (muted && state.kind === 'idle') {
-    return <EarGlyph state={state} muted />;
-  }
-
+  if (state.kind !== 'confirming') return null;
   return (
-    <>
-      <EarGlyph state={state} muted={muted} />
-      {state.kind === 'confirming' && (
-        <ConfirmCard
-          intent={state.intent}
-          transcript={state.transcript}
-          onConfirm={() => dispatch({ type: 'auto-fade' })}
-          onCancel={() => dispatch({ type: 'cancel' })}
-        />
-      )}
-    </>
+    <ConfirmCard
+      intent={state.intent}
+      transcript={state.transcript}
+      onConfirm={() => dispatch({ type: 'auto-fade' })}
+      onCancel={() => dispatch({ type: 'cancel' })}
+    />
   );
 }
