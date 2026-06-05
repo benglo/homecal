@@ -314,3 +314,14 @@ def test_apply_returns_friendly_fallback_for_unknown_intent():
     out = ex.apply(res)
     assert out["ok"] is False
     assert "didn't catch" in out["spoken"].lower()
+
+
+def test_timer_intents_route_to_not_built_handler():
+    """Matcher recognises timer utterances but the feature isn't built — all
+    four timer_* intents must speak a 'can't yet' message rather than fall
+    into the generic 'didn't catch that' branch."""
+    ex = Executor(base="http://api", token="t")
+    for intent in ("timer_set", "timer_query", "timer_cancel", "timer_extend"):
+        out = ex.apply(IntentResult(intent, {"duration_sec": 600}, 1.0, ""))
+        assert out["ok"] is False
+        assert "timer" in out["spoken"].lower()

@@ -58,6 +58,10 @@ class IntentResult:
     fields: dict
     confidence: float
     raw: str
+    # "matcher" when the regex registry produced this result, "llm" when it
+    # came from Haiku. Threaded into the audit log so we can measure the
+    # matcher hit rate without re-parsing transcripts.
+    source: str = "llm"
 
 
 def build_system_prompt(today_brisbane: str, family: Iterable[str], chores: Iterable[str]) -> str:

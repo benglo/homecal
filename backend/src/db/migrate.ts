@@ -123,6 +123,13 @@ const MIGRATIONS: Migration[] = [
       VALUES (1, strftime('%Y-%m-%dT%H:%M:%SZ','now'));
     `);
   },
+  // v4 — audit source ("matcher" vs "llm") so we can measure the regex
+  // matcher's hit rate from the audit log without re-parsing transcripts.
+  // Nullable: pre-matcher rows + non-intent paths (blank STT, hallucination)
+  // legitimately have no source.
+  (db) => {
+    db.exec(`ALTER TABLE voice_utterances ADD COLUMN source TEXT;`);
+  },
 ];
 
 /** Seed categories — idempotent, Okabe–Ito palette from the design system. */

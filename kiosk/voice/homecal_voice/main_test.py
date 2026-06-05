@@ -541,6 +541,68 @@ def test_mid_confidence_edit_leaves_audit_pending_and_speaks_hint():
     assert state.call_args_list[-1].kwargs["payload"]["reason"] == "edit"
 
 
+def test_audit_threads_source_through():
+    """source='matcher'|'llm' must reach post_audit so the audit log can
+    quantify matcher hit rate. Pinned here so a refactor of `_audit` can't
+    quietly drop the field."""
+    intent = IntentResult(
+        "dinner_set", {"date": "2026-06-05", "meal": "tacos"}, 1.0, "raw", source="matcher",
+    )
+    deps, _state, audit = _make_deps(
+        extract_intent=MagicMock(return_value=intent),
+        execute=MagicMock(return_value={"ok": True, "spoken": "Saved."}),
+    )
+    run_once(deps)
+    assert audit.call_args.kwargs["source"] == "matcher"
+
+
+def test_audit_source_is_none_when_no_intent():
+    """STT/blank/hallucination paths produce no IntentResult — the audit row
+    still writes but `source` is None (server-side defaults handle it)."""
+    transcribe = MagicMock(side_effect=RuntimeError("whisper-server 503"))
+    deps, _state, audit = _make_deps(transcribe=transcribe)
+    run_once(deps)
+    assert audit.call_args.kwargs["source"] is None
+
+
+# --- matcher-first wiring --------------------------------------------------
+
+
+def test_extract_with_matcher_first_returns_matcher_hit_without_calling_llm(monkeypatch):
+    """When the regex matches, the LLM must not be called — that's the whole
+    point of the matcher (saves the OpenRouter round-trip)."""
+    from homecal_voice import main
+    cfg = MagicMock(homecal_api_base="http://api", intent_model="x", openrouter_api_key="k")
+    monkeypatch.setattr(main, "_list_bare", lambda url: [])
+    llm_called = MagicMock()
+    monkeypatch.setattr(main, "call_openrouter", llm_called)
+    # The default_matcher singleton already has v1 + timer patterns registered
+    # at main() startup; register them explicitly here since the test bypasses
+    # main() but uses the singleton.
+    from homecal_voice.matcher import default_matcher
+    from homecal_voice.patterns_v1 import register_v1
+    if not any(p.name == "dinner_set:is" for p in default_matcher.patterns()):
+        register_v1(default_matcher)
+
+    out = main._extract_with_matcher_first(text="tonight's dinner is curry", cfg=cfg)
+    assert out.intent == "dinner_set"
+    assert out.source == "matcher"
+    llm_called.assert_not_called()
+
+
+def test_extract_with_matcher_first_falls_through_to_llm(monkeypatch):
+    """Unrecognised text must reach Haiku unchanged."""
+    from homecal_voice import main
+    cfg = MagicMock(homecal_api_base="http://api", intent_model="x", openrouter_api_key="k")
+    monkeypatch.setattr(main, "_list_bare", lambda url: [])
+    monkeypatch.setattr(main, "call_openrouter",
+                        lambda **_: '{"intent":"unknown","reason":"no_match","confidence":0.0}')
+
+    out = main._extract_with_matcher_first(text="please play some music", cfg=cfg)
+    assert out.intent == "unknown"
+    assert out.source == "llm"
+
+
 def test_mid_confidence_ambiguous_leaves_audit_pending_and_speaks_hint():
     execute = MagicMock()
     speak = MagicMock()

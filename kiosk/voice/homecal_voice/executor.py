@@ -66,11 +66,19 @@ class Executor:
     def __init__(self, *, base: str, token: str):
         self.base = base.rstrip("/")
         self.headers = {"X-Pi-Token": token, "Content-Type": "application/json"}
+        # Timer intents are recognised by the matcher but the feature isn't
+        # built yet — all four route to a 'not built' reply. Keeping them
+        # explicit (vs falling into the unknown branch) lets the audit log
+        # quantify missed timer requests so we can prioritise the build.
         self._handlers = {
             "dinner_set": self._dinner_set,
             "chore_complete": self._chore_complete,
             "query_dinner": self._query_dinner,
             "query_agenda": self._query_agenda,
+            "timer_set": self._timer_not_built,
+            "timer_query": self._timer_not_built,
+            "timer_cancel": self._timer_not_built,
+            "timer_extend": self._timer_not_built,
         }
 
     def apply(self, r: IntentResult) -> dict:
@@ -161,6 +169,9 @@ class Executor:
             time_str = f" at {_speak_time(start[11:16])}" if len(start) >= 16 and start[10:11] == "T" else ""
             bits.append(f"{title}{time_str}")
         return {"ok": True, "spoken": f"{when.capitalize()} you've got " + _join_natural(bits) + "."}
+
+    def _timer_not_built(self, f: dict) -> dict:
+        return {"ok": False, "spoken": "I can't set timers yet."}
 
     def _humanise(self, iso_date: str) -> str:
         today = today_brisbane()

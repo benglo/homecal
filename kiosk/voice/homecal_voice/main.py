@@ -169,6 +169,7 @@ def _run_after_wake(d: OneShotDeps) -> None:
             confidence=intent.confidence if intent else None,
             duration_ms=_elapsed(),
             error=error,
+            source=intent.source if intent else None,
         )
 
     def _speak(text: str) -> None:
@@ -338,6 +339,15 @@ def main() -> int:
     from homecal_voice.tts import speak as tts_speak, play_file as tts_play_file
     from homecal_voice.executor import Executor
     from homecal_voice.server_state import post_state, post_audit, post_heartbeat
+    from homecal_voice.matcher import MatchContext, default_matcher
+    from homecal_voice.patterns_v1 import register_v1
+    from homecal_voice.patterns_timer import register_timer
+
+    # Register patterns once at startup. Order matters — v1 first so a real
+    # "tonight's dinner is X" beats any future timer pattern that captures
+    # the same shape (none today, but defensive against future bleed).
+    register_v1(default_matcher)
+    register_timer(default_matcher)
 
     mic = MicStream(device=cfg.audio_device)
     mic.start()
@@ -407,20 +417,9 @@ def main() -> int:
                     openrouter_model=cfg.stt_model,
                     whisper_server_url=cfg.whisper_server_url,
                 ),
-                extract_intent=lambda text: parse_intent_response(
-                    call_openrouter(
-                        system=build_system_prompt(
-                            today_brisbane=today_brisbane(),
-                            family=[
-                                m["name"]
-                                for m in _list_bare(f"{cfg.homecal_api_base}/api/family-members")
-                            ],
-                            chores=_chore_strings(cfg.homecal_api_base),
-                        ),
-                        user=text,
-                        model=cfg.intent_model,
-                        api_key=cfg.openrouter_api_key,
-                    )
+                extract_intent=lambda text: _extract_with_matcher_first(
+                    text=text,
+                    cfg=cfg,
                 ),
                 execute=executor.apply,
                 speak=lambda text: tts_speak(
@@ -466,7 +465,7 @@ def _list_bare(url: str) -> list:
     return []
 
 
-def _chore_strings(base: str) -> list:
+def _chore_strings_from(family: list, chores: list) -> list:
     """Group chores by family member for the intent prompt.
 
     Returns one entry per member who has chores, e.g.:
@@ -477,13 +476,48 @@ def _chore_strings(base: str) -> list:
     matches — the executor's `c.title == chore && c.assignedTo == person.id`
     lookup expects bare titles, not combined strings.
     """
-    members = {m["id"]: m["name"] for m in _list_bare(f"{base}/api/family-members")}
+    members = {m["id"]: m["name"] for m in family}
     by_person: dict[str, list[str]] = {}
-    for c in _list_bare(f"{base}/api/chores"):
+    for c in chores:
         title = c.get("title", "?")
         name = members.get(c.get("assignedTo"), "?")
         by_person.setdefault(name, []).append(title)
     return [f"{name}: {', '.join(titles)}" for name, titles in by_person.items()]
+
+
+def _extract_with_matcher_first(*, text: str, cfg) -> IntentResult:
+    """Try the regex matcher first; fall through to Haiku on a miss.
+
+    The matcher needs the live family + chores lists to resolve person/chore
+    references — same fetch the LLM path uses for prompt building, so we hit
+    those endpoints once whichever path wins. A backend outage propagates
+    (caller catches the RuntimeError and surfaces a 'can't reach the
+    calendar' audible error) — silent fallback to empty lists is the bug
+    the 2026-06-05 review caught.
+    """
+    from homecal_voice.matcher import MatchContext, default_matcher
+
+    family = _list_bare(f"{cfg.homecal_api_base}/api/family-members")
+    chores = _list_bare(f"{cfg.homecal_api_base}/api/chores")
+    ctx = MatchContext(today=today_brisbane(), family=family, chores=chores)
+
+    matched = default_matcher.try_match(text, ctx)
+    if matched is not None:
+        log.info("matcher hit: intent=%s", matched.intent)
+        return matched
+
+    return parse_intent_response(
+        call_openrouter(
+            system=build_system_prompt(
+                today_brisbane=ctx.today,
+                family=[m["name"] for m in family],
+                chores=_chore_strings_from(family, chores),
+            ),
+            user=text,
+            model=cfg.intent_model,
+            api_key=cfg.openrouter_api_key,
+        )
+    )
 
 
 _mute_state = {"muted": False, "checked_at": 0.0}

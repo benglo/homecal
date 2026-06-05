@@ -142,6 +142,9 @@ export const voiceAuditBody = z.object({
   status: z.enum(['applied','confirmed','cancelled','pending','failed','silent_low_conf']),
   duration_ms: z.number().int().nonnegative().nullable().optional(),
   error: z.string().max(500).nullable().optional(),
+  // "matcher" = regex path bypassed Haiku; "llm" = Haiku produced the
+  // intent. Nullable for non-intent paths (blank STT, hallucination).
+  source: z.enum(['matcher','llm']).nullable().optional(),
 });
 
 export const voiceHeartbeatBody = z.object({
