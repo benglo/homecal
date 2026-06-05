@@ -4,6 +4,155 @@ Running log of work per session. Newest first. Pair with `git log` for exact dif
 
 ---
 
+## 2026-06-05 (night) — Regex-first intent matcher (PR #3 + review pass)
+
+Built the HomeBuddy-style pattern-matcher-before-LLM layer. ~80–90% of real
+voice utterances fit a known shape ("tonight's dinner is X", "Mia did the
+bathroom", "what's for dinner") and don't need an OpenRouter round-trip to
+resolve. Matcher emits `IntentResult(source="matcher")`; on miss falls
+through to Haiku unchanged. Audit log gains a `source` column so we can
+measure hit rate from production data. Branch `feat/voice-intent-matcher`,
+PR #3 open.
+
+### Intent inventory first
+User asked for a list of current + future intents before writing any
+matcher code. Surfaced v1 (4 intents: dinner_set, query_dinner,
+query_agenda, chore_complete) plus v2 candidates from spec §15 (event_add,
+event_edit, event_delete, query_chores_*, chore_uncomplete, dinner_clear,
+query_weather, screensaver_*, set_mute, backup_now). User added **timer**
+to the list — recognised it deserves its own backend state + wall UI, not
+just an intent. Scope locked via AskUserQuestion: multiple named timers,
+memory-only state, matcher-first build with timer intents registered as
+no-op until the feature lands.
+
+### 8 tasks, TDD throughout
+Built incrementally with tests-first:
+- **matcher.py** — `Matcher` class + `IntentPattern` registry. Extractors
+  return `IntentResult | None`; None = "regex matched but slot-fill failed,
+  try next pattern." `default_matcher` singleton for prod; tests use their
+  own.
+- **date_phrase.py** — `parse_date_phrase` for "tonight"/"tomorrow"/
+  "friday"/"next Monday"/"this Saturday" → ISO date. Possessive (both
+  `'s` and `'s`), case-insensitive. Bare day = next occurrence ≥ today;
+  `next X` strictly future (skips today even if today is that day).
+- **duration.py** — `parse_duration` digit + word numbers (`one`–`twenty`,
+  `thirty`–`ninety`, `a`/`an`), abbreviations (`hrs`/`mins`/`secs`),
+  combined units (`2 hours and 30 minutes`), filler words (`add 2 more
+  minutes`). `extract_timer_label` returns 1–3 word labels (`pasta`,
+  `boiled egg`, `flip the steak`) with leading/trailing exclude-word
+  strip.
+- **aliases.py** — `match_person` (longest name wins, possessive accepted)
+  + `match_chore` (restricted to person.id, longest title wins).
+  Word-boundary anchored so `Sam` doesn't match `Samuel`.
+- **patterns_v1.py** — dinner_set / query_dinner / query_agenda /
+  chore_complete patterns + extractors. chore_complete uses a permissive
+  verb regex and lets `match_person` + `match_chore` reject false
+  positives.
+- **patterns_timer.py** — single `\btimer\b` pattern, one extractor that
+  branches on verb shape (cancel/stop → cancel; how long/time left →
+  query; add/extend + duration → extend; duration → set).
+- **Wiring** — `IntentResult` gains `source` field; matcher stamps it
+  centrally via `dataclasses.replace`. `main._extract_with_matcher_first`
+  fetches family + chores once, tries matcher, falls through to Haiku on
+  miss. `_audit` threads source. Executor gets four timer_* handlers (all
+  route to "I can't set timers yet").
+- **Backend** — migration v4 adds `source TEXT` column. Zod
+  `voiceAuditBody.source` enum('matcher','llm').nullable(). Repo updated.
+
+### Comprehensive PR review (5 agents in parallel)
+code-reviewer, pr-test-analyzer, silent-failure-hunter,
+type-design-analyzer, comment-analyzer.
+
+**Three reviewers independently flagged the same critical bug:**
+`_try_execute` audited `status="applied"` regardless of executor's `ok`
+flag. The timer no-op (returning `ok=False`) would write a "successful"
+audit row + flash green ✓ on the wall while speaking "I can't set timers
+yet." Same bug already affected chore_complete unknown-person and empty
+query_dinner paths — the matcher just made it widely visible. Fixed by
+branching on `out["ok"]`; soft failures audit `failed` with the executor's
+error tag (`timer_not_built`, `unknown_person`, `unknown_chore`) for
+greppability.
+
+**Other criticals:**
+- `query_agenda` over-captured `"whats on netflix"` / `"anything on the
+  menu"` → triggered today's agenda. Fixed by requiring a terminal anchor
+  on the "on" branch (date phrase, optional punctuation, EOL).
+- `chore_complete` at confidence 1.0 + permissive verb regex auto-applied
+  questions like `"did Mia do the bathroom?"`. Demoted to 0.8 so it lands
+  in the confirm-card flow. Side effect: the mid-confidence path is now
+  reachable from the matcher path (was dead code).
+- Matcher fall-through (extractor returns None) had no breadcrumb. Added
+  `log.debug` so a misfiring regex is debuggable.
+
+**Type tightenings:**
+- `IntentSource = Literal["matcher", "llm"]` shared between Pi
+  (`intent.py`) and backend (`voiceUtterances.ts`). Typo "match" now
+  caught at type-check.
+- `Extractor` callable → `Protocol` with explicit `(re.Match, str,
+  MatchContext) → IntentResult | None`. Catches arity drift.
+- `MatchContext.family/chores` typed `list[FamilyMember]` /
+  `list[Chore]` via structural TypedDicts.
+- `IntentPattern.name` required (was default `""`). A test already keyed
+  off names; the default would silently bypass.
+
+**DB hardening:**
+Migration v4 (this PR) now embeds `CHECK (source IN ('matcher','llm') OR
+source IS NULL)` on the new column, mirroring the existing status enum
+constraint. Closes the direct-SQL escape hatch past Zod.
+
+**Comment hygiene** — three CLAUDE.md violations: `main.py:496` and two
+test docstrings referenced "the 2026-06-05 review caught" / "the cascade
+saga". All rewritten as standing invariants. `matcher.py` order-of-
+registration docstring strengthened with a concrete failure-mode example.
+`duration.py` HomeBuddy port attribution dropped — replaced with the
+footgun each helper avoids.
+
+### Stats
+- Pi tests: 292/292 (was 159 pre-matcher, +133). New test files:
+  `matcher_test.py` (12), `date_phrase_test.py` (19), `duration_test.py`
+  (23), `aliases_test.py` (23), `patterns_v1_test.py` (31),
+  `patterns_timer_test.py` (16). +9 in `main_test.py` (source threading,
+  matcher-first wiring, ok=False audit, matcher 1.0 auto-apply,
+  backend-fetch propagation), +2 in `executor_test.py` (timer no-op),
+  +2 in backend `voiceUtterances.test.ts` (source CHECK + null default).
+- Backend tests: 149/149 (was 145).
+- Frontend: 62/62 unchanged.
+- Build clean.
+
+### Deferred (not PR blockers)
+- Unicode-name `\b` word-boundary issue — Python's `re` uses ASCII `\w`
+  by default. No homecal family currently has non-ASCII names; pin a
+  fix when one does.
+- Real-world phrasings missing patterns: `"we're having X tonight"`
+  (date trailing), `"dinner tonight is X"`, `"is there anything on
+  tomorrow"`. Pattern expansion in a follow-up PR.
+- `extract_timer_label` filter-rejection logging — low priority; timer
+  feature not built yet.
+- `parse_date_phrase` malformed-today warning — defensive, never fires
+  today.
+
+### Resume sequence
+PR #3 is open with the fix commit pushed. To deploy:
+```bash
+# Backend container (picks up migration v4)
+docker compose up -d --build
+
+# Sync homecal_voice/ to Pi + restart service
+rsync -a --exclude '.venv' --exclude '__pycache__' --exclude '*.pyc' \
+  kiosk/voice/homecal_voice/ \
+  hbadmin@192.168.1.135:/home/hbadmin/homecal-voice/homecal_voice/
+ssh hbadmin@192.168.1.135 'sudo systemctl restart homecal-voice'
+
+# Watch hit rate in the audit log
+docker compose exec calendar node -e 'const d=require("better-sqlite3")("/data/calendar.db",{readonly:true}); console.log(d.prepare("SELECT source, COUNT(*) FROM voice_utterances WHERE created_at > datetime(\"now\",\"-24 hours\") GROUP BY source").all())'
+```
+
+Acceptance gate: after 24h of mixed-source audit data, matcher hit rate
+≥ 50% on `applied` outcomes. Lower means too many real utterances are
+wandering off-pattern and the registry needs another sweep.
+
+---
+
 ## 2026-06-05 (late) — PR #2 review pass + merge to master
 
 Ran the comprehensive PR review (5 specialist agents in parallel) on the
