@@ -48,6 +48,8 @@ def _make_deps(
         post_audit=audit,
         utterance_id=lambda: "u1",
         muted=lambda: False,
+        mic_off=MagicMock(),
+        mic_on=MagicMock(),
     )
     return deps, state, audit
 
@@ -64,6 +66,8 @@ def test_high_confidence_auto_applies():
         execute=execute,
     )
     speak = deps.speak
+    mic_off = deps.mic_off
+    mic_on = deps.mic_on
     run_once(deps)
 
     execute.assert_called_once()
@@ -76,6 +80,10 @@ def test_high_confidence_auto_applies():
     # applied payload must include the intent fields the wall renders.
     applied_payload = state.call_args_list[-1].kwargs["payload"]
     assert applied_payload["intent"]["meal"] == "tacos"
+    # Mic must be closed for the entire TTS window so the pw-record pipe can't
+    # accumulate the BOOM 3 echo and cascade into post-reply false wakes.
+    mic_off.assert_called_once()
+    mic_on.assert_called_once()
 
 
 # --- STT failure -----------------------------------------------------------
@@ -141,31 +149,28 @@ def test_unknown_intent_reverts_silently_to_idle():
     assert audit.call_args.kwargs["status"] == "silent_low_conf"
 
 
-def test_empty_wake_no_speech_skips_stt_and_reverts_silently():
-    """The dominant false-positive: wake fires on TV/conversation/dishwasher,
-    no actual speech follows. We must NOT pay for STT, must NOT show 'thinking',
-    must NOT say anything. Just listening → idle, quietly."""
-    transcribe = MagicMock()
-    extract_intent = MagicMock()
-    execute = MagicMock()
-    speak = MagicMock()
+def test_had_speech_false_still_runs_stt():
+    """The Silero VAD is mis-tuned for the PCM2902 mic — real speech rarely
+    crosses 0.5 in practice. So a `had_speech=False` short-circuit before STT
+    would lose every successful utterance. We instead let Whisper see every
+    capture and rely on `_is_blank_transcript` to drop true silence (step 3a).
+    This test pins that behavior so the gate doesn't sneak back in."""
+    intent = IntentResult("dinner_set", {"date": "2026-06-10", "meal": "sushi"}, 0.92, "raw")
+    transcribe = MagicMock(return_value="wednesday's dinner is sushi")
+    extract_intent = MagicMock(return_value=intent)
     deps, state, audit = _make_deps(
-        transcribe=transcribe, extract_intent=extract_intent, execute=execute, speak=speak,
+        transcribe=transcribe,
+        extract_intent=extract_intent,
+        execute=MagicMock(return_value={"ok": True, "spoken": "Saved."}),
     )
     deps.endpointer.had_speech = False  # type: ignore[attr-defined]
     run_once(deps)
 
-    transcribe.assert_not_called()
-    extract_intent.assert_not_called()
-    execute.assert_not_called()
-    speak.assert_not_called()
+    transcribe.assert_called_once()
+    extract_intent.assert_called_once()
     kinds = [c.kwargs.get("kind") for c in state.call_args_list]
-    assert kinds == ["listening", "idle"]
-    assert audit.call_args.kwargs["status"] == "silent_low_conf"
-    # Audit transcript must be non-empty — backend Zod requires
-    # `transcript: z.string().min(1)`. Posting "" returns 400 and crashes
-    # the orchestration loop. Caught live; this assertion locks it in.
-    assert audit.call_args.kwargs["transcript"]
+    assert kinds[-1] == "applied"
+    assert audit.call_args.kwargs["status"] == "applied"
 
 
 def test_blank_transcript_skips_intent_and_reverts_silently():
@@ -215,9 +220,65 @@ def test_is_blank_transcript_helper():
     assert _is_blank_transcript(".")
     assert _is_blank_transcript("...")
     assert _is_blank_transcript(" ?! ")
+    # Whisper's bracketed/parens stage-direction hallucinations from
+    # subtitle-corpus training. These flooded the prod audit log on
+    # 2026-06-05 at $0.001 per Haiku call — filter them locally.
+    assert _is_blank_transcript("(wind blowing)")
+    assert _is_blank_transcript("(music playing)")
+    assert _is_blank_transcript("[silence]")
+    assert _is_blank_transcript("(applause).")
+    assert _is_blank_transcript(" (wind) ")
+    # Don't filter parens INSIDE real speech.
     assert not _is_blank_transcript("hi")
     assert not _is_blank_transcript("Tonight's dinner is tacos.")
     assert not _is_blank_transcript("ok.")
+    assert not _is_blank_transcript("Set the (Friday) dinner to curry")
+
+
+def test_muted_skips_wake_and_audit():
+    """While muted, run_once must drain the mic but never fire wake, run STT,
+    or call Haiku. Previously mute only gated TTS — wake cascades during
+    mute still billed OpenRouter for hallucinated transcripts."""
+    transcribe = MagicMock()
+    extract_intent = MagicMock()
+    deps, state, audit = _make_deps(
+        transcribe=transcribe, extract_intent=extract_intent,
+    )
+    deps.muted = lambda: True  # type: ignore[method-assign]
+    # Wake never fires while muted, so run_once would block forever.
+    # Patch wake.step to fire on the 50th frame so the test can break out
+    # — but only AFTER we've shown mute blocks the first 49 attempts.
+    call_count = {"n": 0}
+    original_step = deps.wake.step
+
+    def step_when_unmuted(f):
+        call_count["n"] += 1
+        # The mute gate is checked BEFORE wake.step, so this should never be
+        # called while muted. If it is, the gate failed.
+        raise AssertionError("wake.step called while muted")
+
+    deps.wake.step = step_when_unmuted  # type: ignore[method-assign]
+    # Drain ~10 frames worth of muted iteration then unmute + fire wake.
+    mute_state = {"on": True, "ticks": 0}
+
+    def muted_fn():
+        mute_state["ticks"] += 1
+        if mute_state["ticks"] > 10:
+            mute_state["on"] = False
+            deps.wake.step = lambda _f: True  # type: ignore[method-assign]
+        return mute_state["on"]
+
+    deps.muted = muted_fn  # type: ignore[method-assign]
+    transcribe.return_value = "tonight's dinner is tacos"
+    extract_intent.return_value = IntentResult(
+        "dinner_set", {"date": "2026-06-05", "meal": "tacos"}, 0.92, "raw",
+    )
+    run_once(deps)
+
+    # Confirm we never hit wake.step (the original) while muted — assertion
+    # would have fired. After unmute, the lambda fired and pipeline ran.
+    transcribe.assert_called_once()
+    extract_intent.assert_called_once()
 
 
 # --- mid-confidence confirm flows ------------------------------------------

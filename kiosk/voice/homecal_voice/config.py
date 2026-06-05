@@ -14,6 +14,7 @@ class Config:
     pi_api_token: str
     wake_word: str
     wake_threshold: float
+    wake_trigger_level: int
     whisper_model: str
     whisper_server_url: str
     intent_model: str
@@ -36,7 +37,12 @@ def load_config() -> Config:
         homecal_api_base=_require("HOMECAL_API_BASE"),
         pi_api_token=_require("PI_API_TOKEN"),
         wake_word=os.environ.get("WAKE_WORD", "hey_mycroft"),
-        wake_threshold=float(os.environ.get("WAKE_THRESHOLD", "0.5")),
+        # 0.7 + trigger_level=2 was tuned live on 2026-06-05 after observing
+        # ambient false positives at 0.5/1 (room background, BOOM 3 idle hiss)
+        # producing six "(wind blowing)" Haiku calls per minute. Confirmed
+        # real wakes score 0.97+ with the PCM2902 mic at 1m so 0.7 is safe.
+        wake_threshold=float(os.environ.get("WAKE_THRESHOLD", "0.7")),
+        wake_trigger_level=int(os.environ.get("WAKE_TRIGGER_LEVEL", "2")),
         whisper_model=os.environ.get("WHISPER_MODEL", "base.en-q5_1"),
         whisper_server_url=os.environ.get("WHISPER_SERVER_URL", "http://127.0.0.1:8080/inference"),
         intent_model=os.environ.get("INTENT_MODEL", "anthropic/claude-haiku-4.5"),

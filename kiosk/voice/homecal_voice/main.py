@@ -56,6 +56,12 @@ class OneShotDeps:
     post_audit: Callable
     utterance_id: Callable[[], str]
     muted: Callable[[], bool]
+    # Stop/start the pw-record subprocess. We close the mic entirely during
+    # TTS playback so the pipe never buffers TTS-echo audio that would
+    # cascade into post-reply false wakes. Simpler than any drain/reset
+    # scheme — there's literally no audio to process. See _speak in run_once.
+    mic_off: Callable
+    mic_on: Callable
 
 
 def _intent_payload(intent: IntentResult) -> dict:
@@ -67,6 +73,13 @@ def _intent_payload(intent: IntentResult) -> dict:
 # get the same treatment (".", "!", "?", "[", etc.).
 _BLANK_TRANSCRIPTS = {"", "[blank_audio]", "[ blank_audio ]"}
 
+# Whisper's bracketed/parenthesised stage directions ("(wind blowing)",
+# "(music playing)", "[silence]", "(applause)") are model artefacts from
+# training on subtitled video — they're never real user speech. Match the
+# whole-string pattern so we don't filter "(yes)" inside a real reply.
+import re as _re
+_PAREN_HALLUCINATION = _re.compile(r"^\s*[\(\[][^\)\]]+[\)\]]\.?\s*$")
+
 
 def _is_blank_transcript(t: str) -> bool:
     if not t:
@@ -74,14 +87,22 @@ def _is_blank_transcript(t: str) -> bool:
     norm = t.strip().lower()
     if norm in _BLANK_TRANSCRIPTS:
         return True
+    if _PAREN_HALLUCINATION.match(t):
+        return True
     return not any(c.isalnum() for c in norm)
 
 
 def run_once(d: OneShotDeps) -> None:
     """Block until one wake → utterance → confirmation cycle completes."""
-    # 1) wait for a wake event
+    # 1) wait for a wake event. While muted, we still drain frames (so the
+    # pw-record pipe doesn't back up) but never fire wake — the entire
+    # downstream pipeline (STT, Haiku, TTS) is gated. Previously mute only
+    # blocked TTS; ambient wake cascades during a mute period still billed
+    # OpenRouter for "(wind blowing)" Haiku calls.
     while True:
         f = d.next_frame()
+        if d.muted():
+            continue
         if d.wake.step(f):
             break
 
@@ -111,19 +132,32 @@ def run_once(d: OneShotDeps) -> None:
             error=error,
         )
 
-    # 2a) Empty wake: VAD never crossed threshold during the capture window.
-    # This is the dominant false-positive mode (TV, dishwasher, conversation).
-    # Match Alexa/Siri/Google: silently revert to idle, skip the STT round-trip
-    # AND the chip's thinking flash. No audible/visual "didn't catch that".
-    # `had_speech` is exposed by Endpointer; legacy fixtures without the
-    # property fall through to the STT path (treated as if speech was heard).
-    # Audit a sentinel ("[no_speech]") rather than the empty string the backend
-    # schema rejects — keeps the FP-rate row queryable and the type contract clean.
-    if not getattr(d.endpointer, "had_speech", True):
-        d.post_state(utterance_id=uid, kind="idle", payload={})
-        _audit("[no_speech]", "silent_low_conf", None)
-        return
+    def _speak(text: str) -> None:
+        """Close mic, speak, wait for the speaker to settle, reopen mic, and
+        reset the wake model's hidden state.
 
+        Three failure modes, each addressed by exactly one line:
+          - TTS echo audio buffering in the pw-record pipe → `mic_off`/`mic_on`
+          - Bluetooth playback chain still draining after mpg123 returns →
+            `time.sleep(2.0)` (covers BT codec latency + BOOM 3 speaker decay)
+          - openWakeWord LSTM still primed with pattern memory from the user's
+            "Hey Mycroft" → `wake.reset()` (otherwise ambient ~3s after mic_on
+            fires at 0.999 on stale state, observed live 2026-06-05)
+        """
+        d.mic_off()
+        d.speak(text)
+        time.sleep(2.0)
+        d.mic_on()
+        reset = getattr(d.wake, "reset", None)
+        if callable(reset):
+            reset()
+
+    # NOTE: a `had_speech=False` gate here looked sensible (Alexa/Siri pattern)
+    # but the Silero VAD threshold is mis-tuned for our PCM2902 mic — real
+    # speech rarely crosses 0.5. Until VAD is retuned, we MUST send everything
+    # to STT and let Whisper's blank-transcript output drive the silent revert
+    # (see step 3a below). Reverting the gate restores the pre-fix behavior
+    # where STT salvaged audio the VAD missed.
     d.post_state(utterance_id=uid, kind="thinking", payload={"transcript_partial": ""})
 
     # 3) speech-to-text
@@ -159,9 +193,13 @@ def run_once(d: OneShotDeps) -> None:
 
     if intent.confidence >= AUTO_APPLY_CONFIDENCE:
         out = d.execute(intent)
-        d.speak(out.get("spoken", ""))
+        # Post applied + audit BEFORE _speak so the chip's ✓ flash and its
+        # 2s auto-fade run independently of TTS playback + post-TTS drain
+        # (which together can take 5–7s for Bluetooth speakers). Otherwise
+        # the user stares at "thinking…" through the whole reply.
         d.post_state(utterance_id=uid, kind="applied", payload={"intent": _intent_payload(intent)})
         _audit(transcript, "applied", intent)
+        _speak(out.get("spoken", ""))
         return
 
     # 6) mid-confidence: confirm card + 5s yes/no listen
@@ -181,13 +219,15 @@ def run_once(d: OneShotDeps) -> None:
 
     if outcome.kind == "yes":
         out = d.execute(intent)
-        d.speak(out.get("spoken", ""))
+        # Same reordering rationale as the auto-apply branch above:
+        # let the chip's ✓ flash run in parallel with TTS+drain.
         d.post_state(utterance_id=uid, kind="applied", payload={"intent": _intent_payload(intent)})
         _audit(transcript, "confirmed", intent)
+        _speak(out.get("spoken", ""))
         return
 
     if outcome.kind == "no":
-        d.speak("Cancelled.")
+        _speak("Cancelled.")
         d.post_state(utterance_id=uid, kind="failed", payload={"reason": "no"})
         _audit(transcript, "cancelled", intent)
         return
@@ -196,7 +236,7 @@ def run_once(d: OneShotDeps) -> None:
         # Distinct from "no" so the audit log shows why the action didn't happen.
         # Tell the user out loud — silence + a green confirm card disappearing is
         # the worst possible UX for "did it save or not?".
-        d.speak("I didn't hear a yes or no — cancelled.")
+        _speak("I didn't hear a yes or no — cancelled.")
         d.post_state(utterance_id=uid, kind="failed", payload={"reason": "timeout"})
         _audit(transcript, "cancelled", intent)
         return
@@ -205,7 +245,7 @@ def run_once(d: OneShotDeps) -> None:
     # earlier write. Give a short audible cue so the user knows the system
     # heard them but didn't act. PendingReviewTray (future UI) will surface
     # this row for later resolution; for now the audit log is the trail.
-    d.speak("I didn't catch that — say yes or no.")
+    _speak("I didn't catch that — say yes or no.")
     d.post_state(utterance_id=uid, kind="failed", payload={"reason": outcome.kind})
 
 
@@ -234,11 +274,26 @@ def main() -> int:
 
     mic = MicStream(device=cfg.audio_device)
     mic.start()
-    frame_iter = mic.frames()
+    # `frame_iter` is rebound whenever we restart pw-record (during TTS) — the
+    # old generator becomes invalid once its subprocess dies. Hold it in a
+    # one-element list so closures keep seeing the live iterator.
+    frame_iter_ref = [mic.frames()]
+
+    def mic_off() -> None:
+        mic.stop()
+
+    def mic_on() -> None:
+        mic.start()
+        frame_iter_ref[0] = mic.frames()
     # load_default_model returns (Model, scoring_key); the versioned key
     # (e.g. 'hey_mycroft_v0.1') is what Model.predict() returns scores under.
     wake_model, wake_key = load_default_model(cfg.wake_word)
-    wake = WakeDetector(model=wake_model, wake_name=wake_key, threshold=cfg.wake_threshold)
+    wake = WakeDetector(
+        model=wake_model,
+        wake_name=wake_key,
+        threshold=cfg.wake_threshold,
+        trigger_level=cfg.wake_trigger_level,
+    )
     endpointer_factory = lambda: Endpointer(vad=load_silero_vad())
     executor = Executor(base=cfg.homecal_api_base, token=cfg.pi_api_token)
 
@@ -271,7 +326,7 @@ def main() -> int:
         while not _shutdown:
             ep = endpointer_factory()
             deps = OneShotDeps(
-                next_frame=lambda: next(frame_iter),
+                next_frame=lambda: next(frame_iter_ref[0]),
                 wake=wake,
                 endpointer=ep,
                 endpointer_factory=endpointer_factory,
@@ -303,6 +358,8 @@ def main() -> int:
                 post_audit=lambda **kw: post_audit(base=cfg.homecal_api_base, token=cfg.pi_api_token, **kw),
                 utterance_id=lambda: str(uuid7()),
                 muted=lambda: is_muted_locally(cfg),
+                mic_off=mic_off,
+                mic_on=mic_on,
             )
             if not _under_cap():
                 log.warning("daily request cap %d reached; sleeping", cfg.daily_request_cap)
