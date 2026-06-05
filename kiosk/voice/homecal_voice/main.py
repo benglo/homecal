@@ -117,9 +117,11 @@ def run_once(d: OneShotDeps) -> None:
     # AND the chip's thinking flash. No audible/visual "didn't catch that".
     # `had_speech` is exposed by Endpointer; legacy fixtures without the
     # property fall through to the STT path (treated as if speech was heard).
+    # Audit a sentinel ("[no_speech]") rather than the empty string the backend
+    # schema rejects — keeps the FP-rate row queryable and the type contract clean.
     if not getattr(d.endpointer, "had_speech", True):
         d.post_state(utterance_id=uid, kind="idle", payload={})
-        _audit("", "silent_low_conf", None)
+        _audit("[no_speech]", "silent_low_conf", None)
         return
 
     d.post_state(utterance_id=uid, kind="thinking", payload={"transcript_partial": ""})
@@ -135,9 +137,11 @@ def run_once(d: OneShotDeps) -> None:
 
     # 3a) Whisper hallucination guard: silence sometimes round-trips as "",
     # "[BLANK_AUDIO]", or pure punctuation. Skip Haiku — same silent revert.
+    # Substitute an empty-string transcript with a sentinel for the same reason
+    # as the no-speech path: backend Zod requires transcript.length >= 1.
     if _is_blank_transcript(transcript):
         d.post_state(utterance_id=uid, kind="idle", payload={})
-        _audit(transcript, "silent_low_conf", None)
+        _audit(transcript or "[blank]", "silent_low_conf", None)
         return
 
     # 4) intent extraction (parse_intent_response never raises; returns unknown on failure)

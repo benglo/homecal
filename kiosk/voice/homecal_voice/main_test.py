@@ -162,6 +162,10 @@ def test_empty_wake_no_speech_skips_stt_and_reverts_silently():
     kinds = [c.kwargs.get("kind") for c in state.call_args_list]
     assert kinds == ["listening", "idle"]
     assert audit.call_args.kwargs["status"] == "silent_low_conf"
+    # Audit transcript must be non-empty — backend Zod requires
+    # `transcript: z.string().min(1)`. Posting "" returns 400 and crashes
+    # the orchestration loop. Caught live; this assertion locks it in.
+    assert audit.call_args.kwargs["transcript"]
 
 
 def test_blank_transcript_skips_intent_and_reverts_silently():
@@ -176,15 +180,30 @@ def test_blank_transcript_skips_intent_and_reverts_silently():
     kinds = [c.kwargs.get("kind") for c in state.call_args_list]
     assert kinds[-1] == "idle"
     assert audit.call_args.kwargs["status"] == "silent_low_conf"
+    assert audit.call_args.kwargs["transcript"]
+
+
+def test_empty_transcript_audited_with_sentinel():
+    """Whisper occasionally returns "" (not "[BLANK_AUDIO]"). The pure-blank
+    branch still needs to post an audit row, and the row's transcript must
+    satisfy Zod's min(1). Sentinel substitution lives in run_once."""
+    transcribe = MagicMock(return_value="")
+    extract_intent = MagicMock()
+    deps, _state, audit = _make_deps(transcribe=transcribe, extract_intent=extract_intent)
+    run_once(deps)
+    extract_intent.assert_not_called()
+    assert audit.call_args.kwargs["transcript"]
+    assert audit.call_args.kwargs["transcript"] != ""
 
 
 def test_punctuation_only_transcript_treated_as_blank():
     """`.` / `?` / etc. happen on muffled noise — never a real utterance."""
     transcribe = MagicMock(return_value=" ... ")
     extract_intent = MagicMock()
-    deps, _state, _audit = _make_deps(transcribe=transcribe, extract_intent=extract_intent)
+    deps, _state, audit = _make_deps(transcribe=transcribe, extract_intent=extract_intent)
     run_once(deps)
     extract_intent.assert_not_called()
+    assert audit.call_args.kwargs["transcript"]
 
 
 def test_is_blank_transcript_helper():
