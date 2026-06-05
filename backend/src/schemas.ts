@@ -66,7 +66,12 @@ export const windowQuery = z
     message: 'window too large (max 1 year)',
   });
 
-export const dinnerUpsert = z.object({ meal: z.string().min(1).max(256) });
+export const dinnerUpsert = z.object({ meal: z.string().trim().min(1).max(256) });
+
+export const suggestionsQuery = z.object({
+  limit: z.coerce.number().int().positive().max(200).default(50),
+});
+
 export const dateParam = z.string().regex(DATE_ONLY, 'date must be YYYY-MM-DD');
 
 export type CategoryCreate = z.infer<typeof categoryCreate>;
@@ -118,3 +123,31 @@ export const choreCompleteBody = z.object({
 export type FamilyMemberCreate = z.infer<typeof familyMemberCreate>;
 export type ChoreCreate = z.output<typeof choreCreate>;
 export type ChoreUpdate = z.infer<typeof choreUpdate>;
+
+const VOICE_STATE_KINDS = [
+  'idle','listening','thinking','confirming','applied','failed','mic_offline','voice_offline',
+] as const;
+
+export const voiceStateBody = z.object({
+  utterance_id: z.string().min(1),
+  kind: z.enum(VOICE_STATE_KINDS),
+  payload: z.unknown().optional(),
+});
+
+export const voiceAuditBody = z.object({
+  id: z.string().min(1),
+  transcript: z.string().min(1).max(2000),
+  intent_json: z.string().max(4000).nullable().optional(),
+  confidence: z.number().min(0).max(1).nullable().optional(),
+  status: z.enum(['applied','confirmed','cancelled','pending','failed','silent_low_conf']),
+  duration_ms: z.number().int().nonnegative().nullable().optional(),
+  error: z.string().max(500).nullable().optional(),
+});
+
+export const voiceHeartbeatBody = z.object({
+  at: z.string().datetime(),
+});
+
+export const voiceMuteBody = z.object({
+  until: z.string().datetime().nullable(),
+});

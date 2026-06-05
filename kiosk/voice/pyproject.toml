@@ -1,0 +1,36 @@
+[project]
+name = "homecal-voice"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+  # 0.4.0 ships ONNX-only deps (onnxruntime + sklearn + scipy + tqdm).
+  # 0.5+ added tflite-runtime which has no Python 3.13 aarch64 wheel — broken on trixie.
+  "openwakeword>=0.4.0,<0.5.0",
+  "onnxruntime>=1.18",
+  "numpy>=1.26",
+  "requests>=2.32",
+  "python-dotenv>=1.0",
+  "uuid-utils>=0.10",
+  # silero_vad.onnx is vendored directly by the install script (curl from
+  # github raw). The silero-vad pypi package imports torch transitively, so
+  # we read the ONNX file through onnxruntime alone — keeps torch out of
+  # the venv (saves ~900MB) and avoids overflowing /tmp on the Pi.
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-mock>=3.14", "requests-mock>=1.12"]
+
+[project.scripts]
+homecal-voice = "homecal_voice.main:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["homecal_voice*"]
+
+[tool.pytest.ini_options]
+testpaths = ["homecal_voice"]
+python_files = ["*_test.py"]

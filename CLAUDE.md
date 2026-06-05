@@ -46,6 +46,9 @@ STATIC_DIR=frontend/dist npm start       # prod single-origin path locally
 npm --workspace backend test             # recurrence truth-table (node:test + tsx)
 docker compose up -d --build             # the supported deploy path
 bash kiosk/reload.sh                     # reload Pi kiosk browser via CDP (or /reload-kiosk)
+bash kiosk/voice-install.sh             # one-shot Pi-side install (whisper.cpp + systemd units)
+ssh hbadmin@192.168.1.135 'journalctl -u homecal-voice -f'   # tail Pi-side service logs
+curl localhost:8787/api/voice/status    # mic_online + mute state
 ```
 
 ## Conventions
@@ -59,14 +62,15 @@ bash kiosk/reload.sh                     # reload Pi kiosk browser via CDP (or /
   persist together. It's gitignored; `data/` may be root-owned (created by the container).
 - Tests-first for anything touching recurrence; that engine is the riskiest code (`backend/src/recurrence.ts`).
 
-## Status (2026-06-02, post-M5 chores)
+## Status (2026-06-04, post-voice v1 implementation)
 - **M0** scaffold + container — done (`f419063`)
 - **M1** data + API — done (`24d7651`), recurrence tests
 - **M2** wall UI — done (`5b3d5ed`), all 3 views verified via screenshot
 - **M3** editing (phone + sheets + mutations + SSE) — done; hardened after a pre-M4 review.
 - **M4** deploy + kiosk + backup — done. Deploy guide in `docs/deploy.md`.
 - **M5** chores board — done. Family members + chores + tap-to-complete on wall.
-- **Tests:** backend 114/114, frontend 23/23, build clean.
+- **Voice v1** — backend + frontend + Pi service implemented on `feat/voice-v1`. Deploy to Pi pending; acceptance gate is 24h kitchen FP test + 10-utterance per-family-member accuracy ≥80%.
+- **Tests:** backend 145/145, frontend 33/33, build clean.
 
 ### Feature inventory (beyond core CRUD)
 - **Realtime** — in-process SSE broker (`GET /api/stream`); mutations `poke()`;
@@ -89,6 +93,15 @@ bash kiosk/reload.sh                     # reload Pi kiosk browser via CDP (or /
   tap-to-complete on wall with star-fly animation + chime (muted 8pm–7am),
   optimistic updates, SSE sync. Phone managers for family + chores. 3 new tables
   (`family_members`, `chores`, `chore_completions`). 38 backend + 4 frontend tests added.
+- **Voice (v1)** — Pi-side service `homecal-voice` (under `kiosk/voice/`). Wake = openWakeWord
+  `hey_mycroft` (feasibility-validated: 0.998 confidence at 1m on the USB PCM2902 mic). STT = local
+  whisper.cpp `base.en-q5_1` via `whisper-server`. Intent = Haiku 4.5 + TTS = Gemini 3.1 Flash
+  TTS Preview, both via OpenRouter. v1 intents: dinner_set, chore_complete, query_dinner,
+  query_agenda. Confirmation card on the wall via existing SSE (mid-confidence intents listen
+  briefly for yes/no/edit via `confirm_loop`). Mute toggle in ControlBar + phone Manage tab
+  (instant via SSE poke; 5s polling backstop). Audit log at `voice_utterances`; mute state at
+  `voice_settings` (migration v3). Voice is the only WAN-dependent feature — calendar stays
+  offline-capable.
 
 ## Gotchas
 - `better-sqlite3` is native — compiled for the **server's** arch inside the Docker build; `.dockerignore`

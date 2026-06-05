@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { dateParam, dinnerUpsert } from '../schemas';
-import { deleteDinner, listDinners, setDinner } from '../repos/dinners';
+import { dateParam, dinnerUpsert, suggestionsQuery } from '../schemas';
+import { deleteDinner, listDinners, listSuggestions, setDinner } from '../repos/dinners';
 import { broker } from '../realtime';
 import { parseBody } from './helpers';
 
@@ -11,6 +11,11 @@ const dinnerWindow = z.object({
 });
 
 export async function dinnerRoutes(app: FastifyInstance): Promise<void> {
+  app.get('/api/dinners/suggestions', async (req) => {
+    const { limit } = parseBody(suggestionsQuery, req.query);
+    return listSuggestions(limit);
+  });
+
   app.get('/api/dinners', async (req) => {
     const { start, end } = parseBody(dinnerWindow, req.query);
     return listDinners(start, end);

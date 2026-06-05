@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useReducer, useState } from 'react';
 import { DateTime } from 'luxon';
 import type { EventOccurrence, WallView } from '../core/model/types';
 import { useClock } from '../core/hooks/useClock';
@@ -7,6 +7,9 @@ import { useIdleReset } from '../core/hooks/useIdleReset';
 import { useCategories, useDinners, useEvents, usePhotos, useWeather, byId } from '../core/hooks/useData';
 import { useScreensaver } from '../components/screensaver/useScreensaver';
 import { Screensaver } from '../components/screensaver/Screensaver';
+import { useSsePoke } from '../core/hooks/useRealtime';
+import { VoiceOverlay } from '../components/voice/VoiceOverlay';
+import { reduceOverlay, initialOverlay, pokeToAction } from '../components/voice/voiceState';
 import { eventWindow, weekDates, nowBne, toInputDate } from '../core/util/time';
 import { HeroBand } from '../components/hero/HeroBand';
 import { AgendaView } from '../components/calendar/AgendaView';
@@ -37,7 +40,23 @@ export function WallLayout() {
 
   const photosQ = usePhotos();
   const weatherQ = useWeather();
-  const screensaver = useScreensaver(photosQ.data);
+
+  // Voice overlay: SSE-driven state machine. While non-idle, suspend the wall's
+  // idle reset + screensaver so the user can finish their utterance in peace.
+  const [overlay, dispatch] = useReducer(reduceOverlay, undefined, initialOverlay);
+  const [voiceActive, setVoiceActive] = useState(false);
+  // pokeToAction is the trust boundary: rejects unknown kinds, missing
+  // intents, malformed payloads. `mute_changed` falls through here too —
+  // useVoiceStatus's query invalidation picks it up instead.
+  useSsePoke<unknown>(
+    'voice',
+    useCallback((p) => {
+      const action = pokeToAction(p);
+      if (action) dispatch(action);
+    }, []),
+  );
+
+  const screensaver = useScreensaver(photosQ.data, voiceActive);
 
   const cats = byId(categoriesQ.data);
   const occurrences = eventsQ.data ?? [];
@@ -46,7 +65,7 @@ export function WallLayout() {
   const [detailDate, setDetailDate] = useState<string | null>(null);
   const [chooserOpen, setChooserOpen] = useState(false);
   const [quickAddCategoryId, setQuickAddCategoryId] = useState<string | null>(null);
-  const [dinnerEditorOpen, setDinnerEditorOpen] = useState(false);
+  const [dinnerDate, setDinnerDate] = useState<string | null>(null);
 
   // Wall staleness = the worse of events + dinners (events is the primary data).
   const oldest = Math.min(eventsQ.dataUpdatedAt || Infinity, dinnersQ.dataUpdatedAt || Infinity);
@@ -65,15 +84,20 @@ export function WallLayout() {
   const dismissAll = () => {
     setChooserOpen(false);
     setQuickAddCategoryId(null);
-    setDinnerEditorOpen(false);
+    setDinnerDate(null);
     setDetailDate(null);
   };
 
-  useIdleReset(90_000, () => {
-    setView('agenda');
-    setAnchor(now.startOf('day'));
-    dismissAll();
-  });
+  useIdleReset(
+    90_000,
+    () => {
+      if (dinnerDate !== null) return; // planning in progress — let the user finish
+      setView('agenda');
+      setAnchor(now.startOf('day'));
+      dismissAll();
+    },
+    voiceActive,
+  );
 
   const openDetail = (date: string) => {
     dismissAll();
@@ -88,7 +112,6 @@ export function WallLayout() {
   const detailDinner = detailDate ? dinners.find((d) => d.date === detailDate)?.meal : undefined;
 
   const todayStr = toInputDate(nowBne().toUTC().toISO()!);
-  const todayMeal = dinners.find((d) => d.date === todayStr)?.meal ?? '';
 
   return (
     <div className="flex flex-col h-full overflow-hidden" style={{ filter: 'brightness(var(--kiosk-brightness))' }}>
@@ -99,6 +122,10 @@ export function WallLayout() {
         dataUpdatedAt={dataUpdatedAt}
         isError={dataIsError}
         weather={weatherQ.data}
+        onTapDay={(date) => {
+          dismissAll();
+          setDinnerDate(date);
+        }}
       />
 
       {view === 'agenda' ? (
@@ -136,7 +163,7 @@ export function WallLayout() {
         }}
         onDinner={() => {
           dismissAll();
-          setDinnerEditorOpen(true);
+          setDinnerDate(todayStr);
         }}
       />
 
@@ -157,13 +184,15 @@ export function WallLayout() {
       />
 
       <DinnerEditorSheet
-        open={dinnerEditorOpen}
-        onClose={() => setDinnerEditorOpen(false)}
-        date={todayStr}
-        currentMeal={todayMeal}
+        key={dinnerDate ?? 'closed'}
+        open={dinnerDate !== null}
+        onClose={() => setDinnerDate(null)}
+        initialDate={dinnerDate}
       />
 
       <VirtualKeyboard />
+
+      <VoiceOverlay state={overlay} dispatch={dispatch} onActiveChange={setVoiceActive} />
 
       {screensaver.active && screensaver.queue.length > 0 && (
         <Screensaver

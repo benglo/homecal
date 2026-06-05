@@ -4,6 +4,366 @@ Running log of work per session. Newest first. Pair with `git log` for exact dif
 
 ---
 
+## 2026-06-05 (early hours) — Voice v1: Pi deploy + PR review hardening (paused mid-smoke)
+
+Continuation of the voice v1 session. Got the Pi service running end-to-end,
+hit an endpointer bug mid-test, then while Pi was off ran a full PR review
+(`/pr-review`) and folded all findings + negative test coverage into the branch.
+
+### Pi deploy (took the night to land)
+- Server-side: rebuilt container from `feat/voice-v1`. Migration v3 applied
+  (`schemaVersion: 3`). Added `PI_API_TOKEN=${PI_API_TOKEN:-}` env passthrough
+  in `docker-compose.yml` + generated a token into `.env` (gitignored).
+- Pi-side install was iterative — install script broke in seven distinct ways,
+  each fixed in its own commit:
+  1. `python3.12` not in trixie apt — loosened `requires-python` to `>=3.11`
+     and switched the install to system `python3` (3.13).
+  2. `openwakeword>=0.6.0` pulls `tflite-runtime` which has no Py3.13 aarch64
+     wheel — pinned to `>=0.4.0,<0.5.0` (the version that scored 0.998 in the
+     feasibility test).
+  3. `silero-vad>=6.2.1` pulled torch + CUDA toolkit (~900MB) and overflowed
+     the Pi's 1GB `/tmp` tmpfs — first attempt: `--no-deps`. Failed because
+     `silero_vad/__init__.py` transitively imports torch even without it
+     installed. Real fix: vendor `silero_vad.onnx` (1.8MB) via `curl` from
+     github raw; `endpointer.load_silero_vad()` searches `SILERO_VAD_ONNX`
+     env → package-adjacent path → `~/homecal-voice/silero_vad.onnx`.
+  4. whisper.cpp `quantize` target renamed to `whisper-quantize` upstream —
+     install script updated to use new target name + binary path.
+  5. `/etc/homecal-voice.env` was root:root 0600 but the service runs as
+     `hbadmin` — Python-dotenv tried to re-read and got PermissionError.
+     `chown hbadmin:hbadmin` (still 0600) — LAN-only Pi, secret-in-userdir
+     is acceptable.
+  6. `pw-record` couldn't find PipeWire socket from systemd service env —
+     added `Environment=XDG_RUNTIME_DIR=/run/user/1000` to the unit.
+  7. Silero VAD v6 ONNX requires fixed 512-sample chunks at 16kHz; our 80ms
+     (1280-sample) frames blew up the LSTM with 5-dim input. Split each
+     frame into 2× 512 in `endpointer.vad()`, take max prob across chunks.
+
+### First end-to-end attempt
+Wake word fires at **0.997+ confidence** consistently. Speech captured.
+But whisper got `[BLANK_AUDIO]` — the endpointer was closing the recording
+~24ms after wake because Python tore through the pre-speech silence backlog
+(the gap between "Hey Mycroft" and "Tonight's …") in the pw-record buffer
+faster than realtime, hitting `silent_frames_needed=8` before any speech
+arrived. Fixed with a `_seen_speech` gate in `Endpointer.feed()` — silence
+end can't fire until at least one frame ≥ threshold has been heard. Pushed
+the fix (commit `fb374d6`); user shut down for the night.
+
+### PR review (`/pr-review`) — 5 specialist agents
+- code-reviewer, pr-test-analyzer, silent-failure-hunter, type-design-analyzer,
+  comment-analyzer, code-simplifier in parallel against the 35-commit diff.
+- 4 CRITICAL findings, 10 IMPORTANT, 4 NICE-TO-HAVE.
+
+### Critical fixes folded in
+- **`tts.py` used `aplay` for MP3** — `aplay` is WAV-only and `check=False`
+  hides the failure. Auto-detect mpg123 → ffplay → pw-play → paplay via
+  `shutil.which`. `mpg123` added to install script's apt list. Tempfile
+  cleanup on exit instead of `/tmp` leak.
+- **Chore-complete prompt vs executor mismatch** — `_chore_strings()` was
+  building `"Bathroom (Mia)"` strings and the prompt told the LLM to use
+  them as-is, but the executor looked up by bare title. Every chore-complete
+  would have failed in production with "I don't know that chore for Mia".
+  Reformatted as per-person grouping (`"Mia: Bathroom, Dishes"`); prompt
+  template tells the LLM that `chore` is a bare title, `person` is a name,
+  and the grouping tells you who owns which chore. The unit test was masking
+  this because it hand-fixtured `chore="Bathroom"`.
+- **`as OverlayAction` cast at SSE boundary** — wall was casting raw `unknown`
+  into a discriminated union with `action.intent!` non-null assertions. A Pi
+  bug emitting `{kind:'confirming'}` without an intent would crash React with
+  "useReducer state is undefined". Added `pokeToAction(raw)` parser that
+  rejects: non-object input, unknown kinds (`mute_changed`, future schema
+  drift), confirming/applied missing intent, malformed intent shapes,
+  NaN/Infinity numbers. Wall now uses `pokeToAction`; cast removed.
+- **Reducer no `default` case** — same crash mode for unknown kinds. Added
+  `default: return state;` so wire-format drift never produces undefined.
+  Also added explicit `intent` presence checks in `confirming` and `applied`
+  branches so the `action.intent!` non-null assertion is gone.
+
+### Important fixes folded in
+- **SSE reconnect refetch** — useRealtime's refactor dropped the `'open'`
+  listener that called `invalidateQueries()` after EventSource reconnects,
+  leaving up to 30s of stale UI after network blips. Re-added with a
+  `hasOpened` flag — first open is silent (initial connect), every
+  subsequent open fires `reconnectHandlers` so `useRealtime()` consumers
+  re-fetch.
+- **Dead in-memory mute state** — `VoiceState.setMuteUntil/muteUntil/isMuted`
+  were never called from any route (DB-backed `voiceSettings` is the source
+  of truth). Deleted to remove the drift hazard.
+- **Heartbeat timestamp kept milliseconds** — only mixed-precision timestamp
+  in the API. Switched to `isoUtc()` from `util/time.ts` so it matches
+  spec §0 ("`Z`-suffixed, no millis").
+- **Confirm timeout vs no were indistinguishable** — both audited as
+  "cancelled" with no audible feedback. Now: `timeout` speaks "I didn't hear
+  yes or no — cancelled", `no` speaks "Cancelled.", `edit`/`ambiguous` speak
+  "I didn't catch that — say yes or no." Different audit payload reasons
+  for each.
+- **`confirm_loop` never short-circuited "no audio captured"** — `ep.feed()`
+  always appends, so `ep.audio().size` was always > 0; the guard never fired
+  and pure silence was being shipped to a paid STT endpoint. Exposed
+  `Endpointer.had_speech` as a `@property` and gate the STT call on it.
+- **`intent.parse_intent_response` could crash main loop** — `float(obj.get(
+  "confidence", 0.0))` raised `ValueError` for `"high"` and `TypeError` for
+  `null`; missing required fields produced "valid intent" results that hit
+  `KeyError` downstream in the executor. Both now return `intent="unknown"`
+  with specific reasons (`bad_confidence`, `missing_fields:date,meal`).
+- **`confirm.py` `startswith` matching** — "yesterday" classified as yes,
+  "northern lights" as no, "stopwatch" as no. Switched to word-tokenised
+  first-word matching; edit hints still beat short no for "no, change …".
+- **OneShotDeps god struct** — flagged but deferred (deep refactor; not a
+  correctness bug).
+- **Pi CI** — flagged but deferred (needs GitHub Actions setup).
+
+### Polish
+- All R/T-code prefixes stripped from comments (R3, R4, R13, R14, R15, R16,
+  R17, R20, T20b, BUG FIX). Kept substance; in several cases added the failure
+  mode that the R-code originally documented in the plan's revision history.
+- `EarGlyph` 7-deep nested ternaries → `ICON_BY_KIND` / `LABEL_BY_KIND` tables
+  with exhaustiveness checking via `Record<Kind, …>`.
+- Magic numbers → named constants (`AUTO_APPLY_CONFIDENCE = 0.85`,
+  `SILENT_FAIL_CONFIDENCE = 0.6`, `HEARTBEAT_INTERVAL_SEC = 30`,
+  `APPLIED_AUTO_FADE_MS = 2000`, `MUTE_CACHE_TTL_SEC = 5`, etc).
+- `timezone.py` shared module — `today_brisbane()` + `BRISBANE_OFFSET_SECONDS`
+  replace 3 inline copies of the `+10*3600` math (was in `main.py` twice and
+  `executor.py` once).
+- `executor.py` dispatch table; `API_TIMEOUT_SEC` + `AGENDA_MAX_ITEMS` constants.
+- `main.py` `_audit()` helper consolidates the repeated 7-arg `post_audit`
+  calls; `_intent_payload()` consolidates the repeated intent dict.
+
+### Test coverage added — 76 new cases
+- **Frontend (vitest):** +16 cases. `pokeToAction` (12), reducer default,
+  confirming/applied without intent, cancel returns idle, failed reason.
+- **Backend (node:test):** +2 cases. ms-strip invariant, 60s boundary exclusive.
+- **Pi (pytest):** +58 cases across 7 modules.
+  - `intent_test.py`: bad confidence type (string), null confidence, missing
+    field per intent shape, empty/None input, OpenRouter 5xx propagation.
+  - `executor_test.py`: unknown person, `assignedTo` composite disambiguation
+    (the masked failure mode), `_unwrap` data envelope, query_dinner empty,
+    query_agenda empty + 3-item cap + all-day events + Brisbane window
+    assertion.
+  - `confirm_test.py`: 7 negative cases incl. "yesterday" not yes, "northern
+    lights" not no, "stopwatch" not no, edit beats no for "no, change …",
+    uppercase normalised, empty + whitespace + punctuation only.
+  - `confirm_loop_test.py`: yes/no/edit/ambiguous outcomes, no-speech timeout
+    doesn't pay for STT, hard-cap-without-speech short-circuits, backward
+    compat for old endpointer fixtures without `had_speech` attr.
+  - `main_test.py`: STT exception path, low-confidence silent, unknown intent,
+    mid-confidence confirm yes/no/timeout/edit/ambiguous (5 distinct
+    outcomes), applied payload structure assertion.
+  - `endpointer_test.py`: pre-speech silence backlog regression test,
+    `had_speech` False before any threshold frame.
+  - `wake_test.py`: refractory exact-N block (predict NOT called during
+    refractory), low-score-after-drain doesn't fire.
+  - New `timezone_test.py`: offset constant, format check.
+
+Three pre-existing test bugs found during the full pytest run and fixed —
+wake refractory call pattern (didn't account for predict-not-called during
+refractory window), endpointer assertion math (the `>=` expression evaluated
+to 256000 but actual is 16640), confirm_loop `iter([speech()] * 1000)`
+exhausted in a 200ms tight loop (millions of iterations). Switched to
+`itertools.repeat()` for an infinite source.
+
+### Status — green
+- **Backend:** 146/146 tests pass
+- **Frontend:** 49/49 tests pass (was 33 before tonight)
+- **Pi (pytest):** 109/109 tests pass (was 33 before tonight; ran in a local
+  Python 3.13 venv via `uv venv` to validate cross-version)
+- **Build:** clean (backend tsc + frontend vite + Pi `py_compile`)
+- **44 commits ahead of master** on `feat/voice-v1`. PR #1 open at
+  https://github.com/benglo/homecal/pull/1.
+
+### Resume sequence (when Pi is back online)
+
+```bash
+# 1) Sync the latest Pi-side code (endpointer fix + all PR-review fixes)
+rsync -a --exclude '.venv' --exclude '__pycache__' --exclude '*.pyc' \
+  kiosk/voice/homecal_voice/ \
+  hbadmin@192.168.1.135:/home/hbadmin/homecal-voice/homecal_voice/
+
+# 2) Install the new mpg123 dep + refresh Python deps; restart service
+ssh hbadmin@192.168.1.135 'sudo apt-get install -y mpg123 \
+  && source ~/homecal-voice/.venv/bin/activate \
+  && pip install -e .[dev] \
+  && sudo systemctl restart homecal-voice'
+
+# 3) Pi heartbeat should appear within ~30s
+curl -s http://localhost:8787/api/voice/status
+# Expected: {"mic_online":true,"last_heartbeat_at":"...","muted":false}
+
+# 4) Reload the kiosk browser
+bash kiosk/reload.sh
+
+# 5) Live smoke test
+#    Stand ~1m from the mic. Wall corner glyph: "say 'hey mycroft'".
+#    Say:  "Hey Mycroft. Tonight's dinner is tacos."
+#    Expected within ~6s:
+#      glyph: listening → thinking → applied (✓)
+#      TTS speaks "Saved tacos for today"
+#      curl localhost:8787/api/dinners?start=$(date +%F)&end=$(date +%F)
+#      shows the row.
+
+# 6) If wake fires but the cycle stalls again, tail the Pi:
+ssh hbadmin@192.168.1.135 'journalctl -u homecal-voice -n 50 --no-pager'
+```
+
+### Outstanding (not blocking merge, but worth doing)
+- Pi pytest in CI — currently only runs locally on a 3.12+ venv. Add a
+  GitHub Actions job for `kiosk/voice/**`.
+- `OneShotDeps` → five small Protocols (`AudioSource`, `Endpointer`, `STT`,
+  `IntentExtractor`, `Sink`) — flagged by type-design review.
+- 24h kitchen FP test (acceptance gate: <2 false wakes/day).
+- 10-utterance per-family-member accuracy gate (≥80% reach `applied`).
+
+### Spec & plan
+- Spec: `docs/superpowers/specs/2026-06-04-voice-commands-design.md`
+- Plan: `docs/superpowers/plans/2026-06-04-voice-commands.md`
+- Plan rev 2 + 8 follow-on commits during deploy/PR-review hardening.
+
+---
+
+## 2026-06-04 (cont.) — Voice v1: implemented on `feat/voice-v1` branch
+
+### Built
+- **Backend (T1–T5):** migration v3 (`voice_utterances` + `voice_settings`); Pi-token auth helper + voice state singleton; voice repos; 5 new routes (`/api/voice/{state,audit,heartbeat,status,mute}`); SSE foundation widened (`broker.poke(kind, payload?)`, frontend `useSsePoke` hook).
+- **Frontend (T6–T9):** voice types + hooks (`useVoiceStatus`, `useMuteVoice`); `VoiceOverlay` + `EarGlyph` + `ConfirmCard` + pure reducer (4 vitest cases); wall integration (`useSsePoke` wiring, `useIdleReset` + `useScreensaver` suppress while voice active); `MuteToggle` on `TogglePill` in ControlBar + phone Manage.
+- **Pi service (T10–T20b):** Python 3.12 service under `kiosk/voice/`. Modules: `mic.py` (pw-record subprocess), `wake.py` (openWakeWord WakeDetector), `endpointer.py` (Silero VAD ONNX), `stt.py` (whisper-server client), `intent.py` (Haiku via OpenRouter), `tts.py` (Gemini TTS), `confirm.py` (yes/no/edit grammar), `executor.py` (per-intent dispatch with real homecal API contract: bare arrays, chores.title/assignedTo, chore-complete {date} body), `server_state.py` (state/audit/heartbeat posters), `main.py` (orchestration loop + SIGTERM + heartbeat thread + SSE mute listener + daily request cap), `confirm_loop.py` (5s listening window for mid-confidence confirmations).
+- **Deploy (T21):** systemd unit `kiosk/homecal-voice.service` + install script `kiosk/voice-install.sh` (also installs whisper-server systemd unit).
+
+### Design process
+- Brainstormed via `superpowers:brainstorming` skill with 3-persona review (senior engineer / voice-audio / family-UX).
+- Hardware ground-truthed: USB PCM2902 + Pi 5 + hey_mycroft = 0.998 peak score at 1m.
+- Spec + plan went through 2 review rounds; rev 2 folded 20 persona-review findings (R1–R20) inline before execution.
+- Subagent-driven execution: fresh implementer per task, two-stage review (spec compliance + code quality) per task; 1 inline fix loop per task on average.
+
+### Tests
+- Backend: 145/145 pass (incl. 8 new voice route tests + voice repo tests + state/auth tests).
+- Frontend: 33/33 pass (incl. 4 voiceState reducer tests).
+- Pi service: 30+ pytest tests written; runs on Pi only (Python 3.12). Local syntax verified via `python3 -m py_compile`.
+- Build: backend tsc + frontend vite both clean.
+
+### Spec & Plan
+- Spec: `docs/superpowers/specs/2026-06-04-voice-commands-design.md` (a6ca56b → 2fec177)
+- Plan: `docs/superpowers/plans/2026-06-04-voice-commands.md` (2610824 → 367af35 rev 2)
+
+### Deploy + next session
+- All work on `feat/voice-v1` branch; needs merge to master.
+- Pi install: `bash kiosk/voice-install.sh` (creates venv with python3.12, builds whisper.cpp, installs both systemd units).
+- Env file `/etc/homecal-voice.env` needs: OPENROUTER_API_KEY, HOMECAL_API_BASE, PI_API_TOKEN.
+- Acceptance gate before merging: 24h kitchen FP test (target <2 false wakes/day) + 10-utterance per-family-member accuracy ≥80%.
+
+---
+
+## 2026-06-04 — Recurrence overrides: design locked (no code yet)
+
+### What happened
+- Shipped dinner upgrade to the Pi (`docker compose up -d --build` +
+  `bash kiosk/reload.sh`).
+- Brainstormed the next roadmap item: **single-occurrence event overrides**
+  (the long-deferred v2 from spec §10). Scoped tighter than expected once
+  the existing code was read.
+
+### Discovery (what's already done)
+- `event_exceptions` table has `kind/title/start/end_at/location` columns
+  (migration v1).
+- `recurrence.ts:67` already overlays `kind='modified'` exceptions on read.
+- `cancelOccurrence` write path and `DELETE /api/events/:id/occurrences/:date`
+  already wired (kind='cancelled').
+- **Gap is just the write path for `modified`** + the editor UX flow.
+
+### Locked design decisions
+- **Scope:** "this event only" edit (modify exception). "This-and-following"
+  edit/delete remain deferred — not on this work.
+- **API:** `PUT /api/events/:id/occurrences/:date` body
+  `{title?, start?, end?, location?}` (only present fields overridden).
+  `DELETE /api/events/:id/occurrences/:date` collapsed to delete-whatever-
+  kind-exists (PK is `(event_id, date)` so one row max).
+- **UX:** Prompt on Save (Apple-style). User edits the form freely; pressing
+  Save opens a small scope sheet — "This event only / All in series" —
+  reusing the existing delete-scope pattern. A "Reset to series default"
+  footer button appears when the occurrence has an existing modified
+  exception.
+- **No visual marker** on overridden occurrences (user call) — they just
+  render with the overridden values. Family trusts the wall.
+- **Not overridable:** category, all_day, rrule (schema doesn't support;
+  YAGNI). `start`/`end` can shift time but not move to a different day —
+  cross-day moves = delete + create.
+- **iCal RECURRENCE-ID export** — out of scope; separate follow-up.
+
+### Status
+- Brainstorming complete; spec doc + implementation plan not yet written.
+- Container is running the dinner upgrade in prod on the LAN.
+
+### Next session
+- Write `docs/superpowers/specs/2026-06-04-recurrence-overrides-design.md`,
+  user reviews, then `writing-plans` → subagent-driven execution.
+
+---
+
+## 2026-06-03 — Dinner planning upgrade
+
+### What was built
+- **`GET /api/dinners/suggestions`** — derived from the dinners table via a
+  SQLite window-function query that deduplicates case-insensitively and ranks
+  by frequency then recency then meal-name (deterministic tiebreaker for
+  canonical casing). Returns `{ meal, count, lastUsed }[]`; Zod-validated
+  `?limit=` (default 50, max 200, `VALIDATION` 400 on bad input).
+- **`dinnerUpsert`** schema gained `.trim()` so `"Tacos "` and `"Tacos"`
+  collapse on write (prevents long-tail history rot).
+- **`DinnerEditorSheet`** rebuilt to own its own date + week-anchor state. A
+  new `DinnerDateStrip` (7×72px pills, 64×64 chevrons) sits at the top; the
+  sheet fetches its own `useDinners(start, end)` via the shared `weekDates`
+  util so its query key collides with the parent layouts' identical query
+  and TanStack dedupes the network call. Save no longer auto-closes — the
+  user closes with Done/X. A "Saved" pill flashes for ~2s on successful
+  save (sticky top-right of body scroll so it stays visible). Footer
+  wording is dynamic: "Cancel" while edits are unsaved, "Done" once
+  `meal === currentMeal`. A new `DinnerSuggestionsList` renders below
+  the input; `filterSuggestions` does case-insensitive contains.
+- **HeroBand day cells** are now `<button>`s. Empty cells show a `+`;
+  planned cells show a pencil (18–20px, opacity 0.75). The "— tap to add"
+  CTA in the Tonight panel is gone (cards make the affordance now).
+  WallLayout passes `onTapDay` → opens the editor pre-filled. While the
+  editor is open the wall's 90s idle dismiss is suppressed.
+- **Cache invalidation** — `useDinnerMutations.settle` now also invalidates
+  `['dinner-suggestions']` for instant local feedback; the `dinners` SSE
+  poke fans out to the same key so cross-device edits stay fresh.
+
+### Design process
+- 3-persona pre-implementation review of the plan (senior engineer, UX, DBA)
+  caught 4 blockers + ~9 strong concerns: broken test-injection pattern,
+  wrong error code, undersized chevrons, idle-reset wiping the editor,
+  broken-build commit sequence, missing Save feedback, ambiguous Cancel/Done
+  wording, non-deterministic SQL canonical casing, missing trim-on-write,
+  week-key drift between parent + modal queries. All folded into plan rev 2
+  before implementation.
+- Subagent-driven execution: fresh implementer per task, spec-compliance
+  reviewer then code-quality reviewer per task. Quality reviewer on Task 9
+  caught an Important Saved-pill scroll-with-content bug (absolute inside
+  overflow-y-auto); fix subagent made it sticky in one commit.
+
+### Tests
+- +5 backend repo tests (`listSuggestions` truth-table incl. deterministic
+  tiebreaker).
+- +5 backend route tests (default + explicit limit + non-numeric + zero +
+  trim-on-write).
+- +6 frontend unit tests (`filterSuggestions`).
+- Backend 124/124, frontend 29/29, build clean.
+- Manual Playwright verify at 1280×800: hero strip glyphs, editor open
+  pre-filled, "Matches" typeahead, Saved pulse, dynamic Done/Cancel, next
+  week chevron, end-to-end save reflected on wall via SSE.
+
+### Verify
+```bash
+npm --workspace backend test
+npm --workspace frontend test
+npm run build
+docker compose up -d --build
+bash kiosk/reload.sh
+# Wall: tap any day pill in the hero strip → editor opens with that date.
+#       chevrons in the strip step weeks; typing partial meal name → matches.
+```
+
+---
+
 ## 2026-06-02 — Chores board + whole-codebase cleanup
 
 ### What was built

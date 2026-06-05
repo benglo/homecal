@@ -11,11 +11,13 @@ import { GridCalendar } from '../components/calendar/GridCalendar';
 import { PhoneHeader } from '../components/controls/PhoneHeader';
 import { TabBar, type PhoneTab } from '../components/controls/TabBar';
 import { Fab } from '../components/controls/Fab';
+import { MuteToggle } from '../components/controls/MuteToggle';
 import { CategoryManager } from '../components/manage/CategoryManager';
 import { ChoreManager } from '../components/manage/ChoreManager';
 import { FamilyMemberManager } from '../components/manage/FamilyMemberManager';
 import { DinnerWeekEditor } from '../components/manage/DinnerWeekEditor';
 import { PhotoManager } from '../components/manage/PhotoManager';
+import { SectionHeading } from '../components/manage/primitives/SectionHeading';
 import { EventEditorSheet } from '../components/sheets/EventEditorSheet';
 import { CategoryEditorSheet } from '../components/sheets/CategoryEditorSheet';
 import { DinnerEditorSheet } from '../components/sheets/DinnerEditorSheet';
@@ -32,7 +34,7 @@ export function PhoneLayout() {
   // Editor sheet state.
   const [eventTarget, setEventTarget] = useState<{ occ: EventOccurrence | null } | null>(null);
   const [categoryTarget, setCategoryTarget] = useState<{ cat: Category | null } | null>(null);
-  const [dinnerTarget, setDinnerTarget] = useState<{ date: string; meal: string } | null>(null);
+  const [dinnerDate, setDinnerDate] = useState<string | null>(null);
 
   const view = tab === 'week' ? 'week' : 'agenda';
   const win = eventWindow(view, anchor);
@@ -65,7 +67,7 @@ export function PhoneLayout() {
           <>
             <button
               type="button"
-              onClick={() => setDinnerTarget({ date: today, meal: tonight })}
+              onClick={() => setDinnerDate(today)}
               className="flex items-center gap-3 shrink-0 text-left border-b border-border"
               style={{ padding: '12px 16px', background: 'var(--accent-weak)', color: 'var(--accent-ink)' }}
             >
@@ -106,18 +108,22 @@ export function PhoneLayout() {
               weekDays={week.days}
               dinners={dinners}
               today={today}
-              onTapDay={(date, meal) => setDinnerTarget({ date, meal })}
+              onTapDay={(date) => setDinnerDate(date)}
             />
             <FamilyMemberManager />
             <ChoreManager />
             <CategoryManager categories={categories} onEdit={(cat) => setCategoryTarget({ cat })} />
             <PhotoManager />
+            <section style={{ marginTop: 24 }}>
+              <SectionHeading>Voice</SectionHeading>
+              <MuteToggle />
+            </section>
             <KioskShutdown />
           </div>
         )}
       </main>
 
-      {!eventTarget && !categoryTarget && !dinnerTarget && (
+      {!eventTarget && !categoryTarget && !dinnerDate && (
         <Fab onClick={openFab} label={tab === 'manage' ? 'Add category' : 'Add event'} />
       )}
 
@@ -130,8 +136,13 @@ export function PhoneLayout() {
       {categoryTarget && (
         <CategoryEditorSheet open onClose={() => setCategoryTarget(null)} category={categoryTarget.cat} />
       )}
-      {dinnerTarget && (
-        <DinnerEditorSheet open onClose={() => setDinnerTarget(null)} date={dinnerTarget.date} currentMeal={dinnerTarget.meal} />
+      {dinnerDate && (
+        <DinnerEditorSheet
+          key={dinnerDate}
+          open
+          onClose={() => setDinnerDate(null)}
+          initialDate={dinnerDate}
+        />
       )}
     </div>
   );

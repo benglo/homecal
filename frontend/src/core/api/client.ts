@@ -7,6 +7,7 @@ import type {
   ChoreInput,
   ChoreUpdateInput,
   Dinner,
+  DinnerSuggestion,
   EventCreateInput,
   EventMaster,
   EventOccurrence,
@@ -14,6 +15,7 @@ import type {
   FamilyMember,
   FamilyMemberInput,
   Photo,
+  VoiceStatus,
   WeatherData,
 } from '../model/types';
 
@@ -88,6 +90,8 @@ export const api = {
   // dinner writes
   setDinner: (date: string, meal: string) => send<Dinner>('PUT', `/api/dinners/${date}`, { meal }),
   deleteDinner: (date: string) => send<void>('DELETE', `/api/dinners/${date}`),
+  dinnerSuggestions: (limit = 50) =>
+    get<DinnerSuggestion[]>(`/api/dinners/suggestions?limit=${limit}`),
 
   // category writes
   createCategory: (body: CategoryInput) => send<Category>('POST', '/api/categories', body),
@@ -126,4 +130,9 @@ export const api = {
     send<ChoreCompletion>('POST', `/api/chores/${id}/complete`, { date }),
   uncompleteChore: (id: string, date: string) =>
     send<void>('DELETE', `/api/chores/${id}/complete/${date}`),
+
+  // voice
+  voiceStatus: () => get<VoiceStatus>('/api/voice/status'),
+  setVoiceMute: (until: string | null) =>
+    send<{ ok: true; mute_until: string | null }>('PUT', '/api/voice/mute', { until }),
 };

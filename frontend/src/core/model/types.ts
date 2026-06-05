@@ -140,6 +140,12 @@ export interface ChoreInput {
 
 export type ChoreUpdateInput = Partial<ChoreInput>;
 
+export interface DinnerSuggestion {
+  meal: string;
+  count: number;
+  lastUsed: string;
+}
+
 export interface WeatherData {
   temperature: number | null;
   feelsLike: number | null;
@@ -153,4 +159,22 @@ export interface WeatherData {
   observationTime: string | null;
   fetchedAt: string;
   stale?: boolean;
+}
+
+export type ParsedIntent =
+  | { intent: 'dinner_set'; date: string; meal: string; confidence: number }
+  | { intent: 'chore_complete'; person: string; chore: string; confidence: number }
+  | { intent: 'query_dinner'; date: string; confidence: number }
+  | { intent: 'query_agenda'; date: string; confidence: number }
+  | { intent: 'unknown'; reason: string; confidence: number };
+
+export type VoiceOverlayKind =
+  | 'idle' | 'listening' | 'thinking' | 'confirming'
+  | 'applied' | 'failed' | 'mic_offline' | 'voice_offline';
+
+export interface VoiceStatus {
+  mic_online: boolean;
+  last_heartbeat_at: string | null;
+  mute_until: string | null;
+  muted: boolean;
 }

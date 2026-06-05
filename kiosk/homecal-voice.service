@@ -1,0 +1,20 @@
+[Unit]
+Description=homecal voice service
+After=pipewire.service network-online.target
+Wants=pipewire.service
+
+[Service]
+Type=simple
+User=hbadmin
+# PipeWire's user socket lives in /run/user/$UID. Without this, pw-record
+# can't connect when launched from a system service. hbadmin = UID 1000.
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+EnvironmentFile=/etc/homecal-voice.env
+ExecStart=/home/hbadmin/homecal-voice/.venv/bin/homecal-voice
+Restart=always
+RestartSec=3
+KillSignal=SIGTERM
+TimeoutStopSec=10
+
+[Install]
+WantedBy=default.target

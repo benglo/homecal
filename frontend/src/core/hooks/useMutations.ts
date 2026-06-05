@@ -109,7 +109,10 @@ export function useEventMutations() {
 /** Per-day meal set/clear; optimistic against the date-keyed dinner windows. */
 export function useDinnerMutations() {
   const qc = useQueryClient();
-  const settle = () => void qc.invalidateQueries({ queryKey: ['dinners'] });
+  const settle = () => {
+    void qc.invalidateQueries({ queryKey: ['dinners'] });
+    void qc.invalidateQueries({ queryKey: ['dinner-suggestions'] });
+  };
 
   const set = useMutation({
     mutationFn: ({ date, meal }: { date: string; meal: string }) => api.setDinner(date, meal),
@@ -261,4 +264,12 @@ export function usePhotoMutations() {
   });
 
   return { remove };
+}
+
+export function useMuteVoice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (until: string | null) => api.setVoiceMute(until),
+    onSettled: () => void qc.invalidateQueries({ queryKey: ['voice-status'] }),
+  });
 }

@@ -22,7 +22,7 @@ export interface ScreensaverState {
   dismiss: () => void;
 }
 
-export function useScreensaver(photos: Photo[] | undefined): ScreensaverState {
+export function useScreensaver(photos: Photo[] | undefined, suppress = false): ScreensaverState {
   const [active, setActive] = useState(false);
   const [queue, setQueue] = useState<Photo[]>([]);
   const [index, setIndex] = useState(0);
@@ -34,9 +34,15 @@ export function useScreensaver(photos: Photo[] | undefined): ScreensaverState {
     timerRef.current = window.setTimeout(() => setActive(true), IDLE_MS);
   }, []);
 
-  // When not active, listen for user interaction to reset the idle timer
+  // When not active, listen for user interaction to reset the idle timer.
+  // `suppress` disarms the timer entirely (e.g. while a voice utterance is in
+  // flight) so the screensaver can't activate mid-conversation.
   useEffect(() => {
     if (active) return;
+    if (suppress) {
+      window.clearTimeout(timerRef.current);
+      return;
+    }
     arm();
     const bump = () => arm();
     const events: (keyof WindowEventMap)[] = ['pointerdown', 'touchstart'];
@@ -45,7 +51,7 @@ export function useScreensaver(photos: Photo[] | undefined): ScreensaverState {
       window.clearTimeout(timerRef.current);
       events.forEach((e) => window.removeEventListener(e, bump));
     };
-  }, [active, arm]);
+  }, [active, arm, suppress]);
 
   // On activation, build shuffled queue from current photo list
   useEffect(() => {

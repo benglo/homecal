@@ -2,6 +2,7 @@ import { ChevronLeft, ChevronRight, Plus } from 'lucide-react';
 import type { DateTime } from 'luxon';
 import type { WallView } from '../../core/model/types';
 import { ZONE } from '../../core/util/time';
+import { MuteToggle } from './MuteToggle';
 
 interface Props {
   view: WallView;
@@ -66,7 +67,7 @@ export function ControlBar({ view, anchor, onView, onPrev, onNext, onToday, isTo
         <NavBtn onClick={onNext} ariaLabel="Next"><ChevronRight size={26} /></NavBtn>
       </div>
 
-      {/* Right: Today + FAB */}
+      {/* Right: Today + MuteToggle + FAB */}
       <div className="flex items-center gap-4">
         <button
           type="button"
@@ -84,6 +85,7 @@ export function ControlBar({ view, anchor, onView, onPrev, onNext, onToday, isTo
         >
           Today
         </button>
+        <MuteToggle />
         <button
           type="button"
           onClick={onQuickAdd}
