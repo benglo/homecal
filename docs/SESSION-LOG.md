@@ -4,6 +4,75 @@ Running log of work per session. Newest first. Pair with `git log` for exact dif
 
 ---
 
+## 2026-06-05 (late) — PR #2 review pass + merge to master
+
+Ran the comprehensive PR review (5 specialist agents in parallel) on the
+day's `feat/voice-tts-ui-polish` branch. Surfaced four critical and six
+important issues that the original "make it work" passes missed because
+each agent was focused on a different angle (silent failures, type design,
+test coverage gaps, comment rot, general code quality). Addressed all of
+them in one fix commit, then merged to master.
+
+### Critical fixes (`879d828`)
+- **STT hallucination filter** — cloud audio models occasionally answer
+  the user instead of transcribing ("I'm an assistant…", "Please provide
+  the audio…"). These aren't blank so they bypassed `_is_blank_transcript`
+  and reached Haiku, wasting calls and burying the failure mode in audit.
+  New `_is_hallucination` matches a known refusal-phrase set; audited
+  with `status="failed", error="hallucination"` for cost-attribution
+  greppability (stayed in existing enum, no DB migration).
+- **Mic recovery on playback exception** — `_speak` and `_play_didnt_catch`
+  had no try/finally. If TTS playback or the MP3 player raised
+  (BT speaker drop, OSError), the mic stayed closed and the wall went
+  deaf. Wrapped both.
+- **`transcribe_with_fallback` exception narrowed** — bare `except
+  Exception` silently fell through to local Whisper on auth (401/403),
+  quota (402/429), and config bugs. Narrowed to `RequestException` + 5xx
+  RuntimeError; 4xx config errors now raise so they're visible.
+- **Executor failure handled in run_once** — backend 5xx from `d.execute`
+  propagated up and crashed `run_once` before any audit row wrote. User
+  got no feedback. New `_try_execute` helper audits `failed` and speaks
+  "Sorry, I couldn't reach the calendar."
+
+### Important fixes
+- `is_muted_locally` fails safe to muted on outage (was failing open →
+  cloud STT kept firing despite operator's intent).
+- `_list_bare` propagates HTTP errors instead of silent `[]` returns —
+  empty family/chores list made Haiku say "I don't know that person"
+  indistinguishably from a real miss.
+- Endpointer tuning (`vad_gain`, `energy_rms_threshold`) moved into
+  `Config` with env var overrides. Mic swap is now a config change.
+- Outdated VAD comment removed (claimed "must send everything to STT"
+  but the energy gate fix landed in the same PR).
+
+### Test additions
+- `_is_hallucination` unit table + routing test pinning the audit shape.
+- Mic recovery on `_speak`/`_play_clip` exception.
+- `transcribe_with_fallback`: auth/quota propagate, network falls back.
+- Executor + intent-extraction failure audit shape.
+- Low-confidence branch plays didn't-catch clip (was only pinned for
+  unknown-intent before).
+- `wake.reset` called on EVERY exit path — table-driven across applied,
+  blank, unknown, stt-exception, intent-exception, executor-exception,
+  hallucination. Pins the cascade fix so a refactor can't regress it.
+
+### CLAUDE.md commenting rule
+New rule under Conventions: comments explain WHY, not WHAT. No dated
+debug narrative ("Measured live 2026-06-05"), no specific measured
+numbers that rot when hardware changes ("peak ~3800/32768"), no
+references to "the X saga". Research-log content lives in SESSION-LOG.
+Trimmed comments accordingly across `main.py`, `endpointer.py`,
+`executor.py`, `wake.py`, `stt.py`, `config.py`.
+
+### Merge
+- PR #2 merged to master via merge commit `9aaa3df` (matches PR #1's
+  convention; preserves the 9 individual commit messages).
+- 31 files, +2617/-263.
+- `feat/voice-tts-ui-polish` branch deleted (local + remote).
+- Tests: 159 passing on Pi venv (was 145 pre-fixes).
+
+---
+
 ## 2026-06-05 (afternoon) — Voice v1: cloud STT + endpointer fix + natural speech
 
 Took the round trip from ~17s → ~11s and made it actually work at normal
