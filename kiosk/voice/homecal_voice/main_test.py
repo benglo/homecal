@@ -50,6 +50,7 @@ def _make_deps(
         muted=lambda: False,
         mic_off=MagicMock(),
         mic_on=MagicMock(),
+        play_clip=MagicMock(),
     )
     return deps, state, audit
 
@@ -147,6 +148,32 @@ def test_unknown_intent_reverts_silently_to_idle():
     kinds = [c.kwargs.get("kind") for c in state.call_args_list]
     assert kinds[-1] == "idle"
     assert audit.call_args.kwargs["status"] == "silent_low_conf"
+
+
+def test_unknown_intent_plays_didnt_catch_clip():
+    """Audible fallback: when STT comes back but intent is unknown, the user
+    deserves a clear 'I heard you but didn't understand' signal instead of
+    silent revert (otherwise they don't know if the wall heard them at all).
+    Uses the pre-recorded clip rather than synthesising via TTS because the
+    same network glitch that broke STT could break TTS too."""
+    intent = IntentResult("unknown", {"reason": "no_json"}, 0.0, "raw")
+    deps, _state, _audit = _make_deps(extract_intent=MagicMock(return_value=intent))
+    run_once(deps)
+
+    deps.play_clip.assert_called_once()
+    # mic must be off during playback to prevent echo cascading into wake.
+    deps.mic_off.assert_called()
+    deps.mic_on.assert_called()
+
+
+def test_blank_transcript_plays_didnt_catch_clip():
+    transcribe = MagicMock(return_value="[BLANK_AUDIO]")
+    deps, _state, _audit = _make_deps(transcribe=transcribe, extract_intent=MagicMock())
+    run_once(deps)
+
+    deps.play_clip.assert_called_once()
+    deps.mic_off.assert_called()
+    deps.mic_on.assert_called()
 
 
 def test_had_speech_false_still_runs_stt():

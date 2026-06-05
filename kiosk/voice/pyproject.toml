@@ -35,6 +35,9 @@ build-backend = "setuptools.build_meta"
 where = ["."]
 include = ["homecal_voice*"]
 
+[tool.setuptools.package-data]
+homecal_voice = ["clips/*.mp3"]
+
 [tool.pytest.ini_options]
 testpaths = ["homecal_voice"]
 python_files = ["*_test.py"]

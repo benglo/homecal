@@ -4,6 +4,157 @@ Running log of work per session. Newest first. Pair with `git log` for exact dif
 
 ---
 
+## 2026-06-05 (afternoon) — Voice v1: cloud STT + endpointer fix + natural speech
+
+Took the round trip from ~17s → ~11s and made it actually work at normal
+speaking volume. Five threads, mostly empirical: tried each plausible
+fix, measured, iterated. PR #2 still — same `feat/voice-tts-ui-polish`
+branch.
+
+### Whisper swap that wasn't (`base.en-q5_1` → `small.en-q5_1`)
+First instinct was to optimise local Whisper. Quantised `small.en` →
+`small.en-q5_1` on the Pi (922MB → 180MB), updated install script + env
++ unit. **Got slower, not faster** — 13s → 20s on the same query.
+Cause: q5_1 on the Pi 5 Cortex-A76 incurs dequant overhead per matmul
+that exceeds the FP16 cost — the smaller model wins on memory-bandwidth-
+bound hardware, loses on chips with good FP16 SIMD. Kept the swap (used
+later as the offline fallback baseline) and pivoted to cloud STT.
+
+### OpenRouter STT model bake-off (the surprise)
+Hypothesised cloud STT would land sub-2s. OpenRouter has no dedicated
+`/audio/transcriptions` endpoint — audio-in goes through `/chat/completions`
+with `input_audio`. 20 audio-input models available; ran each on the
+canonical JFK 11s clip:
+
+| Model | Latency | Transcript |
+|---|---|---|
+| openai/gpt-audio-mini | 1.4–1.6s | clean |
+| mistralai/voxtral-small-24b-2507 | 1.6–2.2s | clean |
+| google/gemini-2.5-flash-lite | 2.4–3.4s | clean |
+| google/gemini-3-flash-preview | 2.6s | clean |
+| local whisper.cpp small.en-q5_1 | 21–26s | clean |
+
+13–18× speedup vs local. **But the bake-off lied** — JFK is oratory.
+Real-world questions are different. Voxtral on "what's for dinner tomorrow?"
+returned `"I'm not sure, what do you feel like?"` — *answering* the
+question instead of transcribing it. Mistral's audio model has trained-in
+chat behaviour that overrides system prompt instructions. Tried strict
+"you are a stenographer, do not answer" prompts. Voxtral kept answering.
+Swapped to gpt-audio-mini which followed instructions cleanly — was the
+production default for ~30 minutes.
+
+### The post-rsync venv break + cascade reintroduction (`6bca7…`-ish)
+A normal `rsync -a` of the source dir to the Pi clobbered the Pi's
+`.venv` symlinks with the dev box's absolute paths (uv-managed
+interpreter that doesn't exist on the Pi). Service failed with `status=
+203/EXEC`. Rebuilt the venv from system python3. Lesson: `--exclude=.venv
+--exclude=__pycache__ --exclude='*.egg-info'` from now on.
+
+Restart introduced the post-reply cascade again. Cause: the `wake.reset()`
+fix from this morning lived inside `_speak()` only. With Voxtral
+hallucinating non-blank refusal text ("I'm an assistant that operates
+solely on text-based inputs..."), the flow exited at the unknown-intent
+branch — bypassing `_speak` entirely — leaving the openWakeWord LSTM
+primed and ambient frames cascading at 0.99+. Fix: moved the reset into
+a `try/finally` around the whole `run_once` body so every exit path
+(blank STT, unknown intent, STT error, hallucination) clears the model
+state. Refactored the body into `_run_after_wake` for clarity.
+
+### Natural-sounding TTS templates
+`"Today dinner: Curry."` was the spoken reply and read like a stiff
+header. Rewrote spoken templates:
+- `Tonight's dinner is Curry.` (possessive for relative dates; ISO date
+  falls back to `Dinner on YYYY-MM-DD is ...`)
+- `Got it, Curry for today.` (replaced "Saved")
+- `Nice work, Mia.` (added comma — Kokoro pauses naturally)
+- `Today you've got Soccer at 5pm, Dentist at 9am, and Pickup at 3:30pm.`
+  (was: `"On today: Soccer at 17:00, Dentist at 09:00..."`). Two new
+  helpers `_speak_time` (HH:MM → 5pm) and `_join_natural` (Oxford comma
+  with "and").
+
+### VAD endpointer fix — saved ~5s of the round trip
+Silero VAD never crossed threshold even on clear speech (logs showed
+`vad max=0.001 mean=0.001` across full captures). Added per-frame peak
+diagnostic — peak max=3796 (12% of int16 range). PCM2902 USB mic is
+genuinely low-gain, Silero needs `|x| ≳ 0.05` sustained for its
+spectral model. Two changes:
+- **5× software gain on the VAD input** + peak-normalise the assembled
+  audio to 16384 before STT (both in `endpointer.py`, wake path
+  untouched). VAD max went 0.001 → 0.079 — still wasn't enough.
+- **Energy-RMS secondary gate** at 5500 (boosted), parallel to Silero:
+  speech if either fires. First attempt at 700 broke endpointing
+  entirely — background noise sits at RMS ~4000 boosted, so every
+  frame read as speech and silent_run never accumulated. Raised to
+  5500 (above background floor, below speech bursts ~6000–17000).
+
+Result: `endpoint: silence after 31 frames` (2.5s) instead of always
+hitting the 100-frame hard cap (8s). Test capture: 20 frames (1.6s).
+
+### Pre-recorded "didn't catch that" fallback
+User noticed that quiet utterances → silent_low_conf → silent revert
+gave no feedback. Generated a Kokoro clip (`Sorry, I didn't catch that.
+Could you try again?`) once, bundled as `clips/didnt_catch.mp3` via
+pyproject `package-data`. Play it via the same `_detect_player()` chain
+TTS uses, wrapped in `mic_off`/`sleep`/`mic_on` to prevent the BOOM
+echoing back into wake. Pre-recorded specifically because the fallback
+fires when the cloud STT path is misbehaving — synthesising "didn't
+catch that" via TTS risks the same network hiccup.
+
+### The model that actually worked (`gemini-3-flash-preview`)
+After the endpointer fix, the dump showed 1.6s of healthy audio (peak
+16384, RMS 3206, dynamic 5.1×) — but `gpt-audio-mini` still hallucinated
+"Please go ahead and upload the audio file" on it. Sent the same WAV
+through six STT models:
+
+| Model | Result |
+|---|---|
+| gpt-audio-mini | ❌ "Please upload..." |
+| voxtral 24b | ❌ Hallucinated *Italian*: "Cosa vuol dire?" |
+| gemini-2.5-flash-lite | ⚠️ "What's the meaning" (partial) |
+| **gemini-3-flash-preview** | ✅ **"What's for dinner tonight?"** |
+| gpt-audio (full) | ❌ "Sure, please provide..." |
+| **local whisper.cpp small.en-q5_1** | ✅ "What's for dinner today?" |
+
+Model choice was the bottleneck, not the mic. Swapped default to
+`google/gemini-3-flash-preview`. ~600ms slower than gpt-audio-mini but
+actually transcribes this mic's signal. Local whisper.cpp stays as the
+offline fallback via `transcribe_with_fallback` (tries OR first, falls
+back on any RuntimeError).
+
+### OneShotDeps + tests
+Added `play_clip: Callable` to `OneShotDeps` for the didn't-catch
+fallback. Tests for the new STT models (`transcribe_openrouter`,
+`transcribe_with_fallback`), gain helpers (`_boost_int16`, `_peak_normalise`),
+energy gate, natural-language templates, didn't-catch playback. All 38
+relevant tests pass on the Pi venv.
+
+### Status — green
+- **Pi voice service:** end-to-end ~11s, transcribes normal-volume
+  speech, plays natural-sounding replies, no cascade.
+- **Tests:** endpointer 14/14, executor 26/26, stt 13/13, main 38/38.
+- **PR #2:** updated with the day's work.
+
+### Still standing (next session)
+- HomeBuddy regex-first intent pattern matcher — saves ~1s of Haiku
+  latency + cost on the happy path. Patterns sketched in
+  `docs/references/homebuddy-notes.md`. User explicitly deferred until
+  audio work settles.
+- 24h kitchen FP test + 10-utterance per-family-member accuracy gates.
+- Pre-existing SIGTERM `StopIteration` during `systemctl restart` —
+  cosmetic, recovers on auto-restart.
+
+### Round trip breakdown (current)
+- You talking: ~2s
+- Endpoint detect: ~0.7s after stop
+- STT (gemini-3-flash-preview): ~1.5–2.2s
+- Intent (Haiku 4.5): ~1s
+- Executor (homecal API): ~0.3s
+- TTS playback (Kokoro): ~1.5–2s
+- Post-TTS BT settle: 2s
+- **Total: ~9–11s** (was 17s pre-fixes)
+
+---
+
 ## 2026-06-05 (day) — Voice v1: live test + TTS fix + the post-TTS wake cascade saga
 
 Pi came back online mid-morning. Did the resume-sequence smoke test, hit

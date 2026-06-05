@@ -1,4 +1,4 @@
-from homecal_voice.executor import Executor, _canon_meal, _unwrap
+from homecal_voice.executor import Executor, _canon_meal, _unwrap, _speak_time, _join_natural
 from homecal_voice.intent import IntentResult
 
 
@@ -208,7 +208,10 @@ def test_query_agenda_caps_at_three_items_and_includes_HHmm(requests_mock):
     assert "Dentist" in out["spoken"]
     assert "Pickup" in out["spoken"]
     assert "Extra one" not in out["spoken"]  # capped at AGENDA_MAX_ITEMS
-    assert "17:00" in out["spoken"]
+    # Times render TTS-friendly (5pm) not 24h (17:00).
+    assert "5pm" in out["spoken"]
+    # Final item joined with "and" — reads naturally.
+    assert " and " in out["spoken"]
 
 
 def test_query_agenda_handles_all_day_event_without_time_string(requests_mock):
@@ -243,6 +246,63 @@ def test_query_agenda_uses_brisbane_window(requests_mock):
     # requests-mock lower-cases keys
     assert "+10:00" in qs["start"][0]
     assert "+10:00" in qs["end"][0]
+
+
+# --- _speak_time + _join_natural ------------------------------------------
+
+
+def test_speak_time_on_the_hour():
+    assert _speak_time("17:00") == "5pm"
+    assert _speak_time("09:00") == "9am"
+    assert _speak_time("00:00") == "12am"
+    assert _speak_time("12:00") == "12pm"
+
+
+def test_speak_time_with_minutes():
+    assert _speak_time("15:30") == "3:30pm"
+    assert _speak_time("09:15") == "9:15am"
+
+
+def test_speak_time_falls_back_on_garbage():
+    assert _speak_time("garbage") == "garbage"
+    assert _speak_time("") == ""
+
+
+def test_join_natural_zero_one_two_three():
+    assert _join_natural([]) == ""
+    assert _join_natural(["a"]) == "a"
+    assert _join_natural(["a", "b"]) == "a and b"
+    assert _join_natural(["a", "b", "c"]) == "a, b, and c"
+
+
+# --- query_dinner natural phrasing ----------------------------------------
+
+
+def test_query_dinner_uses_possessive_for_today(requests_mock):
+    """'Today's dinner is curry' reads naturally; the old colon form
+    ('Today dinner: curry') sounded like a header, not a sentence."""
+    from homecal_voice.timezone import today_brisbane
+    today = today_brisbane()
+    requests_mock.get(
+        "http://api/api/dinners",
+        json=[{"date": today, "meal": "Curry"}],
+    )
+    ex = Executor(base="http://api", token="t")
+    res = IntentResult("query_dinner", {"date": today}, 0.95, "")
+    out = ex.apply(res)
+    assert out["spoken"] == "Tonight's dinner is Curry."
+
+
+def test_query_dinner_empty_uses_natural_phrasing(requests_mock):
+    from homecal_voice.timezone import today_brisbane
+    today = today_brisbane()
+    requests_mock.get("http://api/api/dinners", json=[])
+    ex = Executor(base="http://api", token="t")
+    res = IntentResult("query_dinner", {"date": today}, 0.95, "")
+    out = ex.apply(res)
+    # No colon, reads as a sentence.
+    assert ":" not in out["spoken"]
+    assert "nothing planned for dinner today" in out["spoken"].lower()
 
 
 # --- dispatch fallback -----------------------------------------------------

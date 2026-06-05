@@ -34,6 +34,28 @@ def _canon_meal(s: str) -> str:
     return " ".join(t if t.isupper() and len(t) > 1 else t.capitalize() for t in s.split())
 
 
+def _speak_time(hhmm: str) -> str:
+    """Render HH:MM as a TTS-friendly time. '17:00' → '5pm', '09:30' → '9:30am'."""
+    try:
+        h, m = (int(x) for x in hhmm.split(":"))
+    except ValueError:
+        return hhmm
+    suffix = "am" if h < 12 else "pm"
+    h12 = 12 if h % 12 == 0 else h % 12
+    return f"{h12}{suffix}" if m == 0 else f"{h12}:{m:02d}{suffix}"
+
+
+def _join_natural(items: list[str]) -> str:
+    """`['a', 'b', 'c']` → `'a, b, and c'`. One or two items get the obvious join."""
+    if not items:
+        return ""
+    if len(items) == 1:
+        return items[0]
+    if len(items) == 2:
+        return f"{items[0]} and {items[1]}"
+    return ", ".join(items[:-1]) + ", and " + items[-1]
+
+
 def _unwrap(json_body):
     """Backend list endpoints (`/api/family-members`, `/api/chores`,
     `/api/dinners`, `/api/events`) currently return bare arrays. Accept
@@ -73,7 +95,7 @@ class Executor:
             timeout=API_TIMEOUT_SEC,
         )
         r.raise_for_status()
-        return {"ok": True, "spoken": f"Saved {meal} for {self._humanise(f['date'])}."}
+        return {"ok": True, "spoken": f"Got it, {meal} for {self._humanise(f['date'])}."}
 
     def _chore_complete(self, f: dict) -> dict:
         members = _unwrap(requests.get(f"{self.base}/api/family-members", timeout=API_TIMEOUT_SEC).json())
@@ -99,7 +121,7 @@ class Executor:
             timeout=API_TIMEOUT_SEC,
         )
         r.raise_for_status()
-        return {"ok": True, "spoken": f"Nice work {person['name']}."}
+        return {"ok": True, "spoken": f"Nice work, {person['name']}."}
 
     def _query_dinner(self, f: dict) -> dict:
         date = f["date"]
@@ -111,9 +133,16 @@ class Executor:
             ).json()
         )
         meal = next((row["meal"] for row in rows if row["date"] == date), None)
+        when = self._humanise(date)
         if not meal:
-            return {"ok": True, "spoken": f"Nothing planned for {self._humanise(date)} yet."}
-        return {"ok": True, "spoken": f"{self._humanise(date).capitalize()} dinner: {meal}."}
+            return {"ok": True, "spoken": f"Nothing planned for dinner {when} yet."}
+        # Possessive sounds natural for relative words ("Tonight's dinner is
+        # curry") but not for an ISO fallback ("2026-06-12's dinner is curry"
+        # is jarring) — fall back to a prepositional phrase there.
+        if when in ("today", "tonight", "tomorrow"):
+            phrase = {"today": "Tonight's", "tonight": "Tonight's", "tomorrow": "Tomorrow's"}[when]
+            return {"ok": True, "spoken": f"{phrase} dinner is {meal}."}
+        return {"ok": True, "spoken": f"Dinner on {when} is {meal}."}
 
     def _query_agenda(self, f: dict) -> dict:
         date = f["date"]
@@ -129,16 +158,17 @@ class Executor:
                 timeout=API_TIMEOUT_SEC,
             ).json()
         )
+        when = self._humanise(date)
         if not items:
-            return {"ok": True, "spoken": f"Nothing on {self._humanise(date)}."}
+            return {"ok": True, "spoken": f"Nothing on {when}."}
         bits = []
         for e in items[:AGENDA_MAX_ITEMS]:
             title = e.get("title", "event")
             start = e.get("start", "")
             # All-day events store start as YYYY-MM-DD (date-only); omit the time.
-            time_str = f" at {start[11:16]}" if len(start) >= 16 and start[10:11] == "T" else ""
+            time_str = f" at {_speak_time(start[11:16])}" if len(start) >= 16 and start[10:11] == "T" else ""
             bits.append(f"{title}{time_str}")
-        return {"ok": True, "spoken": f"On {self._humanise(date)}: " + ", ".join(bits) + "."}
+        return {"ok": True, "spoken": f"{when.capitalize()} you've got " + _join_natural(bits) + "."}
 
     def _humanise(self, iso_date: str) -> str:
         today = today_brisbane()

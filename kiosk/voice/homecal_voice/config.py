@@ -17,6 +17,7 @@ class Config:
     wake_trigger_level: int
     whisper_model: str
     whisper_server_url: str
+    stt_model: str
     intent_model: str
     tts_model: str
     tts_voice: str
@@ -43,8 +44,18 @@ def load_config() -> Config:
         # real wakes score 0.97+ with the PCM2902 mic at 1m so 0.7 is safe.
         wake_threshold=float(os.environ.get("WAKE_THRESHOLD", "0.7")),
         wake_trigger_level=int(os.environ.get("WAKE_TRIGGER_LEVEL", "2")),
-        whisper_model=os.environ.get("WHISPER_MODEL", "base.en-q5_1"),
+        whisper_model=os.environ.get("WHISPER_MODEL", "small.en-q5_1"),
         whisper_server_url=os.environ.get("WHISPER_SERVER_URL", "http://127.0.0.1:8080/inference"),
+        # STT defaults to Google gemini-3-flash-preview (~2.2s on a 1.6s clip
+        # vs ~13.6s for local whisper.cpp small.en-q5_1 on Pi 5).
+        # Picked by direct head-to-head on a real PCM2902 mic capture
+        # (2026-06-05): gpt-audio-mini, voxtral, gemini-2.5-flash-lite, and
+        # gpt-audio all hallucinated ("Please upload the audio file...",
+        # answered an Italian translation) on the same WAV that gemini-3
+        # transcribed correctly. The mic captures cleanly, but the smaller
+        # / older audio models can't make sense of low-gain input. Local
+        # whisper-server stays as the offline fallback via transcribe_with_fallback.
+        stt_model=os.environ.get("STT_MODEL", "google/gemini-3-flash-preview"),
         intent_model=os.environ.get("INTENT_MODEL", "anthropic/claude-haiku-4.5"),
         # Kokoro 82M: cheaper than Gemini TTS Preview, returns MP3 natively (no
         # PCM decode), and was the documented swap-to fallback in the spec.

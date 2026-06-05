@@ -3,10 +3,19 @@ import os
 import shutil
 import subprocess
 import tempfile
+from pathlib import Path
 
 import requests
 
 log = logging.getLogger("homecal_voice.tts")
+
+# Pre-rendered fallback clip for when STT failed (silent/hallucinated audio,
+# unknown intent). Pre-recorded rather than synthesised on demand because the
+# fallback fires precisely when the cloud path is misbehaving — using TTS to
+# say "I didn't catch that" risks the same network glitch the original STT
+# call hit. Bundled with the package via pyproject `package-data`.
+CLIPS_DIR = Path(__file__).parent / "clips"
+CLIP_DIDNT_CATCH = CLIPS_DIR / "didnt_catch.mp3"
 
 
 def synthesize(
@@ -52,6 +61,21 @@ def _detect_player() -> list[str] | None:
         if shutil.which(binary):
             return cmd
     return None
+
+
+def play_file(path: str | os.PathLike) -> None:
+    """Play a pre-rendered audio file through whichever CLI player is available.
+    No-op (with a warning) if no player is installed or the file is missing —
+    callers MUST tolerate that, since this is itself a fallback path."""
+    p = Path(path)
+    if not p.is_file():
+        log.warning("audio clip missing: %s", p)
+        return
+    player = _detect_player()
+    if player is None:
+        log.warning("no MP3 player available (install mpg123); cannot play %s", p)
+        return
+    subprocess.run([*player, str(p)], check=False)
 
 
 def speak(text: str, *, model: str, voice: str, api_key: str, muted: bool = False) -> None:

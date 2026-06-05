@@ -12,7 +12,8 @@ def test_load_config_from_env(monkeypatch):
     assert c.wake_word == "hey_mycroft"
     assert c.wake_threshold == 0.7
     assert c.wake_trigger_level == 2
-    assert c.whisper_model == "base.en-q5_1"
+    assert c.whisper_model == "small.en-q5_1"
+    assert c.stt_model == "google/gemini-3-flash-preview"
     assert c.daily_request_cap == 200
 
 def test_load_config_missing_required(monkeypatch):

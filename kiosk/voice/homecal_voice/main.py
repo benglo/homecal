@@ -62,6 +62,10 @@ class OneShotDeps:
     # scheme — there's literally no audio to process. See _speak in run_once.
     mic_off: Callable
     mic_on: Callable
+    # Play a pre-rendered MP3 file (e.g. the "didn't catch that" fallback).
+    # Pre-recorded rather than synthesised so the fallback path doesn't depend
+    # on the same cloud TTS that may have failed alongside STT.
+    play_clip: Callable
 
 
 def _intent_payload(intent: IntentResult) -> dict:
@@ -106,6 +110,23 @@ def run_once(d: OneShotDeps) -> None:
         if d.wake.step(f):
             break
 
+    try:
+        _run_after_wake(d)
+    finally:
+        # Reset the wake model's LSTM/feature buffers on every utterance, not
+        # just when TTS plays. Without this, any path that exits without a
+        # `_speak` call (blank transcript, unknown intent, STT hallucination,
+        # STT error) leaves openWakeWord primed by the user's "Hey Mycroft"
+        # speech → ambient frames score 0.99+ within ~3s and cascade. Voxtral
+        # surfaced this: its refusals on silent audio ("I'm an assistant...")
+        # aren't blank, so they bypassed the blank-transcript revert and exited
+        # at the unknown-intent branch with the wake state still primed.
+        reset = getattr(d.wake, "reset", None)
+        if callable(reset):
+            reset()
+
+
+def _run_after_wake(d: OneShotDeps) -> None:
     uid = d.utterance_id()
     d.post_state(utterance_id=uid, kind="listening", payload={"vu": 0.0})
 
@@ -133,24 +154,31 @@ def run_once(d: OneShotDeps) -> None:
         )
 
     def _speak(text: str) -> None:
-        """Close mic, speak, wait for the speaker to settle, reopen mic, and
-        reset the wake model's hidden state.
+        """Close mic, speak, wait for the speaker to settle, reopen mic.
 
-        Three failure modes, each addressed by exactly one line:
+        Two failure modes addressed here:
           - TTS echo audio buffering in the pw-record pipe → `mic_off`/`mic_on`
           - Bluetooth playback chain still draining after mpg123 returns →
             `time.sleep(2.0)` (covers BT codec latency + BOOM 3 speaker decay)
-          - openWakeWord LSTM still primed with pattern memory from the user's
-            "Hey Mycroft" → `wake.reset()` (otherwise ambient ~3s after mic_on
-            fires at 0.999 on stale state, observed live 2026-06-05)
+
+        The wake LSTM reset is handled by `run_once`'s outer try/finally so
+        every utterance path (not just TTS) clears the model state.
         """
         d.mic_off()
         d.speak(text)
         time.sleep(2.0)
         d.mic_on()
-        reset = getattr(d.wake, "reset", None)
-        if callable(reset):
-            reset()
+
+    def _play_didnt_catch() -> None:
+        """Audible fallback for silent_low_conf paths (blank STT, unknown
+        intent). The user gets a clear 'I heard you but didn't understand'
+        signal instead of staring at an inert wall. Uses the same mic-off
+        dance as _speak to avoid the playback re-triggering wake."""
+        from homecal_voice.tts import CLIP_DIDNT_CATCH
+        d.mic_off()
+        d.play_clip(CLIP_DIDNT_CATCH)
+        time.sleep(2.0)
+        d.mic_on()
 
     # NOTE: a `had_speech=False` gate here looked sensible (Alexa/Siri pattern)
     # but the Silero VAD threshold is mis-tuned for our PCM2902 mic — real
@@ -176,6 +204,7 @@ def run_once(d: OneShotDeps) -> None:
     if _is_blank_transcript(transcript):
         d.post_state(utterance_id=uid, kind="idle", payload={})
         _audit(transcript or "[blank]", "silent_low_conf", None)
+        _play_didnt_catch()
         return
 
     # 4) intent extraction (parse_intent_response never raises; returns unknown on failure)
@@ -189,6 +218,7 @@ def run_once(d: OneShotDeps) -> None:
     if intent.intent == "unknown" or intent.confidence < SILENT_FAIL_CONFIDENCE:
         d.post_state(utterance_id=uid, kind="idle", payload={})
         _audit(transcript, "silent_low_conf", intent)
+        _play_didnt_catch()
         return
 
     if intent.confidence >= AUTO_APPLY_CONFIDENCE:
@@ -267,8 +297,8 @@ def main() -> int:
     from homecal_voice.mic import MicStream
     from homecal_voice.wake import WakeDetector, load_default_model
     from homecal_voice.endpointer import Endpointer, load_silero_vad
-    from homecal_voice.stt import transcribe as stt_transcribe
-    from homecal_voice.tts import speak as tts_speak
+    from homecal_voice.stt import transcribe_with_fallback as stt_transcribe
+    from homecal_voice.tts import speak as tts_speak, play_file as tts_play_file
     from homecal_voice.executor import Executor
     from homecal_voice.server_state import post_state, post_audit, post_heartbeat
 
@@ -330,7 +360,12 @@ def main() -> int:
                 wake=wake,
                 endpointer=ep,
                 endpointer_factory=endpointer_factory,
-                transcribe=lambda pcm: stt_transcribe(pcm, server_url=cfg.whisper_server_url),
+                transcribe=lambda pcm: stt_transcribe(
+                    pcm,
+                    openrouter_api_key=cfg.openrouter_api_key,
+                    openrouter_model=cfg.stt_model,
+                    whisper_server_url=cfg.whisper_server_url,
+                ),
                 extract_intent=lambda text: parse_intent_response(
                     call_openrouter(
                         system=build_system_prompt(
@@ -360,6 +395,7 @@ def main() -> int:
                 muted=lambda: is_muted_locally(cfg),
                 mic_off=mic_off,
                 mic_on=mic_on,
+                play_clip=tts_play_file,
             )
             if not _under_cap():
                 log.warning("daily request cap %d reached; sleeping", cfg.daily_request_cap)
