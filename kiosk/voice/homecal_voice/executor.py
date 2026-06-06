@@ -16,6 +16,7 @@ import requests
 from homecal_voice.intent import IntentResult
 from homecal_voice.timezone import today_brisbane
 from homecal_voice import catalog as kid_catalog
+from homecal_voice import safety
 
 # Tags for _resolve_target's error channel. Typed so a typo at a call site
 # becomes a type error instead of an opaque "didn't catch that" branch.
@@ -25,6 +26,7 @@ log = logging.getLogger("homecal_voice.executor")
 
 API_TIMEOUT_SEC = 10
 AGENDA_MAX_ITEMS = 3
+_MAX_ANSWER_WORDS = 40
 
 
 def _canon_meal(s: str) -> str:
@@ -95,6 +97,13 @@ def _remaining_seconds(expires_at_iso, now: datetime) -> int:
     return max(0, int(delta))
 
 
+def _truncate_words(text: str, max_words: int) -> str:
+    words = text.split()
+    if len(words) <= max_words:
+        return text
+    return " ".join(words[:max_words])
+
+
 def _unwrap(json_body):
     """Accept bare arrays AND `{data:[...]}` envelopes — backend currently
     returns the former but a future envelope migration shouldn't break us."""
@@ -131,6 +140,7 @@ class Executor:
             "timer_extend": self._timer_extend,
             "noise_play": self._noise_play,
             "joke_tell": self._joke_tell,
+            "ask_question": self._ask_question,
         }
 
     def apply(self, r: IntentResult) -> dict:
@@ -381,6 +391,31 @@ class Executor:
         self._sleep(1.5)
         self._speak(punchline)
         return {"ok": True, "spoken_inline": True, "spoken": f"{setup} ... {punchline}"}
+
+    def _ask_question(self, f: dict) -> dict:
+        """Answer a kid's question via Haiku-provided text.
+
+        Three branches:
+          - missing answer: soft failure.
+          - concern=true: speak the answer verbatim (prompt constrains it to the
+            fixed disclosure line); flag concern=true for audit; BYPASS the safety
+            regex — a child in distress should hear the disclosure, not a deflection.
+          - normal: run answer through safety.check_answer (regex tripwire on
+            banned terms), then truncate to 40 words.
+        """
+        answer = f.get("answer", "")
+        if not answer:
+            return {"ok": False, "spoken": "", "error": "ask_question_missing_answer"}
+
+        concern = bool(f.get("concern", False))
+
+        if concern:
+            spoken = _truncate_words(answer, _MAX_ANSWER_WORDS)
+            return {"ok": True, "spoken": spoken, "concern": True}
+
+        checked = safety.check_answer(answer)
+        spoken = _truncate_words(checked, _MAX_ANSWER_WORDS)
+        return {"ok": True, "spoken": spoken, "concern": False}
 
     def _humanise(self, iso_date: str) -> str:
         today = today_brisbane()

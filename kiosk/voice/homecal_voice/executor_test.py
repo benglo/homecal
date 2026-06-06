@@ -691,3 +691,98 @@ def test_joke_tell_without_deps_returns_failure():
     out = ex.apply(intent)
     assert out["ok"] is False
     assert "joke_tell_no_speaker" in out.get("error", "") or "no_speaker" in out.get("error", "")
+
+
+# --- ask_question -------------------------------------------------------------
+
+
+def test_ask_question_speaks_answer():
+    ex = Executor(base="http://api", token="t")
+    intent = IntentResult(
+        "ask_question",
+        {"answer": "Because of light scattering!", "concern": False},
+        0.95, "why is the sky blue", source="llm",
+    )
+    out = ex.apply(intent)
+    assert out["ok"] is True
+    assert out["spoken"] == "Because of light scattering!"
+    assert out.get("concern") is False
+
+
+def test_ask_question_redirects_on_banned_term():
+    """Defence-in-depth: if Haiku slips and emits a banned term, the safety
+    regex overrides the answer to the redirect line."""
+    from homecal_voice.safety import REDIRECT_LINE
+    ex = Executor(base="http://api", token="t")
+    intent = IntentResult(
+        "ask_question",
+        {"answer": "That word fuck is not allowed.", "concern": False},
+        0.95, "x", source="llm",
+    )
+    out = ex.apply(intent)
+    assert out["ok"] is True
+    assert out["spoken"] == REDIRECT_LINE
+
+
+def test_ask_question_concern_path_uses_disclosure_text():
+    """concern=true → speak the LLM-provided answer verbatim (which the
+    prompt constrains to the fixed disclosure line) and flag the audit row."""
+    ex = Executor(base="http://api", token="t")
+    intent = IntentResult(
+        "ask_question",
+        {
+            "answer": "That sounds important. Please tell your mum or dad right now — they want to help.",
+            "concern": True,
+        },
+        0.95, "my tummy hurts and bleeds", source="llm",
+    )
+    out = ex.apply(intent)
+    assert out["ok"] is True
+    assert out.get("concern") is True
+    assert "mum or dad" in out["spoken"]
+
+
+def test_ask_question_concern_bypasses_safety_regex():
+    """Even if the concern answer somehow contained a banned word (it shouldn't,
+    per the prompt), the concern path must not get rewritten to the redirect —
+    a child reporting distress should hear the disclosure, not a deflection."""
+    from homecal_voice.safety import REDIRECT_LINE
+    ex = Executor(base="http://api", token="t")
+    # Construct an answer that DOES contain a banned term to assert the bypass.
+    intent = IntentResult(
+        "ask_question",
+        {"answer": "Please tell your mum or dad now — even if it's about fuck.", "concern": True},
+        0.95, "x", source="llm",
+    )
+    out = ex.apply(intent)
+    assert out["ok"] is True
+    assert out.get("concern") is True
+    assert out["spoken"] != REDIRECT_LINE
+    assert "mum or dad" in out["spoken"]
+
+
+def test_ask_question_truncates_long_answer_to_40_words():
+    long_answer = " ".join(["word"] * 60)
+    ex = Executor(base="http://api", token="t")
+    intent = IntentResult("ask_question", {"answer": long_answer, "concern": False}, 0.95, "x", source="llm")
+    out = ex.apply(intent)
+    assert out["ok"] is True
+    word_count = len(out["spoken"].split())
+    assert word_count <= 40
+
+
+def test_ask_question_missing_answer_returns_failure():
+    ex = Executor(base="http://api", token="t")
+    intent = IntentResult("ask_question", {"confidence": 0.9}, 0.9, "x", source="llm")
+    out = ex.apply(intent)
+    assert out["ok"] is False
+    assert "missing" in out.get("error", "").lower()
+
+
+def test_ask_question_concern_defaults_to_false_when_absent():
+    """When Haiku omits the concern flag, treat as false (normal path)."""
+    ex = Executor(base="http://api", token="t")
+    intent = IntentResult("ask_question", {"answer": "It's blue!"}, 0.95, "x", source="llm")
+    out = ex.apply(intent)
+    assert out["ok"] is True
+    assert out.get("concern") is False
