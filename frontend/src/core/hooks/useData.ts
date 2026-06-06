@@ -10,6 +10,7 @@ import type {
   EventOccurrence,
   FamilyMember,
   Photo,
+  Timer,
   VoiceStatus,
   WeatherData,
 } from '../model/types';
@@ -112,6 +113,17 @@ export function useVoiceStatus() {
   return useQuery<VoiceStatus>({
     queryKey: ['voice-status'],
     queryFn: () => api.voiceStatus(),
+    staleTime: 5 * 60_000,
+  });
+}
+
+/** Active (un-acknowledged) timers. SSE 'timers' poke invalidates on every
+ *  mutation; the local clock ticks the countdown so no per-second polling
+ *  is needed. */
+export function useTimers() {
+  return useQuery<Timer[]>({
+    queryKey: ['timers'],
+    queryFn: api.timers,
     staleTime: 5 * 60_000,
   });
 }

@@ -7,8 +7,11 @@
  * Navigation: NETWORK-FIRST with cache fallback — the wall always gets the
  * latest index.html when the server is up, but survives a restart on last-good.
  *
- * API GETs: stale-while-revalidate so a reload with the server down still
- * renders the last-good payload.
+ * API GETs: network-first with cache fallback. Stale-while-revalidate was
+ * wrong here — React Query receives the same stale payload after an SSE
+ * invalidation and never re-renders until the cache happens to mismatch.
+ * Network-first keeps the never-blank guarantee (cache covers reload-with-
+ * server-down) without starving live data of fresh responses.
  *
  * Static assets: cache-first (Vite content-hashes them, so a new build = new URL). */
 
@@ -56,14 +59,14 @@ self.addEventListener('fetch', (event) => {
   if (url.pathname.startsWith('/api/')) {
     event.respondWith(
       caches.open(API).then(async (cache) => {
-        const cached = await cache.match(req);
-        const net = fetch(req)
-          .then((res) => {
-            if (res.ok) cache.put(req, res.clone());
-            return res;
-          })
-          .catch(() => cached);
-        return cached || (await net) || new Response('{}', { status: 503, headers: { 'Content-Type': 'application/json' } });
+        try {
+          const res = await fetch(req);
+          if (res.ok) cache.put(req, res.clone());
+          return res;
+        } catch {
+          const cached = await cache.match(req);
+          return cached || new Response('{}', { status: 503, headers: { 'Content-Type': 'application/json' } });
+        }
       })
     );
     return;

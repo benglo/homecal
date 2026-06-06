@@ -108,3 +108,13 @@ export interface ChoreBoard {
 }
 
 export type FamilyMemberCreate = { name: string; icon: string };
+
+export interface Timer {
+  id: string;
+  label: string | null;
+  durationSec: number;
+  startedAt: string;
+  expiresAt: string;
+  acknowledgedAt: string | null;
+  updatedAt: string;
+}

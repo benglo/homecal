@@ -134,6 +134,25 @@ const MIGRATIONS: Migration[] = [
         CHECK (source IN ('matcher','llm') OR source IS NULL);
     `);
   },
+  // v5 — kitchen timers. expires_at is the source of truth for the
+  // countdown (wall + voice both compute remaining from now); duration_sec
+  // is kept for "extend" arithmetic and audit. acknowledged_at flips on
+  // tap after expiry, ending the flashing-chip + chime loop.
+  (db) => {
+    db.exec(`
+      CREATE TABLE timers (
+        id              TEXT PRIMARY KEY,
+        label           TEXT,
+        duration_sec    INTEGER NOT NULL CHECK (duration_sec > 0),
+        started_at      TEXT NOT NULL,
+        expires_at      TEXT NOT NULL,
+        acknowledged_at TEXT,
+        created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+        updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+      );
+      CREATE INDEX idx_timers_expires_at ON timers(expires_at);
+    `);
+  },
 ];
 
 /** Seed categories — idempotent, Okabe–Ito palette from the design system. */

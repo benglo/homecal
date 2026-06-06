@@ -316,12 +316,190 @@ def test_apply_returns_friendly_fallback_for_unknown_intent():
     assert "didn't catch" in out["spoken"].lower()
 
 
-def test_timer_intents_route_to_not_built_handler():
-    """Matcher recognises timer utterances but the feature isn't built — all
-    four timer_* intents must speak a 'can't yet' message rather than fall
-    into the generic 'didn't catch that' branch."""
+from homecal_voice.executor import humanise_duration, _remaining_seconds
+from datetime import datetime, timezone
+
+
+# --- humanise_duration -----------------------------------------------------
+
+
+def test_humanise_duration_sub_minute_uses_seconds():
+    assert humanise_duration(45) == "45 seconds"
+    assert humanise_duration(1) == "1 second"
+
+
+def test_humanise_duration_whole_minutes():
+    assert humanise_duration(60) == "1 minute"
+    assert humanise_duration(600) == "10 minutes"
+
+
+def test_humanise_duration_hours_and_minutes():
+    assert humanise_duration(3600) == "1 hour"
+    assert humanise_duration(3660) == "1 hour and 1 minute"
+    assert humanise_duration(7800) == "2 hours and 10 minutes"
+
+
+def test_humanise_duration_drops_seconds_when_minutes_present():
+    # 90s -> "1 minute" not "1 minute and 30 seconds" — TTS reads cleaner
+    # for kitchen-timer use; sub-minute precision only matters for sub-minute
+    # timers themselves.
+    assert humanise_duration(90) == "1 minute"
+
+
+def test_remaining_seconds_floors_at_zero():
+    now = datetime(2026, 6, 6, 10, 0, 0, tzinfo=timezone.utc)
+    assert _remaining_seconds("2026-06-06T10:05:00Z", now) == 300
+    assert _remaining_seconds("2026-06-06T09:55:00Z", now) == 0  # already expired
+
+
+# --- timer_set -------------------------------------------------------------
+
+
+def test_timer_set_posts_to_timers_with_label(requests_mock):
+    posted = []
+
+    def cb(request, _ctx):
+        posted.append(request.json())
+        return {"id": "t1", "label": "pasta", "durationSec": 600, "expiresAt": "2026-06-06T10:10:00Z"}
+
+    requests_mock.post("http://api/api/timers", json=cb)
     ex = Executor(base="http://api", token="t")
-    for intent in ("timer_set", "timer_query", "timer_cancel", "timer_extend"):
-        out = ex.apply(IntentResult(intent, {"duration_sec": 600}, 1.0, ""))
-        assert out["ok"] is False
-        assert "timer" in out["spoken"].lower()
+    out = ex.apply(IntentResult("timer_set", {"duration_sec": 600, "label": "pasta"}, 1.0, ""))
+    assert out["ok"] is True
+    assert posted[0] == {"durationSec": 600, "label": "pasta"}
+    assert "pasta timer" in out["spoken"].lower()
+    assert "10 minutes" in out["spoken"]
+
+
+def test_timer_set_without_label_says_just_timer(requests_mock):
+    requests_mock.post(
+        "http://api/api/timers",
+        json={"id": "t1", "label": None, "durationSec": 60, "expiresAt": "2026-06-06T10:01:00Z"},
+    )
+    ex = Executor(base="http://api", token="t")
+    out = ex.apply(IntentResult("timer_set", {"duration_sec": 60, "label": None}, 1.0, ""))
+    assert out["ok"] is True
+    assert "timer set" in out["spoken"].lower()
+    assert "1 minute" in out["spoken"]
+
+
+# --- timer_query -----------------------------------------------------------
+
+
+def test_timer_query_resolves_by_label_and_speaks_remaining(requests_mock):
+    far_future = "2099-01-01T00:10:00Z"  # always plenty left
+    requests_mock.get(
+        "http://api/api/timers",
+        json=[
+            {"id": "t1", "label": "pasta", "expiresAt": far_future, "startedAt": "2026-06-06T10:00:00Z"},
+            {"id": "t2", "label": "eggs", "expiresAt": far_future, "startedAt": "2026-06-06T10:01:00Z"},
+        ],
+    )
+    ex = Executor(base="http://api", token="t")
+    out = ex.apply(IntentResult("timer_query", {"label": "pasta"}, 1.0, ""))
+    assert out["ok"] is True
+    assert "pasta timer" in out["spoken"].lower()
+    assert "left" in out["spoken"]
+
+
+def test_timer_query_no_label_and_single_timer_picks_it(requests_mock):
+    requests_mock.get(
+        "http://api/api/timers",
+        json=[{"id": "t1", "label": "pasta", "expiresAt": "2099-01-01T00:10:00Z", "startedAt": "2026-06-06T10:00:00Z"}],
+    )
+    ex = Executor(base="http://api", token="t")
+    out = ex.apply(IntentResult("timer_query", {"label": None}, 1.0, ""))
+    assert out["ok"] is True
+    assert "pasta" in out["spoken"].lower()
+
+
+def test_timer_query_no_label_and_multiple_timers_is_ambiguous(requests_mock):
+    requests_mock.get(
+        "http://api/api/timers",
+        json=[
+            {"id": "t1", "label": "pasta", "expiresAt": "2099-01-01T00:10:00Z", "startedAt": "2026-06-06T10:00:00Z"},
+            {"id": "t2", "label": "eggs",  "expiresAt": "2099-01-01T00:10:00Z", "startedAt": "2026-06-06T10:01:00Z"},
+        ],
+    )
+    ex = Executor(base="http://api", token="t")
+    out = ex.apply(IntentResult("timer_query", {"label": None}, 1.0, ""))
+    assert out["ok"] is False
+    assert out["error"] == "ambiguous_timer"
+
+
+def test_timer_query_no_active_timers(requests_mock):
+    requests_mock.get("http://api/api/timers", json=[])
+    ex = Executor(base="http://api", token="t")
+    out = ex.apply(IntentResult("timer_query", {"label": None}, 1.0, ""))
+    assert out["ok"] is True
+    assert "no timer" in out["spoken"].lower()
+
+
+def test_timer_query_unknown_label(requests_mock):
+    requests_mock.get(
+        "http://api/api/timers",
+        json=[{"id": "t1", "label": "pasta", "expiresAt": "2099-01-01T00:10:00Z", "startedAt": "2026-06-06T10:00:00Z"}],
+    )
+    ex = Executor(base="http://api", token="t")
+    out = ex.apply(IntentResult("timer_query", {"label": "lasagna"}, 1.0, ""))
+    assert out["ok"] is False
+    assert out["error"] == "unknown_label"
+
+
+# --- timer_cancel ----------------------------------------------------------
+
+
+def test_timer_cancel_resolves_then_deletes(requests_mock):
+    requests_mock.get(
+        "http://api/api/timers",
+        json=[{"id": "t1", "label": "pasta", "expiresAt": "2099-01-01T00:10:00Z", "startedAt": "2026-06-06T10:00:00Z"}],
+    )
+    deleted = []
+
+    def cb(request, ctx):
+        deleted.append(request.url)
+        ctx.status_code = 204
+        return ""
+
+    requests_mock.delete("http://api/api/timers/t1", text=cb)
+    ex = Executor(base="http://api", token="t")
+    out = ex.apply(IntentResult("timer_cancel", {"label": "pasta"}, 1.0, ""))
+    assert out["ok"] is True
+    assert any("/api/timers/t1" in u for u in deleted)
+
+
+def test_timer_cancel_no_active_timer(requests_mock):
+    requests_mock.get("http://api/api/timers", json=[])
+    ex = Executor(base="http://api", token="t")
+    out = ex.apply(IntentResult("timer_cancel", {"label": None}, 1.0, ""))
+    assert out["ok"] is False
+    assert out["error"] == "no_timer"
+
+
+# --- timer_extend ----------------------------------------------------------
+
+
+def test_timer_extend_patches_with_addSec(requests_mock):
+    requests_mock.get(
+        "http://api/api/timers",
+        json=[{"id": "t1", "label": "pasta", "expiresAt": "2099-01-01T00:10:00Z", "startedAt": "2026-06-06T10:00:00Z"}],
+    )
+    patched = []
+
+    def cb(request, _ctx):
+        patched.append(request.json())
+        return {"id": "t1", "label": "pasta", "expiresAt": "2099-01-01T00:12:00Z"}
+
+    requests_mock.patch("http://api/api/timers/t1", json=cb)
+    ex = Executor(base="http://api", token="t")
+    out = ex.apply(IntentResult("timer_extend", {"duration_sec": 120, "label": "pasta"}, 1.0, ""))
+    assert out["ok"] is True
+    assert patched[0] == {"addSec": 120}
+    assert "added 2 minutes" in out["spoken"].lower()
+
+
+def test_timer_extend_requires_duration():
+    ex = Executor(base="http://api", token="t")
+    out = ex.apply(IntentResult("timer_extend", {"label": "pasta"}, 1.0, ""))
+    assert out["ok"] is False
+    assert out["error"] == "missing_duration"

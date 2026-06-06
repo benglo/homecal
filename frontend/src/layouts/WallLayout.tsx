@@ -22,6 +22,7 @@ import { QuickAddSheet } from '../components/sheets/QuickAddSheet';
 import { DinnerEditorSheet } from '../components/sheets/DinnerEditorSheet';
 import { dayKey } from '../core/util/time';
 import { VirtualKeyboard } from '../components/keyboard/VirtualKeyboard';
+import { TimerStack } from '../components/timers/TimerStack';
 
 /** The wall: hero band (200) · calendar surface (flex) · control bar (72). */
 export function WallLayout() {
@@ -192,6 +193,8 @@ export function WallLayout() {
       />
 
       <VirtualKeyboard />
+
+      <TimerStack />
 
       <VoiceOverlay state={overlay} dispatch={dispatch} onActiveChange={setVoiceActive} />
 

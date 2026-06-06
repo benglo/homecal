@@ -16,6 +16,7 @@ const KIND_TO_KEYS: Record<string, string[]> = {
   'family-members': ['family-members', 'chore-board'],
   dinners: ['dinners', 'dinner-suggestions'],
   voice: ['voice-status'],
+  timers: ['timers'],
 };
 
 const listeners = new Set<Handler>();
