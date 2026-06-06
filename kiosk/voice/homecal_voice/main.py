@@ -16,6 +16,7 @@ import sys
 import time
 import threading
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from types import MappingProxyType
 from typing import Callable
 
@@ -29,7 +30,7 @@ from homecal_voice.intent import (
     parse_intent_response,
     call_openrouter,
 )
-from homecal_voice.timezone import today_brisbane
+from homecal_voice.timezone import today_brisbane, BRISBANE_OFFSET_SECONDS
 
 log = logging.getLogger("homecal_voice.main")
 
@@ -137,6 +138,29 @@ def _is_hallucination(t: str) -> bool:
         return False
     norm = t.strip().lower()
     return any(frag in norm for frag in _HALLUCINATION_FRAGMENTS)
+
+
+def _is_quiet_hours(now: datetime | None = None) -> bool:
+    """Brisbane 20:00 (inclusive) — 07:00 (exclusive) — mirrors the chore-chime
+    quiet window in the frontend. Used to gate noise_play clip playback so a
+    fart noise at 11pm doesn't fire. Spec §3.11."""
+    if now is None:
+        now = datetime.now(timezone.utc)
+    brisbane = now + timedelta(seconds=BRISBANE_OFFSET_SECONDS)
+    hour = brisbane.hour
+    return hour >= 20 or hour < 7
+
+
+def _quiet_safe_play_clip(play_clip, path: str) -> None:
+    """Wrap a play_clip callable with the quiet-hours gate.
+
+    Silently no-ops during quiet hours — the kid sees the wall chip flash
+    'noise played' but hears nothing. This is by design (parents at peace
+    at 11pm), not a bug to surface."""
+    if _is_quiet_hours():
+        log.info("quiet hours: suppressed play_clip(%s)", path)
+        return
+    play_clip(path)
 
 
 def run_once(d: OneShotDeps) -> None:
@@ -428,7 +452,7 @@ def main() -> int:
     executor = Executor(
         base=cfg.homecal_api_base,
         token=cfg.pi_api_token,
-        play_clip=tts_play_file,
+        play_clip=lambda path: _quiet_safe_play_clip(tts_play_file, path),
         speak=lambda text: tts_speak(
             text,
             model=cfg.tts_model,

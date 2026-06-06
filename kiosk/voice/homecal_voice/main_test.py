@@ -759,3 +759,62 @@ def test_threshold_map_is_frozen():
 def test_unknown_intent_uses_default():
     """A future intent that doesn't appear in the map should fall back to 0.85."""
     assert auto_apply_threshold("some_future_intent") == 0.85
+
+
+# ---------------------------------------------------------------------------
+# Task 17 — quiet-hours gate for play_clip
+# ---------------------------------------------------------------------------
+from datetime import datetime, timezone
+from unittest.mock import patch, MagicMock
+from homecal_voice.main import _is_quiet_hours, _quiet_safe_play_clip
+
+
+def test_is_quiet_hours_at_11pm_brisbane_returns_true():
+    # 13:00 UTC = 23:00 Brisbane (UTC+10) → quiet
+    t = datetime(2026, 6, 6, 13, 0, 0, tzinfo=timezone.utc)
+    assert _is_quiet_hours(t) is True
+
+
+def test_is_quiet_hours_at_8pm_brisbane_returns_true():
+    # 10:00 UTC = 20:00 Brisbane → quiet starts inclusive
+    t = datetime(2026, 6, 6, 10, 0, 0, tzinfo=timezone.utc)
+    assert _is_quiet_hours(t) is True
+
+
+def test_is_quiet_hours_at_6am_brisbane_returns_true():
+    # 20:00 UTC = 06:00 next-day Brisbane → still quiet
+    t = datetime(2026, 6, 6, 20, 0, 0, tzinfo=timezone.utc)
+    assert _is_quiet_hours(t) is True
+
+
+def test_is_quiet_hours_at_7am_brisbane_returns_false():
+    # 21:00 UTC = 07:00 Brisbane → quiet ENDS exclusive (hour < 7 is the rule)
+    t = datetime(2026, 6, 6, 21, 0, 0, tzinfo=timezone.utc)
+    assert _is_quiet_hours(t) is False
+
+
+def test_is_quiet_hours_at_noon_brisbane_returns_false():
+    # 02:00 UTC = 12:00 Brisbane → not quiet
+    t = datetime(2026, 6, 6, 2, 0, 0, tzinfo=timezone.utc)
+    assert _is_quiet_hours(t) is False
+
+
+def test_is_quiet_hours_at_7pm_brisbane_returns_false():
+    # 09:00 UTC = 19:00 Brisbane → not yet quiet
+    t = datetime(2026, 6, 6, 9, 0, 0, tzinfo=timezone.utc)
+    assert _is_quiet_hours(t) is False
+
+
+def test_quiet_safe_play_clip_blocks_during_quiet():
+    """Quiet hours → wrapper swallows the call entirely. No clip plays."""
+    play = MagicMock()
+    with patch("homecal_voice.main._is_quiet_hours", return_value=True):
+        _quiet_safe_play_clip(play, "/tmp/x.mp3")
+    play.assert_not_called()
+
+
+def test_quiet_safe_play_clip_allows_during_day():
+    play = MagicMock()
+    with patch("homecal_voice.main._is_quiet_hours", return_value=False):
+        _quiet_safe_play_clip(play, "/tmp/x.mp3")
+    play.assert_called_once_with("/tmp/x.mp3")
