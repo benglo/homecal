@@ -15,6 +15,7 @@ import signal
 import sys
 import time
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from types import MappingProxyType
@@ -570,33 +571,86 @@ def _chore_strings_from(family: list, chores: list) -> list:
     return [f"{name}: {', '.join(titles)}" for name, titles in by_person.items()]
 
 
+def _gather_context_for_intent(*, api_base: str, today: str) -> dict:
+    """Fetch family + today's dinner + today's agenda + chores in parallel.
+
+    All four endpoints hit at once via ThreadPoolExecutor. LAN latency per
+    call is ~5ms but in series that's 20ms; in parallel <10ms. The bigger
+    win: errors on any one endpoint propagate (same posture as _list_bare —
+    silent fall-back to [] makes a real outage look like 'unknown person').
+    """
+    tomorrow = (datetime.fromisoformat(today) + timedelta(days=1)).date().isoformat()
+    paths = {
+        "family": f"{api_base}/api/family-members",
+        "dinners": f"{api_base}/api/dinners?start={today}&end={tomorrow}",
+        "events":  f"{api_base}/api/events?start={today}T00:00:00Z&end={tomorrow}T00:00:00Z",
+        "chores":  f"{api_base}/api/chores",
+    }
+
+    def _get(url: str):
+        r = _requests.get(url, timeout=LIST_FETCH_TIMEOUT_SEC)
+        r.raise_for_status()
+        j = r.json()
+        if isinstance(j, list):
+            return j
+        if isinstance(j, dict) and isinstance(j.get("data"), list):
+            return j["data"]
+        return []
+
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        futures = {name: ex.submit(_get, url) for name, url in paths.items()}
+        results = {name: f.result() for name, f in futures.items()}
+
+    dinners = results["dinners"]
+    events = results["events"]
+
+    return {
+        "family": [m.get("name", "") for m in results["family"]],
+        "raw_family": results["family"],          # for matcher MatchContext (needs IDs)
+        "today_dinner": dinners[0]["meal"] if dinners else "(none)",
+        "today_agenda": [
+            f"{e.get('title','?')} at {e.get('start','?')[11:16]}"
+            for e in events
+        ],
+        "chores": results["chores"],
+    }
+
+
 def _extract_with_matcher_first(*, text: str, cfg) -> IntentResult:
     """Try the regex matcher first; fall through to Haiku on a miss.
 
-    The matcher needs the live family + chores lists to resolve person/chore
-    references — same fetch the LLM path uses for prompt building, so we hit
-    those endpoints once and reuse the results whichever path wins. A
-    backend outage must propagate: silent fallback to empty lists makes a
-    real outage indistinguishable from "unknown person", and the caller
-    needs to surface a distinct audible error.
+    Fetches family + chores + today's dinner + today's agenda in parallel
+    (ThreadPoolExecutor) so the Haiku prompt has the full context the
+    kid-intents need (ask_question references family/calendar, noise_play
+    needs the catalog key list, joke_tell needs no context). The matcher
+    only uses family + chores; the rest is overhead for matcher hits but
+    necessary for the cloud fallback. Saves ~15ms vs serial fetches.
     """
     from homecal_voice.matcher import MatchContext, default_matcher
+    from homecal_voice import catalog as kid_catalog
 
-    family = _list_bare(f"{cfg.homecal_api_base}/api/family-members")
-    chores = _list_bare(f"{cfg.homecal_api_base}/api/chores")
-    ctx = MatchContext(today=today_brisbane(), family=family, chores=chores)
+    today = today_brisbane()
+    ctx_data = _gather_context_for_intent(api_base=cfg.homecal_api_base, today=today)
+    family = ctx_data["raw_family"]
+    chores = ctx_data["chores"]
 
-    matched = default_matcher.try_match(text, ctx)
+    match_ctx = MatchContext(today=today, family=family, chores=chores)
+    matched = default_matcher.try_match(text, match_ctx)
     if matched is not None:
         log.info("matcher hit: intent=%s", matched.intent)
         return matched
 
+    noise_keys = list(kid_catalog.load_noises().entries.keys())
+
     return parse_intent_response(
         call_openrouter(
             system=build_system_prompt(
-                today_brisbane=ctx.today,
-                family=[m["name"] for m in family],
+                today_brisbane=today,
+                family=ctx_data["family"],
                 chores=_chore_strings_from(family, chores),
+                today_dinner=ctx_data["today_dinner"],
+                today_agenda=ctx_data["today_agenda"],
+                noise_keys=noise_keys,
             ),
             user=text,
             model=cfg.intent_model,

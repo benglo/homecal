@@ -642,7 +642,13 @@ def test_extract_with_matcher_first_returns_matcher_hit_without_calling_llm(monk
     point of the matcher (saves the OpenRouter round-trip)."""
     from homecal_voice import main
     cfg = MagicMock(homecal_api_base="http://api", intent_model="x", openrouter_api_key="k")
-    monkeypatch.setattr(main, "_list_bare", lambda url: [])
+    monkeypatch.setattr(main, "_gather_context_for_intent", lambda *, api_base, today: {
+        "family": [],
+        "raw_family": [],
+        "today_dinner": "(none)",
+        "today_agenda": [],
+        "chores": [],
+    })
     monkeypatch.setattr("homecal_voice.matcher.default_matcher", _fresh_matcher_with_v1())
     llm_called = MagicMock()
     monkeypatch.setattr(main, "call_openrouter", llm_called)
@@ -657,10 +663,19 @@ def test_extract_with_matcher_first_falls_through_to_llm(monkeypatch):
     """Unrecognised text must reach Haiku unchanged."""
     from homecal_voice import main
     cfg = MagicMock(homecal_api_base="http://api", intent_model="x", openrouter_api_key="k")
-    monkeypatch.setattr(main, "_list_bare", lambda url: [])
+    monkeypatch.setattr(main, "_gather_context_for_intent", lambda *, api_base, today: {
+        "family": [],
+        "raw_family": [],
+        "today_dinner": "(none)",
+        "today_agenda": [],
+        "chores": [],
+    })
     monkeypatch.setattr("homecal_voice.matcher.default_matcher", _fresh_matcher_with_v1())
     monkeypatch.setattr(main, "call_openrouter",
                         lambda **_: '{"intent":"unknown","reason":"no_match","confidence":0.0}')
+    noises_mock = MagicMock()
+    noises_mock.entries = {}
+    monkeypatch.setattr("homecal_voice.catalog.load_noises", lambda: noises_mock)
 
     out = main._extract_with_matcher_first(text="please play some music", cfg=cfg)
     assert out.intent == "unknown"
@@ -678,9 +693,9 @@ def test_extract_with_matcher_first_propagates_backend_fetch_failure(monkeypatch
     llm = MagicMock()
     monkeypatch.setattr(main, "call_openrouter", llm)
 
-    def boom(url):
+    def boom(*, api_base, today):
         raise RuntimeError("backend 503")
-    monkeypatch.setattr(main, "_list_bare", boom)
+    monkeypatch.setattr(main, "_gather_context_for_intent", boom)
 
     try:
         main._extract_with_matcher_first(text="anything", cfg=cfg)
@@ -818,3 +833,71 @@ def test_quiet_safe_play_clip_allows_during_day():
     with patch("homecal_voice.main._is_quiet_hours", return_value=False):
         _quiet_safe_play_clip(play, "/tmp/x.mp3")
     play.assert_called_once_with("/tmp/x.mp3")
+
+
+# ---------------------------------------------------------------------------
+# _gather_context_for_intent
+# ---------------------------------------------------------------------------
+
+from homecal_voice.main import _gather_context_for_intent
+
+
+def test_gather_context_returns_family_dinner_agenda_chores():
+    """Mocks the four GETs to return varied payloads; helper composes the prompt-ready dict."""
+    def _get_side_effect(url, **_):
+        r = MagicMock()
+        if "/api/family-members" in url:
+            r.json.return_value = [{"id": "fm1", "name": "Imogen"}, {"id": "fm2", "name": "Penelope"}]
+        elif "/api/dinners" in url:
+            r.json.return_value = [{"date": "2026-06-07", "meal": "Tacos"}]
+        elif "/api/events" in url:
+            r.json.return_value = [
+                {"title": "Swimming", "start": "2026-06-07T07:00:00Z"},
+                {"title": "Birthday party", "start": "2026-06-07T05:00:00Z"},
+            ]
+        elif "/api/chores" in url:
+            r.json.return_value = [{"id": "c1", "title": "Bathroom", "assignedTo": "fm1"}]
+        else:
+            r.json.return_value = []
+        r.raise_for_status = MagicMock()
+        return r
+
+    with patch("homecal_voice.main._requests.get", side_effect=_get_side_effect):
+        ctx = _gather_context_for_intent(api_base="http://x", today="2026-06-07")
+
+    assert "Imogen" in ctx["family"]
+    assert "Penelope" in ctx["family"]
+    assert ctx["today_dinner"] == "Tacos"
+    assert any("Swimming" in line for line in ctx["today_agenda"])
+    assert ctx["chores"] == [{"id": "c1", "title": "Bathroom", "assignedTo": "fm1"}]
+    assert ctx["raw_family"] == [{"id": "fm1", "name": "Imogen"}, {"id": "fm2", "name": "Penelope"}]
+
+
+def test_gather_context_no_dinner_today_returns_none_string():
+    def _get_side_effect(url, **_):
+        r = MagicMock()
+        r.json.return_value = []
+        r.raise_for_status = MagicMock()
+        return r
+    with patch("homecal_voice.main._requests.get", side_effect=_get_side_effect):
+        ctx = _gather_context_for_intent(api_base="http://x", today="2026-06-07")
+    assert ctx["today_dinner"] == "(none)"
+    assert ctx["today_agenda"] == []
+
+
+def test_gather_context_propagates_http_error():
+    """An outage on family-members must NOT silently fall back to []
+    — same reasoning as _list_bare: empty family vs real outage need
+    distinct audit signals."""
+    def _get_side_effect(url, **_):
+        if "/api/family-members" in url:
+            raise RuntimeError("backend unreachable")
+        r = MagicMock()
+        r.json.return_value = []
+        r.raise_for_status = MagicMock()
+        return r
+
+    import pytest
+    with patch("homecal_voice.main._requests.get", side_effect=_get_side_effect):
+        with pytest.raises(Exception):
+            _gather_context_for_intent(api_base="http://x", today="2026-06-07")
