@@ -4,6 +4,93 @@ Running log of work per session. Newest first. Pair with `git log` for exact dif
 
 ---
 
+## 2026-06-06 (evening) — Pi voice deploy + timer intent type-guard fix
+
+Deployed the matcher + timer code to the Pi (it had been sitting on master
+since the morning's PR #3 merge but the Pi was still running pre-matcher
+voice code). First live timer test surfaced a bug the test suite missed.
+
+### Deploy
+- `rsync` of `kiosk/voice/homecal_voice/` to the Pi (excluding `.venv`,
+  `__pycache__`, `*.egg-info`, `*.pyc`) — added 7 new files the Pi was
+  missing: `matcher.py`, `aliases.py`, `date_phrase.py`, `duration.py`,
+  `patterns_v1.py`, `patterns_timer.py` (+ tests).
+- `systemctl restart homecal-voice` — clean restart, mic online, heartbeat
+  fresh. The cosmetic `StopIteration` from the old pid teardown printed as
+  expected.
+
+### The bug: chip stuck on "thinking" after a successful timer
+First test was *"set a timer for five minutes"*. Logs showed matcher hit
+`timer_set` at confidence 1.0, executor POSTed `/api/timers` successfully
+(`durationSec: 300`), audit row written as `status=applied source=matcher`.
+But the wall VoiceChip never advanced past "thinking" — no ✓ flash, no
+auto-fade. The TimerStack chip also didn't render.
+
+Root cause was at the SSE trust boundary on the wall.
+`frontend/src/components/voice/voiceState.ts` `isParsedIntent` only
+validated the original five intent shapes (`dinner_set`, `chore_complete`,
+`query_dinner`, `query_agenda`, `unknown`). The four `timer_*` intents
+introduced in the morning's matcher PR fell through to `default: return
+false`. `pokeToAction` then rejected the whole `applied` payload as
+malformed (the same defensive check that was added in PR #2 review to stop
+unknown payloads crashing the reducer) and returned null. The reducer
+never ran → chip stayed on `thinking`.
+
+The TimerStack chip rendering separately was the same bug observed from a
+different angle: `useTimers` only refetches when the SSE `kind: 'timers'`
+poke fires the React Query invalidation. That poke *did* arrive, but the
+visible symptom was the VoiceChip stall; the timer chip would have shown
+up on the next 30s poll backstop. Verified manually after the fix —
+appeared instantly.
+
+### The fix — four files, one type union to rule them all
+- `frontend/src/core/model/types.ts` — added four variants to
+  `ParsedIntent`: `timer_set` (`duration_sec`, `label`), `timer_query`
+  (`label`), `timer_cancel` (`label`), `timer_extend` (`duration_sec`,
+  `label`). `label` is `string | null` to mirror the Pi's "the timer"
+  semantics.
+- `frontend/src/components/voice/voiceState.ts` — added the matching
+  branches in `isParsedIntent`. `timer_set`/`timer_extend` require
+  `duration_sec: number`; `timer_query`/`timer_cancel` only need `label`.
+- `frontend/src/components/controls/VoiceChip.tsx` `appliedLabel` —
+  `"timer set"` / `"timer extended"` / `"timer cancelled"` / `"done"`
+  (the spoken reply does the heavy lifting; chip just acknowledges).
+- `frontend/src/components/voice/ConfirmCard.tsx` `describe` — added for
+  exhaustiveness even though matcher confidence is 1.0 (auto-apply path,
+  ConfirmCard never sees these). Without it, TypeScript's exhaustive
+  switch silently degrades to `undefined`.
+
+### Test pin
+Added a parametrised `it.each` in `voiceState.test.ts` over every
+`timer_*` shape — round-trips `applied` payloads through `pokeToAction`
+and asserts the intent comes back intact. If a future intent variant
+lands without updating the guard, this fails loudly instead of producing
+a silent reducer no-op.
+
+### Counts
+- Frontend tests: 62 → 68 (+6 parametrised timer cases).
+- Backend/voice: untouched today.
+- Container rebuilt, kiosk reloaded via `kiosk/reload.sh`.
+
+### Why the original PR review missed this
+Five specialist agents reviewed PR #3 yesterday. None spotted it because
+the Pi-side timer code and the wall-side intent guard live in different
+languages on different sides of the SSE wire. `type-design-analyzer`
+flagged the discriminated-union design but only inspected what was
+declared; the *omission* of the four new variants was invisible in a
+file-by-file review. The lesson worth keeping: when a backend adds a new
+discriminated-union variant, every front-side trust-boundary validator
+that switches on that union has to be updated in lockstep — and the test
+that catches the drift has to live at the validator, not at the producer.
+
+### Files
+- `frontend/src/core/model/types.ts`
+- `frontend/src/components/voice/voiceState.ts` + `.test.ts`
+- `frontend/src/components/controls/VoiceChip.tsx`
+- `frontend/src/components/voice/ConfirmCard.tsx`
+
+---
+
 ## 2026-06-06 — Kitchen timers (voice + wall chip) on PR #3
 
 Built out the timer intents the matcher already recognised but the executor

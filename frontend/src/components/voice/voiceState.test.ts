@@ -188,4 +188,23 @@ describe('pokeToAction', () => {
     expect(voice?.type === 'sse' && voice.kind).toBe('voice_offline');
     expect(idle?.type === 'sse' && idle.kind).toBe('idle');
   });
+
+  // Each timer_* variant must round-trip through pokeToAction or the wall chip
+  // hangs on 'thinking' after the Pi posts applied — the trust boundary
+  // silently rejects unknown intent shapes.
+  it.each([
+    { intent: 'timer_set', duration_sec: 300, label: 'pasta', confidence: 1.0 },
+    { intent: 'timer_set', duration_sec: 60, label: null, confidence: 1.0 },
+    { intent: 'timer_query', label: 'pasta', confidence: 1.0 },
+    { intent: 'timer_query', label: null, confidence: 1.0 },
+    { intent: 'timer_cancel', label: null, confidence: 1.0 },
+    { intent: 'timer_extend', duration_sec: 120, label: 'pasta', confidence: 1.0 },
+  ])('accepts applied with timer intent %o', (intent) => {
+    const action = pokeToAction({ utterance_id: 'u1', kind: 'applied', payload: { intent } });
+    expect(action).not.toBeNull();
+    if (action && action.type === 'sse') {
+      expect(action.kind).toBe('applied');
+      expect(action.intent?.intent).toBe(intent.intent);
+    }
+  });
 });

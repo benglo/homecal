@@ -176,6 +176,10 @@ export type ParsedIntent =
   | { intent: 'chore_complete'; person: string; chore: string; confidence: number }
   | { intent: 'query_dinner'; date: string; confidence: number }
   | { intent: 'query_agenda'; date: string; confidence: number }
+  | { intent: 'timer_set'; duration_sec: number; label: string | null; confidence: number }
+  | { intent: 'timer_query'; label: string | null; confidence: number }
+  | { intent: 'timer_cancel'; label: string | null; confidence: number }
+  | { intent: 'timer_extend'; duration_sec: number; label: string | null; confidence: number }
   | { intent: 'unknown'; reason: string; confidence: number };
 
 export type VoiceOverlayKind =

@@ -18,6 +18,14 @@ function describe(intent: ParsedIntent): string {
       return `What's for dinner ${intent.date}?`;
     case 'query_agenda':
       return `What's on ${intent.date}?`;
+    case 'timer_set':
+      return `Set ${intent.label ?? 'a'} timer for ${intent.duration_sec}s`;
+    case 'timer_extend':
+      return `Add ${intent.duration_sec}s to ${intent.label ?? 'the'} timer`;
+    case 'timer_cancel':
+      return `Cancel ${intent.label ?? 'the'} timer`;
+    case 'timer_query':
+      return `How long on ${intent.label ?? 'the'} timer?`;
     case 'unknown':
       return `(didn't parse: ${intent.reason})`;
   }
