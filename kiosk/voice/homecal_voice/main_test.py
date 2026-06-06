@@ -706,3 +706,56 @@ def test_mid_confidence_ambiguous_leaves_audit_pending_and_speaks_hint():
     speak.assert_called_once()
     statuses = [c.kwargs["status"] for c in audit.call_args_list]
     assert statuses == ["pending"]
+
+
+# ---------------------------------------------------------------------------
+# Task 12 — per-intent auto-apply confidence threshold map
+# ---------------------------------------------------------------------------
+import math
+from homecal_voice.main import (
+    AUTO_APPLY_THRESHOLDS,
+    AUTO_APPLY_DEFAULT,
+    auto_apply_threshold,
+)
+
+
+def test_default_threshold_is_0_85():
+    assert AUTO_APPLY_DEFAULT == 0.85
+    assert auto_apply_threshold("dinner_set") == 0.85
+    assert auto_apply_threshold("chore_complete") == 0.85
+    assert auto_apply_threshold("query_dinner") == 0.85
+    assert auto_apply_threshold("query_agenda") == 0.85
+    assert auto_apply_threshold("timer_set") == 0.85
+
+
+def test_ask_question_uses_default_0_85():
+    """Wrong-answer-vs-confirm tradeoff: confirm is better than wrong answer."""
+    assert auto_apply_threshold("ask_question") == 0.85
+
+
+def test_noise_play_auto_applies_at_any_confidence():
+    """A confirm-card disrupts the gag. Spec §3.9."""
+    assert auto_apply_threshold("noise_play") == -math.inf
+
+
+def test_joke_tell_auto_applies_at_any_confidence():
+    assert auto_apply_threshold("joke_tell") == -math.inf
+
+
+def test_thresholds_map_only_lists_non_defaults():
+    """Map should only carry intents that override the default — keeps it tight."""
+    assert "ask_question" not in AUTO_APPLY_THRESHOLDS
+    assert "dinner_set" not in AUTO_APPLY_THRESHOLDS
+    assert AUTO_APPLY_THRESHOLDS["noise_play"] == -math.inf
+    assert AUTO_APPLY_THRESHOLDS["joke_tell"] == -math.inf
+
+
+def test_threshold_map_is_frozen():
+    """MappingProxyType prevents runtime tampering via test mocks leaking."""
+    from types import MappingProxyType
+    assert isinstance(AUTO_APPLY_THRESHOLDS, MappingProxyType)
+
+
+def test_unknown_intent_uses_default():
+    """A future intent that doesn't appear in the map should fall back to 0.85."""
+    assert auto_apply_threshold("some_future_intent") == 0.85

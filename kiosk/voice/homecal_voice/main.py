@@ -9,12 +9,14 @@ mic and exits cleanly.
 """
 
 import logging
+import math
 import re
 import signal
 import sys
 import time
 import threading
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Callable
 
 import requests as _requests
@@ -32,8 +34,23 @@ from homecal_voice.timezone import today_brisbane
 log = logging.getLogger("homecal_voice.main")
 
 # Tunables centralised at the top so future operators don't grep the file.
-AUTO_APPLY_CONFIDENCE = 0.85
+
+# Per-intent auto-apply confidence floor. Default is `AUTO_APPLY_DEFAULT`;
+# the override map only lists intents that DIFFER from the default to keep
+# the table tight. `noise_play` and `joke_tell` auto-apply at ANY confidence
+# — a confirm-card disrupts the gag, and the matcher emits 1.0 on catalog
+# hits anyway. Spec §3.9. MappingProxyType is read-only at runtime, which
+# blocks test-mock leakage between cases.
+AUTO_APPLY_DEFAULT = 0.85
+AUTO_APPLY_THRESHOLDS = MappingProxyType({
+    "noise_play": -math.inf,
+    "joke_tell": -math.inf,
+})
 SILENT_FAIL_CONFIDENCE = 0.6
+
+
+def auto_apply_threshold(intent_name: str) -> float:
+    return AUTO_APPLY_THRESHOLDS.get(intent_name, AUTO_APPLY_DEFAULT)
 HEARTBEAT_INTERVAL_SEC = 30
 CAP_COOLDOWN_SEC = 60
 MUTE_CACHE_TTL_SEC = 5
@@ -285,7 +302,7 @@ def _run_after_wake(d: OneShotDeps) -> None:
         _audit(transcript, audit_status, intent)
         _speak(out.get("spoken", ""))
 
-    if intent.confidence >= AUTO_APPLY_CONFIDENCE:
+    if intent.confidence >= auto_apply_threshold(intent.intent):
         _try_execute("applied")
         return
 

@@ -122,7 +122,7 @@ def _extract_chore_complete(m, text, ctx):
     chore = match_chore(text, person, ctx.chores)
     if not chore:
         return None
-    # 0.8 (below main.py's AUTO_APPLY_CONFIDENCE=0.85) because the verb
+    # 0.8 (below main.py's AUTO_APPLY_DEFAULT=0.85) because the verb
     # regex is permissive: "did Mia do the bathroom?" (a question) matches
     # the same shape as "Mia did the bathroom". Sub-threshold routes through
     # the confirm card so questions don't silently award a star.
