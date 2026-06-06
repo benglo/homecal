@@ -63,9 +63,12 @@ self.addEventListener('fetch', (event) => {
           const res = await fetch(req);
           if (res.ok) cache.put(req, res.clone());
           return res;
-        } catch {
+        } catch (err) {
+          console.warn('[sw] api fetch failed', req.url, err);
           const cached = await cache.match(req);
-          return cached || new Response('{}', { status: 503, headers: { 'Content-Type': 'application/json' } });
+          // No synthetic body — empty 503 lets the client surface a real
+          // error. A fake `{}` reply broke consumers expecting an array.
+          return cached || new Response(null, { status: 503 });
         }
       })
     );

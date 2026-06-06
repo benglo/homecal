@@ -53,6 +53,43 @@ test('POST /api/timers rejects duration < 5s', async () => {
   assert.equal(res.statusCode, 400);
 });
 
+// Pin the exact boundaries so an off-by-one in TIMER_MIN_SEC/MAX_SEC trips a test.
+test('POST /api/timers accepts durationSec=5 (boundary)', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/api/timers',
+    payload: { label: 'min', durationSec: 5 },
+  });
+  assert.equal(res.statusCode, 201);
+});
+
+test('POST /api/timers rejects durationSec=4 (below min)', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/api/timers',
+    payload: { label: 'below', durationSec: 4 },
+  });
+  assert.equal(res.statusCode, 400);
+});
+
+test('POST /api/timers accepts durationSec=28800 (8h boundary)', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/api/timers',
+    payload: { label: 'max', durationSec: 28800 },
+  });
+  assert.equal(res.statusCode, 201);
+});
+
+test('POST /api/timers rejects durationSec=28801 (above max)', async () => {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/api/timers',
+    payload: { label: 'over', durationSec: 28801 },
+  });
+  assert.equal(res.statusCode, 400);
+});
+
 test('POST /api/timers accepts null label', async () => {
   const res = await app.inject({
     method: 'POST',
@@ -117,6 +154,11 @@ test('DELETE /api/timers/:id cancels the timer + returns 204', async () => {
 
 test('DELETE /api/timers/:id returns 404 when unknown', async () => {
   const res = await app.inject({ method: 'DELETE', url: '/api/timers/nope' });
+  assert.equal(res.statusCode, 404);
+});
+
+test('POST /api/timers/:id/acknowledge returns 404 when unknown', async () => {
+  const res = await app.inject({ method: 'POST', url: '/api/timers/nope/acknowledge' });
   assert.equal(res.statusCode, 404);
 });
 

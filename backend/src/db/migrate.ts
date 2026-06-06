@@ -136,8 +136,7 @@ const MIGRATIONS: Migration[] = [
   },
   // v5 — kitchen timers. expires_at is the source of truth for the
   // countdown (wall + voice both compute remaining from now); duration_sec
-  // is kept for "extend" arithmetic and audit. acknowledged_at flips on
-  // tap after expiry, ending the flashing-chip + chime loop.
+  // is the running sum across explicit extensions, kept for audit.
   (db) => {
     db.exec(`
       CREATE TABLE timers (

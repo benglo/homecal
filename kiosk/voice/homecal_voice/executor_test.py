@@ -503,3 +503,63 @@ def test_timer_extend_requires_duration():
     out = ex.apply(IntentResult("timer_extend", {"label": "pasta"}, 1.0, ""))
     assert out["ok"] is False
     assert out["error"] == "missing_duration"
+
+
+def test_timer_extend_no_timer(requests_mock):
+    requests_mock.get("http://api/api/timers", json=[])
+    ex = Executor(base="http://api", token="t")
+    out = ex.apply(IntentResult("timer_extend", {"duration_sec": 60, "label": None}, 1.0, ""))
+    assert out["ok"] is False
+    assert out["error"] == "no_timer"
+
+
+def test_timer_extend_ambiguous(requests_mock):
+    requests_mock.get(
+        "http://api/api/timers",
+        json=[
+            {"id": "t1", "label": "pasta", "expiresAt": "2099-01-01T00:10:00Z", "startedAt": "2026-06-06T10:00:00Z"},
+            {"id": "t2", "label": "eggs",  "expiresAt": "2099-01-01T00:10:00Z", "startedAt": "2026-06-06T10:01:00Z"},
+        ],
+    )
+    ex = Executor(base="http://api", token="t")
+    out = ex.apply(IntentResult("timer_extend", {"duration_sec": 60, "label": None}, 1.0, ""))
+    assert out["ok"] is False
+    assert out["error"] == "ambiguous_timer"
+
+
+def test_timer_extend_unknown_label(requests_mock):
+    requests_mock.get(
+        "http://api/api/timers",
+        json=[{"id": "t1", "label": "pasta", "expiresAt": "2099-01-01T00:10:00Z", "startedAt": "2026-06-06T10:00:00Z"}],
+    )
+    ex = Executor(base="http://api", token="t")
+    out = ex.apply(IntentResult("timer_extend", {"duration_sec": 60, "label": "lasagna"}, 1.0, ""))
+    assert out["ok"] is False
+    assert out["error"] == "unknown_label"
+
+
+def test_timer_extend_without_label_picks_singleton(requests_mock):
+    requests_mock.get(
+        "http://api/api/timers",
+        json=[{"id": "t1", "label": None, "expiresAt": "2099-01-01T00:10:00Z", "startedAt": "2026-06-06T10:00:00Z"}],
+    )
+    requests_mock.patch(
+        "http://api/api/timers/t1",
+        json={"id": "t1", "label": None, "expiresAt": "2099-01-01T00:12:00Z"},
+    )
+    ex = Executor(base="http://api", token="t")
+    out = ex.apply(IntentResult("timer_extend", {"duration_sec": 120, "label": None}, 1.0, ""))
+    assert out["ok"] is True
+    # No label means the spoken reply says just "Timer", not "<label> timer".
+    assert "timer has" in out["spoken"].lower()
+
+
+def test_remaining_seconds_handles_missing_expires_at():
+    """Bad payload (None) doesn't crash — logs and returns 0."""
+    from datetime import datetime, timezone
+    assert _remaining_seconds(None, datetime.now(timezone.utc)) == 0
+
+
+def test_remaining_seconds_handles_malformed_expires_at():
+    from datetime import datetime, timezone
+    assert _remaining_seconds("not-a-date", datetime.now(timezone.utc)) == 0

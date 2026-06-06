@@ -8,12 +8,17 @@ user, did not change state".
 """
 
 from datetime import date as Date, datetime, timezone
+from typing import Literal, Optional
 import logging
 
 import requests
 
 from homecal_voice.intent import IntentResult
 from homecal_voice.timezone import today_brisbane
+
+# Tags for _resolve_target's error channel. Typed so a typo at a call site
+# becomes a type error instead of an opaque "didn't catch that" branch.
+ResolveError = Literal["no_timer", "ambiguous", "unknown_label"]
 
 log = logging.getLogger("homecal_voice.executor")
 
@@ -69,22 +74,21 @@ def humanise_duration(seconds: int) -> str:
         parts.append(f"{hours} hour{'s' if hours != 1 else ''}")
     if minutes:
         parts.append(f"{minutes} minute{'s' if minutes != 1 else ''}")
-    if not parts:
-        # Whole hours only (e.g. 3600s = "1 hour") handled above; this is the
-        # safety net for the can't-happen case where both hours+minutes are 0
-        # after we've already established seconds >= 60. Speak it as minutes
-        # rather than crash.
-        return f"{seconds // 60} minutes"
     return " and ".join(parts)
 
 
-def _remaining_seconds(expires_at_iso: str, now: datetime) -> int:
-    """Seconds from `now` until expires_at, clamped at 0."""
+def _remaining_seconds(expires_at_iso, now: datetime) -> int:
+    """Seconds from `now` until expires_at, clamped at 0. Logs and returns 0
+    on missing/malformed input so a single bad row doesn't crash an utterance."""
+    if not expires_at_iso:
+        log.warning("timer expiresAt missing")
+        return 0
     try:
         # fromisoformat in 3.11+ handles 'Z'; be explicit for older runtimes.
         iso = expires_at_iso.replace("Z", "+00:00")
         exp = datetime.fromisoformat(iso)
     except ValueError:
+        log.warning("timer expiresAt malformed: %r", expires_at_iso)
         return 0
     delta = (exp - now).total_seconds()
     return max(0, int(delta))
@@ -206,22 +210,23 @@ class Executor:
 
     # --- timer_* handlers -------------------------------------------------
     # All four resolve against GET /api/timers client-side: the backend has
-    # no by-label lookup endpoint, and the active list is short enough
-    # (typically 0–3) that a linear scan is cheaper than another round trip.
+    # no by-label lookup endpoint and a linear scan over the active list is
+    # cheaper than another round trip.
 
     def _list_active_timers(self) -> list[dict]:
         return _unwrap(
             requests.get(f"{self.base}/api/timers", timeout=API_TIMEOUT_SEC).json()
         )
 
-    def _resolve_target(self, timers: list[dict], label):
+    def _resolve_target(
+        self, timers: list[dict], label
+    ) -> tuple[Optional[dict], Optional[ResolveError]]:
         """Find the timer this utterance refers to.
 
         With a label, prefer the most-recently-started case-insensitive match
         (last-set-wins matches how a cook actually thinks). Without a label,
         only resolve when exactly one active timer exists — otherwise the
         utterance is ambiguous and we should say so rather than guess.
-        Returns (timer, error_tag).
         """
         if label:
             matches = [t for t in timers if (t.get("label") or "").lower() == label.lower()]
@@ -234,6 +239,16 @@ class Executor:
         if len(timers) > 1:
             return None, "ambiguous"
         return timers[0], None
+
+    def _speak_resolve_error(self, err: ResolveError, label, kind: str) -> dict:
+        """Turn a _resolve_target failure into a spoken reply. `kind` is the
+        verb ("cancel", "extend") used only in the no_timer fallback."""
+        if err == "no_timer":
+            return {"ok": False, "spoken": f"No timer to {kind}.", "error": "no_timer"}
+        if err == "ambiguous":
+            return {"ok": False, "spoken": "Which timer? You've got more than one running.", "error": "ambiguous_timer"}
+        # unknown_label
+        return {"ok": False, "spoken": f"No timer for {label}.", "error": "unknown_label"}
 
     def _timer_set(self, f: dict) -> dict:
         duration = int(f.get("duration_sec") or 0)
@@ -253,12 +268,12 @@ class Executor:
     def _timer_query(self, f: dict) -> dict:
         timers = self._list_active_timers()
         target, err = self._resolve_target(timers, f.get("label"))
+        # Asymmetry vs cancel/extend: "is the timer done?" with nothing
+        # running is a successful question, not a user error.
         if err == "no_timer":
             return {"ok": True, "spoken": "No timer running."}
-        if err == "ambiguous":
-            return {"ok": False, "spoken": "Which timer? You've got more than one running.", "error": "ambiguous_timer"}
-        if err == "unknown_label":
-            return {"ok": False, "spoken": f"No timer for {f['label']}.", "error": "unknown_label"}
+        if err is not None:
+            return self._speak_resolve_error(err, f.get("label"), "query")
         remaining = _remaining_seconds(target["expiresAt"], datetime.now(timezone.utc))
         prefix = f"{target['label'].capitalize()} timer" if target.get("label") else "Your timer"
         if remaining <= 0:
@@ -268,12 +283,8 @@ class Executor:
     def _timer_cancel(self, f: dict) -> dict:
         timers = self._list_active_timers()
         target, err = self._resolve_target(timers, f.get("label"))
-        if err == "no_timer":
-            return {"ok": False, "spoken": "No timer to cancel.", "error": "no_timer"}
-        if err == "ambiguous":
-            return {"ok": False, "spoken": "Which timer? You've got more than one running.", "error": "ambiguous_timer"}
-        if err == "unknown_label":
-            return {"ok": False, "spoken": f"No timer for {f['label']}.", "error": "unknown_label"}
+        if err is not None:
+            return self._speak_resolve_error(err, f.get("label"), "cancel")
         r = requests.delete(
             f"{self.base}/api/timers/{target['id']}",
             headers=self.headers,
@@ -289,12 +300,8 @@ class Executor:
             return {"ok": False, "spoken": "How much should I add?", "error": "missing_duration"}
         timers = self._list_active_timers()
         target, err = self._resolve_target(timers, f.get("label"))
-        if err == "no_timer":
-            return {"ok": False, "spoken": "No timer to extend.", "error": "no_timer"}
-        if err == "ambiguous":
-            return {"ok": False, "spoken": "Which timer? You've got more than one running.", "error": "ambiguous_timer"}
-        if err == "unknown_label":
-            return {"ok": False, "spoken": f"No timer for {f['label']}.", "error": "unknown_label"}
+        if err is not None:
+            return self._speak_resolve_error(err, f.get("label"), "extend")
         r = requests.patch(
             f"{self.base}/api/timers/{target['id']}",
             json={"addSec": add_sec},

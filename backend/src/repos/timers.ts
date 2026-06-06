@@ -86,10 +86,17 @@ export function findTimerByLabel(label: string | null): Timer | null {
   return row ? toTimer(row) : null;
 }
 
-export function extendTimer(id: string, addSec: number): Timer {
+export function extendTimer(id: string, addSec: number, now: Date = new Date()): Timer {
   const row = requireRow(id);
+  const expiresMs = Date.parse(row.expires_at);
+  if (!Number.isFinite(expiresMs)) {
+    throw httpError(500, 'DATA_CORRUPT', `Timer ${id} has malformed expires_at`);
+  }
+  // Clamp the extension base to now so "add 2 minutes" on a timer that
+  // already expired lands in the future, not 5 minutes ago.
+  const base = Math.max(now.getTime(), expiresMs);
   const newDuration = row.duration_sec + addSec;
-  const newExpires = isoUtc(new Date(Date.parse(row.expires_at) + addSec * 1000));
+  const newExpires = isoUtc(new Date(base + addSec * 1000));
   getDb()
     .prepare(
       `UPDATE timers SET duration_sec = ?, expires_at = ?, updated_at = ? WHERE id = ?`,

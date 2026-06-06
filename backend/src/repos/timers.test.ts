@@ -82,13 +82,39 @@ test('findTimerByLabel(null) returns null when multiple active timers exist (amb
 
 test('extendTimer adds seconds to expires_at + bumps duration_sec', () => {
   const t = repo.createTimer({ label: 'pasta', durationSec: 600 }, T0);
-  const updated = repo.extendTimer(t.id, 120);
+  // now=T0 so base = max(T0, expiresAt) = expiresAt — pure additive case.
+  const updated = repo.extendTimer(t.id, 120, T0);
   assert.equal(updated.durationSec, 720);
   assert.equal(updated.expiresAt, '2026-06-06T10:12:00Z');
 });
 
+test('extendTimer on an expired timer clamps base to now', () => {
+  // Timer expires at T0+1min. "Now" is T0+5min — already 4min past expiry.
+  // The extension must land 2min after now, not 2min after the stale expiry.
+  const t = repo.createTimer({ label: 'pasta', durationSec: 60 }, T0);
+  const now = new Date('2026-06-06T10:05:00Z');
+  const updated = repo.extendTimer(t.id, 120, now);
+  assert.equal(updated.expiresAt, '2026-06-06T10:07:00Z');
+});
+
 test('extendTimer throws 404 when timer not found', () => {
   assert.throws(() => repo.extendTimer('nope', 60), /Timer not found/);
+});
+
+test('extendTimer throws DATA_CORRUPT on malformed expires_at', () => {
+  const t = repo.createTimer({ label: 'pasta', durationSec: 60 }, T0);
+  // Simulate a corrupted row that bypassed validation (manual DB edit, bad
+  // restore, etc). extendTimer must refuse rather than write Invalid Date.
+  db.prepare('UPDATE timers SET expires_at = ? WHERE id = ?').run('not-a-date', t.id);
+  assert.throws(() => repo.extendTimer(t.id, 60), /malformed expires_at/);
+});
+
+test('acknowledgeTimer second call does not bump updated_at', () => {
+  const t = repo.createTimer({ label: 'pasta', durationSec: 60 }, T0);
+  const first = repo.acknowledgeTimer(t.id, new Date('2026-06-06T10:00:30Z'));
+  const second = repo.acknowledgeTimer(t.id, new Date('2026-06-06T10:01:00Z'));
+  // Second call is a no-op; consumers keying off updatedAt must not see churn.
+  assert.equal(second.updatedAt, first.updatedAt);
 });
 
 test('cancelTimer deletes the row', () => {

@@ -5,24 +5,24 @@ import { useTimers } from '../../core/hooks/useData';
 import { useClock } from '../../core/hooks/useClock';
 import { api } from '../../core/api/client';
 
-/**
- * Minimal placeholder timer chip stack — verifies the voice → API → SSE →
- * wall loop is live. Proper visual design (placement, chime, expiry
- * animation) is a deferred design pass; this component intentionally stays
- * unstyled beyond the bare token vocabulary so a designer can swap it whole.
- */
+/** Bottom-right stack of active timers. Counts down via the shared clock;
+ *  expired chips flash until tapped. */
 export function TimerStack() {
   const timersQ = useTimers();
   const now = useClock();
   const qc = useQueryClient();
 
+  // onSettled covers both success and error: a failed cancel/ack should
+  // re-fetch so the chip reverts to the true server state rather than
+  // hanging on the wall forever.
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['timers'] });
   const cancel = useMutation({
     mutationFn: (id: string) => api.cancelTimer(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['timers'] }),
+    onSettled: invalidate,
   });
   const acknowledge = useMutation({
     mutationFn: (id: string) => api.acknowledgeTimer(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['timers'] }),
+    onSettled: invalidate,
   });
 
   const timers = timersQ.data ?? [];

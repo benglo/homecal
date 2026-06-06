@@ -119,11 +119,12 @@ export function useVoiceStatus() {
 
 /** Active (un-acknowledged) timers. SSE 'timers' poke invalidates on every
  *  mutation; the local clock ticks the countdown so no per-second polling
- *  is needed. */
+ *  is needed. staleTime:0 because a countdown is inherently time-sensitive
+ *  — any remount should re-fetch rather than serve a cached list. */
 export function useTimers() {
   return useQuery<Timer[]>({
     queryKey: ['timers'],
     queryFn: api.timers,
-    staleTime: 5 * 60_000,
+    staleTime: 0,
   });
 }

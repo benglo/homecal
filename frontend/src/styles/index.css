@@ -106,8 +106,6 @@
   to { transform: rotate(360deg); }
 }
 
-/* Placeholder expiry pulse for TimerStack — proper expiry chime + animation
- * land in the timer design pass. */
 @keyframes timer-flash {
   0%, 100% { opacity: 1;   }
   50%      { opacity: 0.5; }
