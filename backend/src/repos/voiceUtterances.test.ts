@@ -126,7 +126,7 @@ test('insert accepts intent_name/answer/concern and round-trips them', () => {
   const rows = listUtterances({ limit: 1 });
   assert.equal(rows[0].intentName, 'ask_question');
   assert.equal(rows[0].answer, 'Sunlight bounces off the air and the blue light scatters most!');
-  assert.equal(rows[0].concern, 0); // false → SQLite INTEGER 0
+  assert.equal(rows[0].concern, false);
 });
 
 test('insert with concern=true stores INTEGER 1', () => {
@@ -144,7 +144,7 @@ test('insert with concern=true stores INTEGER 1', () => {
     concern: true,
   });
   const rows = listUtterances({ limit: 1 });
-  assert.equal(rows[0].concern, 1);
+  assert.equal(rows[0].concern, true);
 });
 
 test('insert with concern omitted stores NULL', () => {
@@ -184,6 +184,16 @@ test('voiceAuditBody rejects non-string intent_name', () => {
     transcript: 'hi',
     status: 'applied',
     intent_name: 42,
+  });
+  assert.equal(r.success, false);
+});
+
+test('voiceAuditBody rejects empty intent_name', () => {
+  const r = voiceAuditBody.safeParse({
+    id: 'u-empty',
+    transcript: 'hi',
+    status: 'applied',
+    intent_name: '',
   });
   assert.equal(r.success, false);
 });

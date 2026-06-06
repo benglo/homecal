@@ -44,12 +44,16 @@ export function insertUtterance(u: VoiceUtteranceInsert): void {
 }
 
 export function listUtterances(opts: { limit: number }): VoiceUtterance[] {
-  return getDb().prepare(`
+  const rows = getDb().prepare(`
     SELECT id, created_at AS createdAt, transcript, intent_json AS intentJson,
            confidence, status, duration_ms AS durationMs, error, source,
            intent_name AS intentName, answer, concern
     FROM voice_utterances
     ORDER BY created_at DESC
     LIMIT ?
-  `).all(opts.limit) as VoiceUtterance[];
+  `).all(opts.limit) as Array<Omit<VoiceUtterance, 'concern'> & { concern: number | null }>;
+  // SQLite stores booleans as INTEGER (0/1, NULL = unset). Normalise at the
+  // repo boundary so consumers can treat `concern` as `boolean | null` per
+  // the interface contract.
+  return rows.map(r => ({ ...r, concern: r.concern == null ? null : r.concern !== 0 }));
 }
