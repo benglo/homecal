@@ -8,13 +8,14 @@ user, did not change state".
 """
 
 from datetime import date as Date, datetime, timezone
-from typing import Literal, Optional
+from typing import Callable, Literal, Optional
 import logging
 
 import requests
 
 from homecal_voice.intent import IntentResult
 from homecal_voice.timezone import today_brisbane
+from homecal_voice import catalog as kid_catalog
 
 # Tags for _resolve_target's error channel. Typed so a typo at a call site
 # becomes a type error instead of an opaque "didn't catch that" branch.
@@ -105,9 +106,16 @@ def _unwrap(json_body):
 
 
 class Executor:
-    def __init__(self, *, base: str, token: str):
+    def __init__(
+        self,
+        *,
+        base: str,
+        token: str,
+        play_clip: Optional[Callable[[str], None]] = None,
+    ):
         self.base = base.rstrip("/")
         self.headers = {"X-Pi-Token": token, "Content-Type": "application/json"}
+        self._play_clip = play_clip
         self._handlers = {
             "dinner_set": self._dinner_set,
             "chore_complete": self._chore_complete,
@@ -117,6 +125,7 @@ class Executor:
             "timer_query": self._timer_query,
             "timer_cancel": self._timer_cancel,
             "timer_extend": self._timer_extend,
+            "noise_play": self._noise_play,
         }
 
     def apply(self, r: IntentResult) -> dict:
@@ -316,6 +325,36 @@ class Executor:
             "ok": True,
             "spoken": f"Added {humanise_duration(add_sec)} — {prefix.lower()} has {humanise_duration(remaining)} left.",
         }
+
+    def _noise_play(self, f: dict) -> dict:
+        """Play a noise from the bundled catalog.
+
+        Two valid shapes:
+          - matcher hit:    {"catalog_key": "<name>"} → play, no spoken response
+          - Haiku fallback: {"play_catalog": "<name>", "fallback_text": "..."} →
+                            play, return fallback_text for main.py to TTS
+
+        Soft failures (returns ok=False rather than raising):
+          - no play_clip dep wired (older runtime configuration)
+          - key not in catalog
+          - both keys missing from payload
+        """
+        if self._play_clip is None:
+            return {"ok": False, "spoken": "", "error": "noise_play_no_player"}
+
+        key = f.get("catalog_key") or f.get("play_catalog")
+        if not key:
+            return {"ok": False, "spoken": "", "error": "noise_play_missing_key"}
+
+        noises = kid_catalog.load_noises()
+        filename = noises.entries.get(key)
+        if not filename:
+            return {"ok": False, "spoken": "", "error": f"unknown_catalog_key:{key}"}
+
+        clip_path = kid_catalog._CLIPS_DIR / filename
+        self._play_clip(str(clip_path))
+        # Catalog hit returns "" (no speech); Haiku-fallback returns fallback_text.
+        return {"ok": True, "spoken": f.get("fallback_text", "")}
 
     def _humanise(self, iso_date: str) -> str:
         today = today_brisbane()

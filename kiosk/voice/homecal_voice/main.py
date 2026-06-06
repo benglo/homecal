@@ -409,7 +409,7 @@ def main() -> int:
         vad_gain=cfg.vad_gain,
         energy_rms_threshold=cfg.energy_rms_threshold,
     )
-    executor = Executor(base=cfg.homecal_api_base, token=cfg.pi_api_token)
+    executor = Executor(base=cfg.homecal_api_base, token=cfg.pi_api_token, play_clip=tts_play_file)
 
     _start_mute_sse(cfg)
 

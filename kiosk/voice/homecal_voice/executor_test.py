@@ -563,3 +563,67 @@ def test_remaining_seconds_handles_missing_expires_at():
 def test_remaining_seconds_handles_malformed_expires_at():
     from datetime import datetime, timezone
     assert _remaining_seconds("not-a-date", datetime.now(timezone.utc)) == 0
+
+
+# --- noise_play ------------------------------------------------------------
+
+from unittest.mock import MagicMock
+from pathlib import Path
+from homecal_voice import catalog as kid_catalog
+
+
+def test_noise_play_catalog_hit_plays_clip():
+    play = MagicMock()
+    ex = Executor(base="http://api", token="t", play_clip=play)
+    intent = IntentResult("noise_play", {"catalog_key": "chicken"}, 1.0, "make a chicken noise", source="matcher")
+    out = ex.apply(intent)
+    assert out["ok"] is True
+    assert out["spoken"] == ""  # no chip flash; noise IS the feedback
+    play.assert_called_once()
+    # The played path must resolve under the catalog's clips dir.
+    played = play.call_args.args[0]
+    assert Path(played).name == "chicken.mp3"
+
+
+def test_noise_play_haiku_fallback_returns_fallback_text_for_main_to_speak():
+    play = MagicMock()
+    ex = Executor(base="http://api", token="t", play_clip=play)
+    intent = IntentResult(
+        "noise_play",
+        {"play_catalog": "chicken", "fallback_text": "I don't know dolphin yet, but here's a chicken!"},
+        0.9, "make a dolphin noise", source="llm",
+    )
+    out = ex.apply(intent)
+    assert out["ok"] is True
+    assert "chicken" in out["spoken"]
+    play.assert_called_once()
+
+
+def test_noise_play_unknown_catalog_key_returns_soft_failure():
+    play = MagicMock()
+    ex = Executor(base="http://api", token="t", play_clip=play)
+    intent = IntentResult("noise_play", {"play_catalog": "nonexistent"}, 0.9, "x", source="llm")
+    out = ex.apply(intent)
+    assert out["ok"] is False
+    assert "unknown_catalog_key" in out.get("error", "")
+    play.assert_not_called()
+
+
+def test_noise_play_missing_both_keys_returns_missing_key_error():
+    play = MagicMock()
+    ex = Executor(base="http://api", token="t", play_clip=play)
+    intent = IntentResult("noise_play", {}, 0.9, "x", source="llm")
+    out = ex.apply(intent)
+    assert out["ok"] is False
+    assert "missing_key" in out.get("error", "")
+    play.assert_not_called()
+
+
+def test_noise_play_works_without_play_clip_dep_returns_failure():
+    """Backwards compat: if play_clip wasn't injected (older wiring), fail
+    softly rather than crash mid-utterance."""
+    ex = Executor(base="http://api", token="t")  # no play_clip
+    intent = IntentResult("noise_play", {"catalog_key": "chicken"}, 1.0, "x", source="matcher")
+    out = ex.apply(intent)
+    assert out["ok"] is False
+    assert out.get("error", "").startswith("noise_play_no_player") or "no_player" in out.get("error", "")
