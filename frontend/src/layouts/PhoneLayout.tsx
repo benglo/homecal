@@ -22,6 +22,7 @@ import { EventEditorSheet } from '../components/sheets/EventEditorSheet';
 import { CategoryEditorSheet } from '../components/sheets/CategoryEditorSheet';
 import { DinnerEditorSheet } from '../components/sheets/DinnerEditorSheet';
 import { KioskShutdown } from '../components/manage/KioskShutdown';
+import { RecentConcernsSection } from '../components/manage/RecentConcernsSection';
 
 /** Edit-heavy phone surface: Agenda · Week · Manage tabs, Fab create, OS day/night. */
 export function PhoneLayout() {
@@ -118,6 +119,7 @@ export function PhoneLayout() {
               <SectionHeading>Voice</SectionHeading>
               <MuteToggle />
             </section>
+            <RecentConcernsSection />
             <KioskShutdown />
           </div>
         )}
