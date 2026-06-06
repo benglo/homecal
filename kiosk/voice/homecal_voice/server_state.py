@@ -8,12 +8,27 @@ def post_state(*, base, token, utterance_id, kind, payload=None):
                       headers=_hdrs(token), timeout=5)
     r.raise_for_status()
 
-def post_audit(*, base, token, id, transcript, status, intent_json, confidence, duration_ms, error, source=None):
-    body = {"id": id, "transcript": transcript, "status": status,
-            "intent_json": intent_json, "confidence": confidence,
-            "duration_ms": duration_ms, "error": error}
+def post_audit(
+    *, base, token, id, transcript, status, intent_json, confidence,
+    duration_ms, error, source=None,
+    intent_name=None, answer=None, concern=None,
+):
+    body = {
+        "id": id, "transcript": transcript, "status": status,
+        "intent_json": intent_json, "confidence": confidence,
+        "duration_ms": duration_ms, "error": error,
+    }
     if source is not None:
         body["source"] = source
+    # The Pi may not know the intent name on every path (silent_low_conf,
+    # blank STT, hallucination); only attach when meaningful so the Zod
+    # schema's `.optional()` continues to work.
+    if intent_name is not None:
+        body["intent_name"] = intent_name
+    if answer is not None:
+        body["answer"] = answer
+    if concern is not None:
+        body["concern"] = concern
     r = requests.post(f"{base}/api/voice/audit", json=body, headers=_hdrs(token), timeout=5)
     r.raise_for_status()
 

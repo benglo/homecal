@@ -177,7 +177,15 @@ def _run_after_wake(d: OneShotDeps) -> None:
     def _elapsed() -> int:
         return int(time.time() * 1000) - started_ms
 
-    def _audit(transcript: str, status: str, intent: IntentResult | None, error: str | None = None) -> None:
+    def _audit(
+        transcript: str,
+        status: str,
+        intent: IntentResult | None,
+        error: str | None = None,
+        *,
+        answer: str | None = None,
+        concern: bool | None = None,
+    ) -> None:
         d.post_audit(
             id=uid,
             transcript=transcript,
@@ -187,6 +195,9 @@ def _run_after_wake(d: OneShotDeps) -> None:
             duration_ms=_elapsed(),
             error=error,
             source=intent.source if intent else None,
+            intent_name=intent.intent if intent else None,
+            answer=answer,
+            concern=concern,
         )
 
     def _speak(text: str) -> None:
@@ -299,7 +310,11 @@ def _run_after_wake(d: OneShotDeps) -> None:
             return
         d.post_state(utterance_id=uid, kind="applied",
                      payload={"intent": _intent_payload(intent)})
-        _audit(transcript, audit_status, intent)
+        _audit(
+            transcript, audit_status, intent,
+            answer=out.get("spoken") or None,
+            concern=out.get("concern"),
+        )
         if not out.get("spoken_inline"):
             _speak(out.get("spoken", ""))
 
