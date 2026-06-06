@@ -16,6 +16,7 @@ import type {
   FamilyMemberInput,
   Photo,
   Timer,
+  VoiceConcern,
   VoiceStatus,
   WeatherData,
 } from '../model/types';
@@ -134,6 +135,8 @@ export const api = {
 
   // voice
   voiceStatus: () => get<VoiceStatus>('/api/voice/status'),
+  voiceConcerns: (since?: string) =>
+    get<VoiceConcern[]>(`/api/voice/concerns${since ? '?since=' + encodeURIComponent(since) : ''}`),
   setVoiceMute: (until: string | null) =>
     send<{ ok: true; mute_until: string | null }>('PUT', '/api/voice/mute', { until }),
 

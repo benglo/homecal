@@ -11,6 +11,7 @@ import type {
   FamilyMember,
   Photo,
   Timer,
+  VoiceConcern,
   VoiceStatus,
   WeatherData,
 } from '../model/types';
@@ -114,6 +115,17 @@ export function useVoiceStatus() {
     queryKey: ['voice-status'],
     queryFn: () => api.voiceStatus(),
     staleTime: 5 * 60_000,
+  });
+}
+
+/** Recent concerning-disclosure rows for the phone Manage tab.
+ *  Default cutoff is server-side (7 days). 60s staleTime balances
+ *  "fresh enough for parental review" with "not hammering the LAN". */
+export function useRecentConcerns(since?: string) {
+  return useQuery<VoiceConcern[]>({
+    queryKey: ['voice-concerns', since ?? null],
+    queryFn: () => api.voiceConcerns(since),
+    staleTime: 60_000,
   });
 }
 

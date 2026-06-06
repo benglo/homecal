@@ -195,3 +195,11 @@ export interface VoiceStatus {
   mute_until: string | null;
   muted: boolean;
 }
+
+export interface VoiceConcern {
+  id: string;
+  createdAt: string;
+  transcript: string;
+  answer: string | null;
+  intentName: string | null;
+}
