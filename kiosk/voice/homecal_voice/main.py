@@ -300,7 +300,8 @@ def _run_after_wake(d: OneShotDeps) -> None:
         d.post_state(utterance_id=uid, kind="applied",
                      payload={"intent": _intent_payload(intent)})
         _audit(transcript, audit_status, intent)
-        _speak(out.get("spoken", ""))
+        if not out.get("spoken_inline"):
+            _speak(out.get("spoken", ""))
 
     if intent.confidence >= auto_apply_threshold(intent.intent):
         _try_execute("applied")
@@ -409,7 +410,19 @@ def main() -> int:
         vad_gain=cfg.vad_gain,
         energy_rms_threshold=cfg.energy_rms_threshold,
     )
-    executor = Executor(base=cfg.homecal_api_base, token=cfg.pi_api_token, play_clip=tts_play_file)
+    executor = Executor(
+        base=cfg.homecal_api_base,
+        token=cfg.pi_api_token,
+        play_clip=tts_play_file,
+        speak=lambda text: tts_speak(
+            text,
+            model=cfg.tts_model,
+            voice=cfg.tts_voice,
+            api_key=cfg.openrouter_api_key,
+            muted=is_muted_locally(cfg),
+        ),
+        sleep=time.sleep,
+    )
 
     _start_mute_sse(cfg)
 

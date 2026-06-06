@@ -112,10 +112,14 @@ class Executor:
         base: str,
         token: str,
         play_clip: Optional[Callable[[str], None]] = None,
+        speak: Optional[Callable[[str], None]] = None,
+        sleep: Optional[Callable[[float], None]] = None,
     ):
         self.base = base.rstrip("/")
         self.headers = {"X-Pi-Token": token, "Content-Type": "application/json"}
         self._play_clip = play_clip
+        self._speak = speak
+        self._sleep = sleep
         self._handlers = {
             "dinner_set": self._dinner_set,
             "chore_complete": self._chore_complete,
@@ -126,6 +130,7 @@ class Executor:
             "timer_cancel": self._timer_cancel,
             "timer_extend": self._timer_extend,
             "noise_play": self._noise_play,
+            "joke_tell": self._joke_tell,
         }
 
     def apply(self, r: IntentResult) -> dict:
@@ -355,6 +360,27 @@ class Executor:
         self._play_clip(str(clip_path))
         # Catalog hit returns "" (no speech); Haiku-fallback returns fallback_text.
         return {"ok": True, "spoken": f.get("fallback_text", "")}
+
+    def _joke_tell(self, f: dict) -> dict:
+        """Speak setup → 1.5s pause → punchline. The pause is the joke.
+
+        Returns spoken_inline=True so main.py doesn't TTS `spoken` again.
+        `spoken` carries the combined string for the audit log only — it lets
+        voice_utterances.answer capture the full joke without re-speaking it.
+        """
+        missing = [k for k in ("setup", "punchline") if not f.get(k)]
+        if missing:
+            return {"ok": False, "spoken": "", "error": f"missing_fields:{','.join(missing)}"}
+
+        if self._speak is None or self._sleep is None:
+            return {"ok": False, "spoken": "", "error": "joke_tell_no_speaker"}
+
+        setup = f["setup"]
+        punchline = f["punchline"]
+        self._speak(setup)
+        self._sleep(1.5)
+        self._speak(punchline)
+        return {"ok": True, "spoken_inline": True, "spoken": f"{setup} ... {punchline}"}
 
     def _humanise(self, iso_date: str) -> str:
         today = today_brisbane()

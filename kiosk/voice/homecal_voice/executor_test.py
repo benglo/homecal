@@ -627,3 +627,67 @@ def test_noise_play_works_without_play_clip_dep_returns_failure():
     out = ex.apply(intent)
     assert out["ok"] is False
     assert out.get("error", "").startswith("noise_play_no_player") or "no_player" in out.get("error", "")
+
+
+# --- joke_tell ----------------------------------------------------------------
+
+
+def test_joke_tell_speaks_setup_then_pause_then_punchline():
+    spoken_calls = []
+    sleep_calls = []
+    speak = MagicMock(side_effect=lambda text: spoken_calls.append(text))
+    sleep = MagicMock(side_effect=lambda s: sleep_calls.append(s))
+    ex = Executor(base="http://api", token="t", speak=speak, sleep=sleep)
+    intent = IntentResult(
+        "joke_tell",
+        {"joke_id": "j001", "setup": "Why?", "punchline": "Because!"},
+        1.0, "tell me a joke", source="matcher",
+    )
+    out = ex.apply(intent)
+    assert out["ok"] is True
+    assert out.get("spoken_inline") is True
+    assert spoken_calls == ["Why?", "Because!"]
+    assert sleep_calls == [1.5]
+
+
+def test_joke_tell_returns_combined_answer_for_audit():
+    """`spoken` is for the audit log — joke_tell uses it to preserve the full
+    setup+punchline string so voice_utterances.answer captures the whole joke.
+    `spoken_inline=True` signals main.py NOT to TTS this again."""
+    ex = Executor(base="http://api", token="t", speak=MagicMock(), sleep=MagicMock())
+    intent = IntentResult(
+        "joke_tell",
+        {"setup": "Why?", "punchline": "Because!"},
+        1.0, "tell me a joke", source="matcher",
+    )
+    out = ex.apply(intent)
+    assert out["spoken"] == "Why? ... Because!"
+    assert out.get("spoken_inline") is True
+
+
+def test_joke_tell_missing_setup_returns_failure():
+    ex = Executor(base="http://api", token="t", speak=MagicMock(), sleep=MagicMock())
+    intent = IntentResult("joke_tell", {"punchline": "x"}, 0.9, "x", source="llm")
+    out = ex.apply(intent)
+    assert out["ok"] is False
+    assert "missing_fields" in out.get("error", "")
+
+
+def test_joke_tell_missing_punchline_returns_failure():
+    ex = Executor(base="http://api", token="t", speak=MagicMock(), sleep=MagicMock())
+    intent = IntentResult("joke_tell", {"setup": "Why?"}, 0.9, "x", source="llm")
+    out = ex.apply(intent)
+    assert out["ok"] is False
+    assert "missing_fields" in out.get("error", "")
+
+
+def test_joke_tell_without_deps_returns_failure():
+    ex = Executor(base="http://api", token="t")  # no speak/sleep deps
+    intent = IntentResult(
+        "joke_tell",
+        {"setup": "Why?", "punchline": "Because!"},
+        1.0, "x", source="matcher",
+    )
+    out = ex.apply(intent)
+    assert out["ok"] is False
+    assert "joke_tell_no_speaker" in out.get("error", "") or "no_speaker" in out.get("error", "")
