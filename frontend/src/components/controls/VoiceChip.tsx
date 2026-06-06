@@ -68,6 +68,9 @@ function appliedLabel(intent: ParsedIntent): string {
     case 'timer_extend': return 'timer extended';
     case 'timer_cancel': return 'timer cancelled';
     case 'timer_query': return 'done';
+    case 'ask_question': return 'answered';
+    case 'joke_tell': return '😄 joke';
+    case 'noise_play': return '';  // no chip flash; the noise IS the feedback
     case 'unknown': return "didn't catch that";
   }
 }
@@ -127,6 +130,11 @@ export function VoiceChip({ state }: Props) {
 
   const Icon = muted ? MicOff : ICON_BY_KIND[state.kind];
   const label = muted ? muteLabel(status?.mute_until ?? null) : labelFor(state);
+
+  // noise_play returns empty applied label — render nothing so the chip doesn't
+  // momentarily flash blank during the noise. Spec §8.
+  if (label === '' && state.kind === 'applied') return null;
+
   const accent =
     muted ? 'var(--text-muted)' :
     WARN_KINDS.has(state.kind) ? 'var(--warn, #d97706)' :

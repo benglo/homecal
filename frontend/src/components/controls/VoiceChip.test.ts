@@ -93,3 +93,41 @@ describe('muteLabel', () => {
     expect(muteLabel(until, now)).toBe('muted');
   });
 });
+
+describe('labelFor — applied with kid intents', () => {
+  it('ask_question shows "answered"', () => {
+    const label = labelFor({
+      kind: 'applied',
+      utterance_id: 'u1',
+      intent: { intent: 'ask_question', answer: 'because!', confidence: 0.95 },
+    });
+    expect(label).toBe('answered');
+  });
+
+  it('joke_tell shows "😄 joke"', () => {
+    const label = labelFor({
+      kind: 'applied',
+      utterance_id: 'u1',
+      intent: { intent: 'joke_tell', setup: 'why?', punchline: 'because!', confidence: 1.0 },
+    });
+    expect(label).toBe('😄 joke');
+  });
+
+  it('noise_play (catalog hit) returns empty string — no chip flash', () => {
+    const label = labelFor({
+      kind: 'applied',
+      utterance_id: 'u1',
+      intent: { intent: 'noise_play', catalog_key: 'chicken', confidence: 1.0 },
+    });
+    expect(label).toBe('');
+  });
+
+  it('noise_play (Haiku fallback) also returns empty string', () => {
+    const label = labelFor({
+      kind: 'applied',
+      utterance_id: 'u1',
+      intent: { intent: 'noise_play', play_catalog: 'chicken', fallback_text: 'try a chicken', confidence: 0.9 },
+    });
+    expect(label).toBe('');
+  });
+});

@@ -26,6 +26,11 @@ function describe(intent: ParsedIntent): string {
       return `Cancel ${intent.label ?? 'the'} timer`;
     case 'timer_query':
       return `How long on ${intent.label ?? 'the'} timer?`;
+    // Kid intents auto-apply at matcher 1.0 / Haiku ≥0.85 + threshold map,
+    // so these describe() paths are typechecker-only. Spec §8.
+    case 'ask_question': return `Answer your question`;
+    case 'noise_play': return `Play a noise`;
+    case 'joke_tell': return `Tell a joke`;
     case 'unknown':
       return `(didn't parse: ${intent.reason})`;
   }
