@@ -180,6 +180,9 @@ export type ParsedIntent =
   | { intent: 'timer_query'; label: string | null; confidence: number }
   | { intent: 'timer_cancel'; label: string | null; confidence: number }
   | { intent: 'timer_extend'; duration_sec: number; label: string | null; confidence: number }
+  | { intent: 'ask_question'; answer: string; confidence: number; concern?: boolean }
+  | { intent: 'noise_play'; catalog_key?: string; play_catalog?: string; fallback_text?: string; confidence: number }
+  | { intent: 'joke_tell'; joke_id?: string; setup: string; punchline: string; confidence: number }
   | { intent: 'unknown'; reason: string; confidence: number };
 
 export type VoiceOverlayKind =

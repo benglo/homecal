@@ -97,6 +97,16 @@ function isParsedIntent(v: unknown): v is ParsedIntent {
     case 'timer_query':
     case 'timer_cancel':
       return o.label === null || typeof o.label === 'string';
+    case 'ask_question':
+      // concern is optional and defaults to false on absence.
+      return typeof o.answer === 'string'
+        && (o.concern === undefined || typeof o.concern === 'boolean');
+    case 'noise_play':
+      // Either catalog hit (catalog_key) or Haiku fallback (play_catalog + fallback_text).
+      return (typeof o.catalog_key === 'string')
+        || (typeof o.play_catalog === 'string' && typeof o.fallback_text === 'string');
+    case 'joke_tell':
+      return typeof o.setup === 'string' && typeof o.punchline === 'string';
     case 'unknown':
       return typeof o.reason === 'string';
     default:
