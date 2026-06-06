@@ -15,6 +15,9 @@ export interface VoiceUtteranceInsert {
   durationMs: number | null;
   error: string | null;
   source: IntentSource | null;
+  intentName?: string | null;
+  answer?: string | null;
+  concern?: boolean | null;
 }
 
 export interface VoiceUtterance extends VoiceUtteranceInsert {
@@ -25,15 +28,26 @@ export function insertUtterance(u: VoiceUtteranceInsert): void {
   const db = getDb();
   db.prepare(`
     INSERT INTO voice_utterances
-      (id, created_at, transcript, intent_json, confidence, status, duration_ms, error, source)
-    VALUES (@id, @createdAt, @transcript, @intentJson, @confidence, @status, @durationMs, @error, @source)
-  `).run({ ...u, createdAt: nowIso() });
+      (id, created_at, transcript, intent_json, confidence, status, duration_ms, error, source,
+       intent_name, answer, concern)
+    VALUES (@id, @createdAt, @transcript, @intentJson, @confidence, @status, @durationMs, @error, @source,
+            @intentName, @answer, @concern)
+  `).run({
+    ...u,
+    createdAt: nowIso(),
+    intentName: u.intentName ?? null,
+    answer: u.answer ?? null,
+    // SQLite stores boolean as integer; null stays null. Don't write `false ? 0 : null`
+    // — `false` collapses incorrectly; use explicit comparison.
+    concern: u.concern == null ? null : (u.concern ? 1 : 0),
+  });
 }
 
 export function listUtterances(opts: { limit: number }): VoiceUtterance[] {
   return getDb().prepare(`
     SELECT id, created_at AS createdAt, transcript, intent_json AS intentJson,
-           confidence, status, duration_ms AS durationMs, error, source
+           confidence, status, duration_ms AS durationMs, error, source,
+           intent_name AS intentName, answer, concern
     FROM voice_utterances
     ORDER BY created_at DESC
     LIMIT ?

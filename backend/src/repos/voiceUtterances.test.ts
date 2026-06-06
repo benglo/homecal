@@ -2,6 +2,7 @@ import { test, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import type Database from 'better-sqlite3';
 import { setupIsolatedDb } from '../test/util/bootstrap';
+import { voiceAuditBody } from '../schemas';
 
 // MUST run before any module that reads process.env.DATA_DIR at load time.
 // See backend/src/test/util/bootstrap.ts for the rationale; the dynamic
@@ -106,4 +107,83 @@ test('list: ordered newest-first, honours limit', () => {
   const rows = listUtterances({ limit: 3 });
   assert.equal(rows.length, 3);
   assert.equal(rows[0].transcript, 'utterance 4');
+});
+
+test('insert accepts intent_name/answer/concern and round-trips them', () => {
+  insertUtterance({
+    id: '0191ec00-0000-7000-8000-000000000010',
+    transcript: 'why is the sky blue',
+    intentJson: null,
+    confidence: 0.95,
+    status: 'applied',
+    durationMs: 1200,
+    error: null,
+    source: 'llm',
+    intentName: 'ask_question',
+    answer: 'Sunlight bounces off the air and the blue light scatters most!',
+    concern: false,
+  });
+  const rows = listUtterances({ limit: 1 });
+  assert.equal(rows[0].intentName, 'ask_question');
+  assert.equal(rows[0].answer, 'Sunlight bounces off the air and the blue light scatters most!');
+  assert.equal(rows[0].concern, 0); // false → SQLite INTEGER 0
+});
+
+test('insert with concern=true stores INTEGER 1', () => {
+  insertUtterance({
+    id: '0191ec00-0000-7000-8000-000000000011',
+    transcript: 'my tummy hurts',
+    intentJson: null,
+    confidence: 0.95,
+    status: 'applied',
+    durationMs: 1100,
+    error: null,
+    source: 'llm',
+    intentName: 'ask_question',
+    answer: 'That sounds important. Please tell your mum or dad right now.',
+    concern: true,
+  });
+  const rows = listUtterances({ limit: 1 });
+  assert.equal(rows[0].concern, 1);
+});
+
+test('insert with concern omitted stores NULL', () => {
+  insertUtterance({
+    id: '0191ec00-0000-7000-8000-000000000012',
+    transcript: 'tonight is tacos',
+    intentJson: null,
+    confidence: 1.0,
+    status: 'applied',
+    durationMs: 800,
+    error: null,
+    source: 'matcher',
+    intentName: 'dinner_set',
+    answer: null,
+    // concern intentionally omitted
+  });
+  const rows = listUtterances({ limit: 1 });
+  assert.equal(rows[0].concern, null);
+  assert.equal(rows[0].answer, null);
+});
+
+test('voiceAuditBody accepts intent_name, answer, concern', () => {
+  const r = voiceAuditBody.safeParse({
+    id: 'u-1',
+    transcript: 'hi',
+    status: 'applied',
+    intent_name: 'noise_play',
+    answer: null,
+    concern: false,
+  });
+  assert.ok(r.success, JSON.stringify(r));
+});
+
+test('voiceAuditBody rejects non-string intent_name', () => {
+  const r = voiceAuditBody.safeParse({
+    id: 'u-1',
+    transcript: 'hi',
+    status: 'applied',
+    intent_name: 42,
+  });
+  assert.equal(r.success, false);
 });

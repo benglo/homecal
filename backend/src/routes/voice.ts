@@ -32,6 +32,9 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
       durationMs: body.duration_ms ?? null,
       error: body.error ?? null,
       source: body.source ?? null,
+      intentName: body.intent_name ?? null,
+      answer: body.answer ?? null,
+      concern: body.concern ?? null,
     });
     reply.code(201).send({ ok: true });
   });

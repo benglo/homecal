@@ -145,6 +145,9 @@ export const voiceAuditBody = z.object({
   // "matcher" = regex path bypassed Haiku; "llm" = Haiku produced the
   // intent. Nullable for non-intent paths (blank STT, hallucination).
   source: z.enum(['matcher','llm']).nullable().optional(),
+  intent_name: z.string().min(1).max(64).nullable().optional(),
+  answer: z.string().max(4000).nullable().optional(),
+  concern: z.boolean().nullable().optional(),
 });
 
 export const voiceHeartbeatBody = z.object({
