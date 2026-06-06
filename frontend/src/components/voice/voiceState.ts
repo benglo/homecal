@@ -91,6 +91,12 @@ function isParsedIntent(v: unknown): v is ParsedIntent {
     case 'query_dinner':
     case 'query_agenda':
       return typeof o.date === 'string';
+    case 'timer_set':
+    case 'timer_extend':
+      return typeof o.duration_sec === 'number' && (o.label === null || typeof o.label === 'string');
+    case 'timer_query':
+    case 'timer_cancel':
+      return o.label === null || typeof o.label === 'string';
     case 'unknown':
       return typeof o.reason === 'string';
     default:

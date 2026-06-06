@@ -64,6 +64,10 @@ function appliedLabel(intent: ParsedIntent): string {
     case 'chore_complete': return `${intent.person} ✓ ${intent.chore}`;
     case 'query_dinner':
     case 'query_agenda': return 'done';
+    case 'timer_set': return 'timer set';
+    case 'timer_extend': return 'timer extended';
+    case 'timer_cancel': return 'timer cancelled';
+    case 'timer_query': return 'done';
     case 'unknown': return "didn't catch that";
   }
 }
