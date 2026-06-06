@@ -15,6 +15,7 @@ import type {
   FamilyMember,
   FamilyMemberInput,
   Photo,
+  Timer,
   VoiceStatus,
   WeatherData,
 } from '../model/types';
@@ -135,4 +136,9 @@ export const api = {
   voiceStatus: () => get<VoiceStatus>('/api/voice/status'),
   setVoiceMute: (until: string | null) =>
     send<{ ok: true; mute_until: string | null }>('PUT', '/api/voice/mute', { until }),
+
+  // timers
+  timers: () => get<Timer[]>('/api/timers'),
+  cancelTimer: (id: string) => send<void>('DELETE', `/api/timers/${id}`),
+  acknowledgeTimer: (id: string) => send<Timer>('POST', `/api/timers/${id}/acknowledge`),
 };

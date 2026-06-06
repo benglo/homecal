@@ -4,6 +4,289 @@ Running log of work per session. Newest first. Pair with `git log` for exact dif
 
 ---
 
+## 2026-06-06 — Kitchen timers (voice + wall chip) on PR #3
+
+Built out the timer intents the matcher already recognised but the executor
+stubbed as "I can't set timers yet". End-to-end: SQLite table + CRUD +
+SSE pokes, voice executor wiring for all four `timer_*` intents, minimal
+placeholder chip on the wall, then a full PR review pass with five
+specialist agents and a follow-up fix commit. Two commits on top of the
+existing PR #3.
+
+### What landed
+- **Migration v5** — `timers` table. `expires_at` is the source of truth
+  for the countdown (wall + voice both compute remaining from now);
+  `duration_sec` is a running sum across explicit extensions, kept for
+  audit. `acknowledged_at` flips when someone taps an expired chip.
+- **Backend repo + routes** — `createTimer` / `listActiveTimers` /
+  `findTimerByLabel` / `extendTimer` / `cancelTimer` / `acknowledgeTimer`.
+  `GET/POST/PATCH/DELETE /api/timers` + `POST /api/timers/:id/acknowledge`,
+  with `broker.poke('timers')` on every mutation. Zod caps duration at
+  [5s, 8h]. `findTimerByLabel(null)` returns the sole active timer (or
+  null when ambiguous) — drives the voice "the timer" semantics.
+- **Voice executor** — all four timer intents (`_timer_set`,
+  `_timer_query`, `_timer_cancel`, `_timer_extend`) hit the real API.
+  `humanise_duration` for spoken replies ("10 minutes", "1 hour and 5
+  minutes"). `_resolve_target` returns a typed `Literal[no_timer|
+  ambiguous|unknown_label]` error tag; `_speak_resolve_error` collapses
+  the three identical error ladders that lived in each handler.
+- **Wall chip (`TimerStack`)** — bottom-right pill stack, counts down via
+  shared `useClock`, flashes red on expiry, tap to cancel (running) or
+  dismiss (expired). Explicitly minimal — the visual design pass is
+  deferred. Mounted in `WallLayout`.
+
+### The SW bug that ate 30 minutes
+First live test on the docker container: chip never appeared after POST,
+even though SSE delivered `kind: 'timers'` correctly and React Query's
+invalidation fired the refetch. Traced through:
+- SSE wire ✓ (curl confirmed delivery)
+- KIND_TO_KEYS mapping ✓ (grepped the bundle)
+- useTimers mounted with the right query key ✓
+- GET /api/timers returning `[]` after POST — wait what
+
+Service worker was using **stale-while-revalidate** for `/api/*`. The cached
+`[]` from the initial GET kept being returned to React Query after every
+SSE invalidation; the fresh response only updated the cache for *next* time.
+The chores feature has been masking this with optimistic mutations; without
+an optimistic path, the wall never sees fresh data until the cache happens
+to mismatch.
+
+Fix: SW is now **network-first with cache fallback** for `/api/*` GETs.
+Network errors fall back to cached if any; otherwise empty 503 (not a fake
+`{}` body — that confuses consumers expecting an array). The never-blank
+guarantee still holds via the cache fallback path.
+
+### PR review with 5 agents in parallel
+Ran `/pr-review-toolkit:review-pr` after pushing the first commit. Agents:
+`code-reviewer`, `pr-test-analyzer`, `comment-analyzer`,
+`silent-failure-hunter`, `type-design-analyzer`. They converged sharply on
+real issues — three critical, eight important, five comment trims.
+
+Worth pulling out the ones that mattered most:
+- **`extendTimer` on an expired timer** was adding `addSec*1000` to the
+  *stored* `expires_at`. "Add 2 minutes" on a timer that expired 5 minutes
+  ago would set new expiry 3 minutes in the past; voice would say "added
+  2 minutes — 0 seconds left." Fix: clamp the base to `max(now,
+  expiresMs)` before adding.
+- **`extendTimer` on a row with malformed `expires_at`** silently produced
+  a `RangeError` from `isoUtc(new Date(NaN))` that bubbled to Fastify as an
+  opaque 500. Now validates `Number.isFinite(Date.parse(...))` and throws
+  `DATA_CORRUPT`.
+- **TimerStack mutations had only `onSuccess`** — a failed cancel/ack
+  would leave the chip on screen forever with no log, no toast, no
+  refetch. Switched to `onSettled` so error paths also invalidate.
+- **`useTimers` had `staleTime: 5 * 60_000`** — wrong for a live
+  countdown. A remount within 5 minutes serves a stale list. Now `0`.
+- **Five comments would have rotted** — "placeholder", "deferred design
+  pass", "typically 0-3" (measured number), a CSS keyframe labelled
+  "placeholder", and a `humanise_duration` "safety net" branch that was
+  unreachable per the math. All trimmed.
+
+### Test backfill
+Added 8 backend + 6 voice tests covering the review gaps: duration cap
+boundaries (4/5/28800/28801), `extendTimer` past-expiry clamp,
+`DATA_CORRUPT` path, `acknowledgeTimer` idempotency preserving
+`updated_at`, acknowledge 404, `_timer_extend`'s four missing branches
+(no_timer, ambiguous, unknown_label, singleton-no-label), and
+`_remaining_seconds` tolerating None + malformed inputs.
+
+### Counts
+- Backend tests: 145 → 182 (+37 across both commits)
+- Voice tests: 307 → 313 (+6 after review; the timer commit added 13)
+- Frontend tests: 62 (no change — chip verified manually via Playwright)
+- All builds clean, full E2E loop reverified on the docker container after
+  each commit (POST → SSE → chip ticks → expires red → tap → vanishes).
+
+### How to verify
+```bash
+# Container is running the new code — schemaVersion: 5
+curl -s localhost:8787/api/health
+
+# Create a 10s timer; chip should appear bottom-right on the wall
+curl -s -X POST localhost:8787/api/timers \
+  -H 'content-type: application/json' \
+  -d '{"label":"pasta","durationSec":10}'
+
+# Tap the chip on the wall (or, equivalently):
+TIMER_ID=$(curl -s localhost:8787/api/timers | jq -r '.[0].id')
+curl -s -X POST localhost:8787/api/timers/$TIMER_ID/acknowledge
+```
+
+### Not done (deliberately)
+- Visual design pass for the chip — placement, chime, expiry animation.
+  Today it's a functional placeholder.
+- Phone editor manage-timers view — no UI to set timers from the phone
+  yet; voice is the only entry point besides direct curl.
+- E2E test in CI for the chip — verified manually via Playwright; not
+  worth wiring into Vitest for a single component.
+- Pi-side deploy of the voice timer intents — code is on
+  `feat/voice-intent-matcher`; needs the same kitchen-FP gate as voice v1
+  before kitchen rollout.
+
+### Files
+- `backend/src/db/migrate.ts` (v5)
+- `backend/src/repos/timers.ts` + `.test.ts`
+- `backend/src/routes/timers.ts` + `.test.ts`
+- `backend/src/schemas.ts` (timerCreate, timerExtend)
+- `backend/src/realtime.ts` (`'timers'` poke kind)
+- `backend/src/model/types.ts`, `backend/src/server.ts`
+- `frontend/public/sw.js` (network-first for `/api/*`)
+- `frontend/src/components/timers/TimerStack.tsx`
+- `frontend/src/core/{model/types,api/client,hooks/useData,hooks/useRealtime}.ts`
+- `frontend/src/layouts/WallLayout.tsx`, `frontend/src/styles/index.css`
+- `kiosk/voice/homecal_voice/executor.py` + `executor_test.py`
+
+---
+
+## 2026-06-05 (night) — Regex-first intent matcher (PR #3 + review pass)
+
+Built the HomeBuddy-style pattern-matcher-before-LLM layer. ~80–90% of real
+voice utterances fit a known shape ("tonight's dinner is X", "Mia did the
+bathroom", "what's for dinner") and don't need an OpenRouter round-trip to
+resolve. Matcher emits `IntentResult(source="matcher")`; on miss falls
+through to Haiku unchanged. Audit log gains a `source` column so we can
+measure hit rate from production data. Branch `feat/voice-intent-matcher`,
+PR #3 open.
+
+### Intent inventory first
+User asked for a list of current + future intents before writing any
+matcher code. Surfaced v1 (4 intents: dinner_set, query_dinner,
+query_agenda, chore_complete) plus v2 candidates from spec §15 (event_add,
+event_edit, event_delete, query_chores_*, chore_uncomplete, dinner_clear,
+query_weather, screensaver_*, set_mute, backup_now). User added **timer**
+to the list — recognised it deserves its own backend state + wall UI, not
+just an intent. Scope locked via AskUserQuestion: multiple named timers,
+memory-only state, matcher-first build with timer intents registered as
+no-op until the feature lands.
+
+### 8 tasks, TDD throughout
+Built incrementally with tests-first:
+- **matcher.py** — `Matcher` class + `IntentPattern` registry. Extractors
+  return `IntentResult | None`; None = "regex matched but slot-fill failed,
+  try next pattern." `default_matcher` singleton for prod; tests use their
+  own.
+- **date_phrase.py** — `parse_date_phrase` for "tonight"/"tomorrow"/
+  "friday"/"next Monday"/"this Saturday" → ISO date. Possessive (both
+  `'s` and `'s`), case-insensitive. Bare day = next occurrence ≥ today;
+  `next X` strictly future (skips today even if today is that day).
+- **duration.py** — `parse_duration` digit + word numbers (`one`–`twenty`,
+  `thirty`–`ninety`, `a`/`an`), abbreviations (`hrs`/`mins`/`secs`),
+  combined units (`2 hours and 30 minutes`), filler words (`add 2 more
+  minutes`). `extract_timer_label` returns 1–3 word labels (`pasta`,
+  `boiled egg`, `flip the steak`) with leading/trailing exclude-word
+  strip.
+- **aliases.py** — `match_person` (longest name wins, possessive accepted)
+  + `match_chore` (restricted to person.id, longest title wins).
+  Word-boundary anchored so `Sam` doesn't match `Samuel`.
+- **patterns_v1.py** — dinner_set / query_dinner / query_agenda /
+  chore_complete patterns + extractors. chore_complete uses a permissive
+  verb regex and lets `match_person` + `match_chore` reject false
+  positives.
+- **patterns_timer.py** — single `\btimer\b` pattern, one extractor that
+  branches on verb shape (cancel/stop → cancel; how long/time left →
+  query; add/extend + duration → extend; duration → set).
+- **Wiring** — `IntentResult` gains `source` field; matcher stamps it
+  centrally via `dataclasses.replace`. `main._extract_with_matcher_first`
+  fetches family + chores once, tries matcher, falls through to Haiku on
+  miss. `_audit` threads source. Executor gets four timer_* handlers (all
+  route to "I can't set timers yet").
+- **Backend** — migration v4 adds `source TEXT` column. Zod
+  `voiceAuditBody.source` enum('matcher','llm').nullable(). Repo updated.
+
+### Comprehensive PR review (5 agents in parallel)
+code-reviewer, pr-test-analyzer, silent-failure-hunter,
+type-design-analyzer, comment-analyzer.
+
+**Three reviewers independently flagged the same critical bug:**
+`_try_execute` audited `status="applied"` regardless of executor's `ok`
+flag. The timer no-op (returning `ok=False`) would write a "successful"
+audit row + flash green ✓ on the wall while speaking "I can't set timers
+yet." Same bug already affected chore_complete unknown-person and empty
+query_dinner paths — the matcher just made it widely visible. Fixed by
+branching on `out["ok"]`; soft failures audit `failed` with the executor's
+error tag (`timer_not_built`, `unknown_person`, `unknown_chore`) for
+greppability.
+
+**Other criticals:**
+- `query_agenda` over-captured `"whats on netflix"` / `"anything on the
+  menu"` → triggered today's agenda. Fixed by requiring a terminal anchor
+  on the "on" branch (date phrase, optional punctuation, EOL).
+- `chore_complete` at confidence 1.0 + permissive verb regex auto-applied
+  questions like `"did Mia do the bathroom?"`. Demoted to 0.8 so it lands
+  in the confirm-card flow. Side effect: the mid-confidence path is now
+  reachable from the matcher path (was dead code).
+- Matcher fall-through (extractor returns None) had no breadcrumb. Added
+  `log.debug` so a misfiring regex is debuggable.
+
+**Type tightenings:**
+- `IntentSource = Literal["matcher", "llm"]` shared between Pi
+  (`intent.py`) and backend (`voiceUtterances.ts`). Typo "match" now
+  caught at type-check.
+- `Extractor` callable → `Protocol` with explicit `(re.Match, str,
+  MatchContext) → IntentResult | None`. Catches arity drift.
+- `MatchContext.family/chores` typed `list[FamilyMember]` /
+  `list[Chore]` via structural TypedDicts.
+- `IntentPattern.name` required (was default `""`). A test already keyed
+  off names; the default would silently bypass.
+
+**DB hardening:**
+Migration v4 (this PR) now embeds `CHECK (source IN ('matcher','llm') OR
+source IS NULL)` on the new column, mirroring the existing status enum
+constraint. Closes the direct-SQL escape hatch past Zod.
+
+**Comment hygiene** — three CLAUDE.md violations: `main.py:496` and two
+test docstrings referenced "the 2026-06-05 review caught" / "the cascade
+saga". All rewritten as standing invariants. `matcher.py` order-of-
+registration docstring strengthened with a concrete failure-mode example.
+`duration.py` HomeBuddy port attribution dropped — replaced with the
+footgun each helper avoids.
+
+### Stats
+- Pi tests: 292/292 (was 159 pre-matcher, +133). New test files:
+  `matcher_test.py` (12), `date_phrase_test.py` (19), `duration_test.py`
+  (23), `aliases_test.py` (23), `patterns_v1_test.py` (31),
+  `patterns_timer_test.py` (16). +9 in `main_test.py` (source threading,
+  matcher-first wiring, ok=False audit, matcher 1.0 auto-apply,
+  backend-fetch propagation), +2 in `executor_test.py` (timer no-op),
+  +2 in backend `voiceUtterances.test.ts` (source CHECK + null default).
+- Backend tests: 149/149 (was 145).
+- Frontend: 62/62 unchanged.
+- Build clean.
+
+### Deferred (not PR blockers)
+- Unicode-name `\b` word-boundary issue — Python's `re` uses ASCII `\w`
+  by default. No homecal family currently has non-ASCII names; pin a
+  fix when one does.
+- Real-world phrasings missing patterns: `"we're having X tonight"`
+  (date trailing), `"dinner tonight is X"`, `"is there anything on
+  tomorrow"`. Pattern expansion in a follow-up PR.
+- `extract_timer_label` filter-rejection logging — low priority; timer
+  feature not built yet.
+- `parse_date_phrase` malformed-today warning — defensive, never fires
+  today.
+
+### Resume sequence
+PR #3 is open with the fix commit pushed. To deploy:
+```bash
+# Backend container (picks up migration v4)
+docker compose up -d --build
+
+# Sync homecal_voice/ to Pi + restart service
+rsync -a --exclude '.venv' --exclude '__pycache__' --exclude '*.pyc' \
+  kiosk/voice/homecal_voice/ \
+  hbadmin@192.168.1.135:/home/hbadmin/homecal-voice/homecal_voice/
+ssh hbadmin@192.168.1.135 'sudo systemctl restart homecal-voice'
+
+# Watch hit rate in the audit log
+docker compose exec calendar node -e 'const d=require("better-sqlite3")("/data/calendar.db",{readonly:true}); console.log(d.prepare("SELECT source, COUNT(*) FROM voice_utterances WHERE created_at > datetime(\"now\",\"-24 hours\") GROUP BY source").all())'
+```
+
+Acceptance gate: after 24h of mixed-source audit data, matcher hit rate
+≥ 50% on `applied` outcomes. Lower means too many real utterances are
+wandering off-pattern and the registry needs another sweep.
+
+---
+
 ## 2026-06-05 (late) — PR #2 review pass + merge to master
 
 Ran the comprehensive PR review (5 specialist agents in parallel) on the

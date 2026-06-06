@@ -9,7 +9,8 @@ export type PokeKind =
   | 'photos'
   | 'chores'
   | 'family-members'
-  | 'voice';
+  | 'voice'
+  | 'timers';
 
 export interface Poke {
   kind: PokeKind;

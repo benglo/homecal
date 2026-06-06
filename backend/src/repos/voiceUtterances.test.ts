@@ -33,12 +33,14 @@ test('insert + list', () => {
     status: 'applied',
     durationMs: 4200,
     error: null,
+    source: 'matcher',
   });
   const rows = listUtterances({ limit: 10 });
   assert.equal(rows.length, 1);
   assert.equal(rows[0].transcript, "tonight's dinner is tacos");
   assert.equal(rows[0].confidence, 0.92);
   assert.equal(rows[0].status, 'applied');
+  assert.equal(rows[0].source, 'matcher');
 });
 
 test('insert: status CHECK rejects garbage', () => {
@@ -51,9 +53,41 @@ test('insert: status CHECK rejects garbage', () => {
       status: 'bogus' as any,
       durationMs: null,
       error: null,
+      source: null,
     }),
     /CHECK/
   );
+});
+
+test('insert: source CHECK rejects garbage', () => {
+  assert.throws(() =>
+    insertUtterance({
+      id: '0191ec00-0000-7000-8000-000000000005',
+      transcript: 'x',
+      intentJson: null,
+      confidence: null,
+      status: 'applied',
+      durationMs: null,
+      error: null,
+      source: 'guessed' as any,
+    }),
+    /CHECK/
+  );
+});
+
+test('insert: source defaults to null when caller passes null', () => {
+  insertUtterance({
+    id: '0191ec00-0000-7000-8000-000000000003',
+    transcript: '[blank]',
+    intentJson: null,
+    confidence: null,
+    status: 'silent_low_conf',
+    durationMs: null,
+    error: null,
+    source: null,
+  });
+  const [row] = listUtterances({ limit: 1 });
+  assert.equal(row.source, null);
 });
 
 test('list: ordered newest-first, honours limit', () => {
@@ -66,6 +100,7 @@ test('list: ordered newest-first, honours limit', () => {
       status: 'failed',
       durationMs: null,
       error: null,
+      source: null,
     });
   }
   const rows = listUtterances({ limit: 3 });

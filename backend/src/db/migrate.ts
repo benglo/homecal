@@ -123,6 +123,35 @@ const MIGRATIONS: Migration[] = [
       VALUES (1, strftime('%Y-%m-%dT%H:%M:%SZ','now'));
     `);
   },
+  // v4 — audit source so we can measure regex-matcher hit rate from the
+  // audit log without re-parsing transcripts. CHECK mirrors the existing
+  // status enum so a future direct-SQL or seed-script insert can't write
+  // garbage past the Zod boundary. Nullable: pre-matcher rows + non-intent
+  // paths (blank STT, hallucination) legitimately have no source.
+  (db) => {
+    db.exec(`
+      ALTER TABLE voice_utterances ADD COLUMN source TEXT
+        CHECK (source IN ('matcher','llm') OR source IS NULL);
+    `);
+  },
+  // v5 — kitchen timers. expires_at is the source of truth for the
+  // countdown (wall + voice both compute remaining from now); duration_sec
+  // is the running sum across explicit extensions, kept for audit.
+  (db) => {
+    db.exec(`
+      CREATE TABLE timers (
+        id              TEXT PRIMARY KEY,
+        label           TEXT,
+        duration_sec    INTEGER NOT NULL CHECK (duration_sec > 0),
+        started_at      TEXT NOT NULL,
+        expires_at      TEXT NOT NULL,
+        acknowledged_at TEXT,
+        created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+        updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+      );
+      CREATE INDEX idx_timers_expires_at ON timers(expires_at);
+    `);
+  },
 ];
 
 /** Seed categories — idempotent, Okabe–Ito palette from the design system. */

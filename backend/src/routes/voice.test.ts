@@ -73,9 +73,25 @@ test('POST /api/voice/audit: inserts row + 201', async () => {
       confidence: 0.92,
       status: 'applied',
       duration_ms: 4200,
+      source: 'matcher',
     },
   });
   assert.equal(r.statusCode, 201);
+});
+
+test('POST /api/voice/audit: validation 400 on bad source', async () => {
+  const r = await app.inject({
+    method: 'POST',
+    url: '/api/voice/audit',
+    headers: PI,
+    payload: {
+      id: '0191ec00-0000-7000-8000-000000000004',
+      transcript: 'x',
+      status: 'applied',
+      source: 'guessed',
+    },
+  });
+  assert.equal(r.statusCode, 400);
 });
 
 test('POST /api/voice/audit: validation 400 on bad status', async () => {

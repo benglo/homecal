@@ -1,6 +1,11 @@
 import { getDb } from '../db';
 import { nowIso } from '../util/time';
 
+// 'matcher' = regex bypassed Haiku; 'llm' = Haiku produced the intent.
+// Distinct from null (non-intent paths: blank STT, hallucination, STT
+// exception) so hit-rate metrics aren't inflated by no-intent rows.
+export type IntentSource = 'matcher' | 'llm';
+
 export interface VoiceUtteranceInsert {
   id: string;
   transcript: string;
@@ -9,6 +14,7 @@ export interface VoiceUtteranceInsert {
   status: 'applied' | 'confirmed' | 'cancelled' | 'pending' | 'failed' | 'silent_low_conf';
   durationMs: number | null;
   error: string | null;
+  source: IntentSource | null;
 }
 
 export interface VoiceUtterance extends VoiceUtteranceInsert {
@@ -19,15 +25,15 @@ export function insertUtterance(u: VoiceUtteranceInsert): void {
   const db = getDb();
   db.prepare(`
     INSERT INTO voice_utterances
-      (id, created_at, transcript, intent_json, confidence, status, duration_ms, error)
-    VALUES (@id, @createdAt, @transcript, @intentJson, @confidence, @status, @durationMs, @error)
+      (id, created_at, transcript, intent_json, confidence, status, duration_ms, error, source)
+    VALUES (@id, @createdAt, @transcript, @intentJson, @confidence, @status, @durationMs, @error, @source)
   `).run({ ...u, createdAt: nowIso() });
 }
 
 export function listUtterances(opts: { limit: number }): VoiceUtterance[] {
   return getDb().prepare(`
     SELECT id, created_at AS createdAt, transcript, intent_json AS intentJson,
-           confidence, status, duration_ms AS durationMs, error
+           confidence, status, duration_ms AS durationMs, error, source
     FROM voice_utterances
     ORDER BY created_at DESC
     LIMIT ?

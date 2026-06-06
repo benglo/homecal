@@ -146,6 +146,16 @@ export interface DinnerSuggestion {
   lastUsed: string;
 }
 
+export interface Timer {
+  id: string;
+  label: string | null;
+  durationSec: number;
+  startedAt: string;
+  expiresAt: string;
+  acknowledgedAt: string | null;
+  updatedAt: string;
+}
+
 export interface WeatherData {
   temperature: number | null;
   feelsLike: number | null;
