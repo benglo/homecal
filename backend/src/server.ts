@@ -16,6 +16,7 @@ import { kioskRoutes } from './routes/kiosk';
 import { weatherRoutes } from './routes/weather';
 import { familyMemberRoutes } from './routes/familyMembers';
 import { choreRoutes } from './routes/chores';
+import { voiceConcernsRoutes } from './routes/voiceConcerns';
 import { voiceRoutes } from './routes/voice';
 import { timerRoutes } from './routes/timers';
 import { initPhotos, purgeTrash } from './photos';
@@ -68,6 +69,7 @@ async function main(): Promise<void> {
   await app.register(weatherRoutes);
   await app.register(familyMemberRoutes);
   await app.register(choreRoutes);
+  await app.register(voiceConcernsRoutes);
   await app.register(voiceRoutes);
   await app.register(timerRoutes);
 
