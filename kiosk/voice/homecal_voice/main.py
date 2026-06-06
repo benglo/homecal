@@ -356,12 +356,14 @@ def main() -> int:
     from homecal_voice.matcher import MatchContext, default_matcher
     from homecal_voice.patterns_v1 import register_v1
     from homecal_voice.patterns_timer import register_timer
+    from homecal_voice.patterns_kid import register_kid
 
     # Register patterns once at startup. Order matters — v1 first so a real
     # "tonight's dinner is X" beats any future timer pattern that captures
     # the same shape (none today, but defensive against future bleed).
     register_v1(default_matcher)
     register_timer(default_matcher)
+    register_kid(default_matcher)
 
     mic = MicStream(device=cfg.audio_device)
     mic.start()

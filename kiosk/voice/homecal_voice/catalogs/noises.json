@@ -1,6 +1,7 @@
 {
   "synonyms": {"doggy": "dog"},
   "entries": {
-    "chicken": "chicken.mp3"
+    "chicken": "chicken.mp3",
+    "dog": "dog.mp3"
   }
 }
