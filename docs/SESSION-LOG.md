@@ -4,6 +4,140 @@ Running log of work per session. Newest first. Pair with `git log` for exact dif
 
 ---
 
+## 2026-06-06 — Kitchen timers (voice + wall chip) on PR #3
+
+Built out the timer intents the matcher already recognised but the executor
+stubbed as "I can't set timers yet". End-to-end: SQLite table + CRUD +
+SSE pokes, voice executor wiring for all four `timer_*` intents, minimal
+placeholder chip on the wall, then a full PR review pass with five
+specialist agents and a follow-up fix commit. Two commits on top of the
+existing PR #3.
+
+### What landed
+- **Migration v5** — `timers` table. `expires_at` is the source of truth
+  for the countdown (wall + voice both compute remaining from now);
+  `duration_sec` is a running sum across explicit extensions, kept for
+  audit. `acknowledged_at` flips when someone taps an expired chip.
+- **Backend repo + routes** — `createTimer` / `listActiveTimers` /
+  `findTimerByLabel` / `extendTimer` / `cancelTimer` / `acknowledgeTimer`.
+  `GET/POST/PATCH/DELETE /api/timers` + `POST /api/timers/:id/acknowledge`,
+  with `broker.poke('timers')` on every mutation. Zod caps duration at
+  [5s, 8h]. `findTimerByLabel(null)` returns the sole active timer (or
+  null when ambiguous) — drives the voice "the timer" semantics.
+- **Voice executor** — all four timer intents (`_timer_set`,
+  `_timer_query`, `_timer_cancel`, `_timer_extend`) hit the real API.
+  `humanise_duration` for spoken replies ("10 minutes", "1 hour and 5
+  minutes"). `_resolve_target` returns a typed `Literal[no_timer|
+  ambiguous|unknown_label]` error tag; `_speak_resolve_error` collapses
+  the three identical error ladders that lived in each handler.
+- **Wall chip (`TimerStack`)** — bottom-right pill stack, counts down via
+  shared `useClock`, flashes red on expiry, tap to cancel (running) or
+  dismiss (expired). Explicitly minimal — the visual design pass is
+  deferred. Mounted in `WallLayout`.
+
+### The SW bug that ate 30 minutes
+First live test on the docker container: chip never appeared after POST,
+even though SSE delivered `kind: 'timers'` correctly and React Query's
+invalidation fired the refetch. Traced through:
+- SSE wire ✓ (curl confirmed delivery)
+- KIND_TO_KEYS mapping ✓ (grepped the bundle)
+- useTimers mounted with the right query key ✓
+- GET /api/timers returning `[]` after POST — wait what
+
+Service worker was using **stale-while-revalidate** for `/api/*`. The cached
+`[]` from the initial GET kept being returned to React Query after every
+SSE invalidation; the fresh response only updated the cache for *next* time.
+The chores feature has been masking this with optimistic mutations; without
+an optimistic path, the wall never sees fresh data until the cache happens
+to mismatch.
+
+Fix: SW is now **network-first with cache fallback** for `/api/*` GETs.
+Network errors fall back to cached if any; otherwise empty 503 (not a fake
+`{}` body — that confuses consumers expecting an array). The never-blank
+guarantee still holds via the cache fallback path.
+
+### PR review with 5 agents in parallel
+Ran `/pr-review-toolkit:review-pr` after pushing the first commit. Agents:
+`code-reviewer`, `pr-test-analyzer`, `comment-analyzer`,
+`silent-failure-hunter`, `type-design-analyzer`. They converged sharply on
+real issues — three critical, eight important, five comment trims.
+
+Worth pulling out the ones that mattered most:
+- **`extendTimer` on an expired timer** was adding `addSec*1000` to the
+  *stored* `expires_at`. "Add 2 minutes" on a timer that expired 5 minutes
+  ago would set new expiry 3 minutes in the past; voice would say "added
+  2 minutes — 0 seconds left." Fix: clamp the base to `max(now,
+  expiresMs)` before adding.
+- **`extendTimer` on a row with malformed `expires_at`** silently produced
+  a `RangeError` from `isoUtc(new Date(NaN))` that bubbled to Fastify as an
+  opaque 500. Now validates `Number.isFinite(Date.parse(...))` and throws
+  `DATA_CORRUPT`.
+- **TimerStack mutations had only `onSuccess`** — a failed cancel/ack
+  would leave the chip on screen forever with no log, no toast, no
+  refetch. Switched to `onSettled` so error paths also invalidate.
+- **`useTimers` had `staleTime: 5 * 60_000`** — wrong for a live
+  countdown. A remount within 5 minutes serves a stale list. Now `0`.
+- **Five comments would have rotted** — "placeholder", "deferred design
+  pass", "typically 0-3" (measured number), a CSS keyframe labelled
+  "placeholder", and a `humanise_duration` "safety net" branch that was
+  unreachable per the math. All trimmed.
+
+### Test backfill
+Added 8 backend + 6 voice tests covering the review gaps: duration cap
+boundaries (4/5/28800/28801), `extendTimer` past-expiry clamp,
+`DATA_CORRUPT` path, `acknowledgeTimer` idempotency preserving
+`updated_at`, acknowledge 404, `_timer_extend`'s four missing branches
+(no_timer, ambiguous, unknown_label, singleton-no-label), and
+`_remaining_seconds` tolerating None + malformed inputs.
+
+### Counts
+- Backend tests: 145 → 182 (+37 across both commits)
+- Voice tests: 307 → 313 (+6 after review; the timer commit added 13)
+- Frontend tests: 62 (no change — chip verified manually via Playwright)
+- All builds clean, full E2E loop reverified on the docker container after
+  each commit (POST → SSE → chip ticks → expires red → tap → vanishes).
+
+### How to verify
+```bash
+# Container is running the new code — schemaVersion: 5
+curl -s localhost:8787/api/health
+
+# Create a 10s timer; chip should appear bottom-right on the wall
+curl -s -X POST localhost:8787/api/timers \
+  -H 'content-type: application/json' \
+  -d '{"label":"pasta","durationSec":10}'
+
+# Tap the chip on the wall (or, equivalently):
+TIMER_ID=$(curl -s localhost:8787/api/timers | jq -r '.[0].id')
+curl -s -X POST localhost:8787/api/timers/$TIMER_ID/acknowledge
+```
+
+### Not done (deliberately)
+- Visual design pass for the chip — placement, chime, expiry animation.
+  Today it's a functional placeholder.
+- Phone editor manage-timers view — no UI to set timers from the phone
+  yet; voice is the only entry point besides direct curl.
+- E2E test in CI for the chip — verified manually via Playwright; not
+  worth wiring into Vitest for a single component.
+- Pi-side deploy of the voice timer intents — code is on
+  `feat/voice-intent-matcher`; needs the same kitchen-FP gate as voice v1
+  before kitchen rollout.
+
+### Files
+- `backend/src/db/migrate.ts` (v5)
+- `backend/src/repos/timers.ts` + `.test.ts`
+- `backend/src/routes/timers.ts` + `.test.ts`
+- `backend/src/schemas.ts` (timerCreate, timerExtend)
+- `backend/src/realtime.ts` (`'timers'` poke kind)
+- `backend/src/model/types.ts`, `backend/src/server.ts`
+- `frontend/public/sw.js` (network-first for `/api/*`)
+- `frontend/src/components/timers/TimerStack.tsx`
+- `frontend/src/core/{model/types,api/client,hooks/useData,hooks/useRealtime}.ts`
+- `frontend/src/layouts/WallLayout.tsx`, `frontend/src/styles/index.css`
+- `kiosk/voice/homecal_voice/executor.py` + `executor_test.py`
+
+---
+
 ## 2026-06-05 (night) — Regex-first intent matcher (PR #3 + review pass)
 
 Built the HomeBuddy-style pattern-matcher-before-LLM layer. ~80–90% of real
