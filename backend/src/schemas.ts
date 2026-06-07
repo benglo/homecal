@@ -128,6 +128,19 @@ const VOICE_STATE_KINDS = [
   'idle','listening','thinking','confirming','applied','failed','mic_offline','voice_offline',
 ] as const;
 
+/** Every intent name `post_audit` may carry. Mirrors `VALID_INTENTS` on the Pi.
+ *  Tightened from `z.string().min(1).max(64)` so a typo at the wire is caught
+ *  by Zod before it hits the DB column (which intentionally has no CHECK so
+ *  adding the 12th intent doesn't force a table rebuild). */
+export const VOICE_INTENT_NAMES = [
+  'dinner_set', 'chore_complete',
+  'query_dinner', 'query_agenda',
+  'timer_set', 'timer_query', 'timer_cancel', 'timer_extend',
+  'ask_question', 'noise_play', 'joke_tell',
+  'unknown',
+] as const;
+export type VoiceIntentName = (typeof VOICE_INTENT_NAMES)[number];
+
 export const voiceStateBody = z.object({
   utterance_id: z.string().min(1),
   kind: z.enum(VOICE_STATE_KINDS),
@@ -145,7 +158,7 @@ export const voiceAuditBody = z.object({
   // "matcher" = regex path bypassed Haiku; "llm" = Haiku produced the
   // intent. Nullable for non-intent paths (blank STT, hallucination).
   source: z.enum(['matcher','llm']).nullable().optional(),
-  intent_name: z.string().min(1).max(64).nullable().optional(),
+  intent_name: z.enum(VOICE_INTENT_NAMES).nullable().optional(),
   answer: z.string().max(4000).nullable().optional(),
   concern: z.boolean().nullable().optional(),
 });

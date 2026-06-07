@@ -197,3 +197,13 @@ test('voiceAuditBody rejects empty intent_name', () => {
   });
   assert.equal(r.success, false);
 });
+
+test('voiceAuditBody rejects unknown intent_name', () => {
+  const r = voiceAuditBody.safeParse({
+    id: 'u-1',
+    transcript: 'hi',
+    status: 'applied',
+    intent_name: 'totally_fake_intent',
+  });
+  assert.equal(r.success, false);
+});

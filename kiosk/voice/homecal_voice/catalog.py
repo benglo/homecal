@@ -9,6 +9,8 @@ import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
+from typing import Mapping
 
 
 _PKG_DIR = Path(__file__).parent
@@ -21,8 +23,12 @@ _SAFETY_PATH = _CATALOGS_DIR / "safety_terms.json"
 
 @dataclass(frozen=True)
 class Noises:
-    entries: dict[str, str]   # name → mp3 filename
-    synonyms: dict[str, str]  # alias → name
+    """`@dataclass(frozen=True)` only freezes the binding, not the dicts.
+    Without `MappingProxyType` a caller could do `noises.entries['x'] = 'evil.mp3'`
+    and silently corrupt the in-process catalog used by every subsequent request.
+    Mirror the `AUTO_APPLY_THRESHOLDS` pattern."""
+    entries: Mapping[str, str]
+    synonyms: Mapping[str, str]
 
 
 @dataclass(frozen=True)
@@ -34,7 +40,10 @@ class Joke:
 
 def load_noises() -> Noises:
     data = json.loads(_NOISES_PATH.read_text())
-    return Noises(entries=dict(data["entries"]), synonyms=dict(data.get("synonyms", {})))
+    return Noises(
+        entries=MappingProxyType(dict(data["entries"])),
+        synonyms=MappingProxyType(dict(data.get("synonyms", {}))),
+    )
 
 
 def load_jokes() -> list[Joke]:

@@ -50,3 +50,14 @@ def test_integrity_check_fails_on_empty_jokes(tmp_path, monkeypatch):
     monkeypatch.setattr(catalog, "_JOKES_PATH", fake)
     with pytest.raises(SystemExit):
         catalog.check_integrity()
+
+
+def test_noises_entries_are_immutable():
+    """MappingProxyType prevents silent runtime mutation of the in-process
+    catalog. A future maintainer who tries to monkey-patch will hit a
+    TypeError, not a silently corrupted shared dict."""
+    n = catalog.load_noises()
+    with pytest.raises(TypeError):
+        n.entries["chicken"] = "evil.mp3"  # type: ignore[index]
+    with pytest.raises(TypeError):
+        n.synonyms["doggy"] = "evil"  # type: ignore[index]

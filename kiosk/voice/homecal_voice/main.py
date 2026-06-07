@@ -43,8 +43,8 @@ log = logging.getLogger("homecal_voice.main")
 # the override map only lists intents that DIFFER from the default to keep
 # the table tight. `noise_play` and `joke_tell` auto-apply at ANY confidence
 # — a confirm-card disrupts the gag, and the matcher emits 1.0 on catalog
-# hits anyway. Spec §3.9. MappingProxyType is read-only at runtime, which
-# blocks test-mock leakage between cases.
+# hits anyway. MappingProxyType is read-only at runtime, which blocks
+# test-mock leakage between cases.
 AUTO_APPLY_DEFAULT = 0.85
 AUTO_APPLY_THRESHOLDS = MappingProxyType({
     "noise_play": -math.inf,
@@ -146,7 +146,7 @@ def _is_hallucination(t: str) -> bool:
 def _is_quiet_hours(now: datetime | None = None) -> bool:
     """Brisbane 20:00 (inclusive) — 07:00 (exclusive) — mirrors the chore-chime
     quiet window in the frontend. Used to gate noise_play clip playback so a
-    fart noise at 11pm doesn't fire. Spec §3.11."""
+    fart noise at 11pm doesn't fire."""
     if now is None:
         now = datetime.now(timezone.utc)
     brisbane = now + timedelta(seconds=BRISBANE_OFFSET_SECONDS)

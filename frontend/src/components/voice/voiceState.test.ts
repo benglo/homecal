@@ -191,9 +191,9 @@ describe('pokeToAction', () => {
 
   // Each new intent variant must round-trip through pokeToAction or the wall
   // chip hangs on 'thinking' after the Pi posts applied — the trust boundary
-  // silently rejects unknown intent shapes. Same failure pattern as PR #4.
+  // silently rejects unknown intent shapes.
   it.each([
-    // timer_* — already shipped (PR #4); kept as the canonical regression
+    // timer_* canonical regression for trust-boundary validation
     { intent: 'timer_set', duration_sec: 300, label: 'pasta', confidence: 1.0 },
     { intent: 'timer_set', duration_sec: 60, label: null, confidence: 1.0 },
     { intent: 'timer_query', label: null, confidence: 1.0 },
