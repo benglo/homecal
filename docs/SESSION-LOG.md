@@ -4,6 +4,121 @@ Running log of work per session. Newest first. Pair with `git log` for exact dif
 
 ---
 
+## 2026-06-07 (afternoon) — PR #5 review pass + 6 fix-up commits + noise-import tool
+
+5-persona PR review (code, tests, comments, silent-failure, types) on PR
+#5's 22-commit kid-intents work. Surfaced 4 criticals and 11 importants;
+addressed all of them in 6 focused fix-up commits. Then built an
+interactive shell tool to import the real CC0 noise clips into the
+catalog, since that was the last outstanding pre-merge gap.
+
+### The criticals (review converged on one theme)
+All four criticals came from the silent-failure hunt and were about the
+bot lying to the kid:
+
+- **`_noise_play` clip exception bubbled up to `_try_execute`'s catch-
+  all** which spoke *"Sorry, I couldn't reach the calendar."* Kid asks
+  for a fart, gets an API-error message. Fix: try/except around
+  `self._play_clip(...)`, audit as `failed` with `error="clip_play:<msg>"`.
+
+- **`_joke_tell` per-speak failure recorded the wrong audit + spoke the
+  wrong error.** Setup-then-punchline-TTS-raises landed in the outer
+  error branch with empty `spoken`; the kid heard the setup, then
+  silence, then "Sorry, I couldn't reach the calendar". Fix: each
+  `_speak` is now independently wrapped; on punchline failure the
+  audit's `spoken` field records what the kid actually heard ("Why?").
+
+- **Quiet-hours suppression flashed green ✓ "applied".** Wall lied —
+  executor returned `ok=True` even though `_quiet_safe_play_clip` had
+  silently swallowed the call. Fix: wrapper now returns `bool`; executor
+  returns `ok=False, error="quiet_hours_suppressed"`. None-returning
+  callables (backwards compat) still treated as success.
+
+- **`_extract_with_matcher_first` over-coupled.** Fetched family +
+  chores + dinners + events in parallel BEFORE attempting any matcher
+  pass. An outage on `/api/events` killed `noise_play` and `joke_tell`
+  too — even though those matchers need zero backend context. Fix:
+  three-stage routing. Stage 1 tries `kid_matcher` (zero API). Stage 2
+  fetches family + chores, tries `core_matcher` (v1 + timer). Stage 3
+  fetches dinners + events for the Haiku prompt. Required splitting the
+  single `default_matcher` into named matchers in `matcher.py`.
+
+### The importants worth pulling out
+- **Safety-regex trip was invisible in the audit log.** Spec §7.2
+  mandated `error="regex_override"` so the rate could be measured;
+  shipped without it. Fix: `_ask_question` now returns
+  `regex_override: True` when `safety.check_answer` overrode; `_audit`
+  threads that into the audit row's `error` column. Now greppable.
+- **`RecentConcernsSection` silently rendered "No recent concerns" on
+  query error.** Safety-surface UX disaster — parent reasonably
+  concludes "all clear" when system has no idea. Fix: destructure
+  `isError`, render "Couldn't load — check your connection" in warn
+  colour.
+- **`Noises.entries` was a mutable dict.** `@dataclass(frozen=True)`
+  freezes the binding, not the dicts; `noises.entries["fart"] = "evil.mp3"`
+  would silently corrupt the in-process catalog. Switched to
+  `MappingProxyType` mirroring `AUTO_APPLY_THRESHOLDS`. Pinned with a
+  test that asserts `TypeError` on write attempt.
+- **`voiceAuditBody.intent_name` was an unconstrained string.** Typo at
+  the wire (`"ask_quetion"`) would land in the DB column (which has no
+  CHECK by design). Tightened to `z.enum([...VOICE_INTENT_NAMES])`.
+  Exported the array as `VOICE_INTENT_NAMES` so frontend + tests share
+  the source of truth.
+- **End-to-end integration tests missing.** Spec §10 listed them;
+  shipped without. Added `integration_test.py` with 3 round-trip tests
+  (matcher → executor → audit) per new intent. A `catalog_key` vs
+  `catalog_id` rename drift between layers would now fail in CI, not
+  production.
+- **Comment hygiene drift.** Three CLAUDE.md violations: `Spec §3.9` /
+  `Spec §3.11` cited subsection refs that don't exist (spec §3 is flat),
+  `"Saves ~15ms vs serial fetches"` was the exact "measured numbers that
+  rot" the rule bans, `PR #4` references in test comments would rot.
+  All rewritten as structural reasoning.
+
+### Test count delta
+- Pi: 389 → 413 (+24 tests across the 6 fix-up commits)
+- Backend: 193 → 194 (+1 — Zod enum rejection)
+- Frontend: 81 (unchanged — the error-state change isn't unit-testable
+  without `@testing-library/react`)
+
+### Unexpected finding
+Fix E's edge-case test for `noise_play` precedence (both `catalog_key`
+AND `play_catalog` present) revealed that the executor returns
+`fallback_text` unconditionally — even on the catalog_key path where
+`fallback_text` shouldn't logically be spoken. Pinned as a regression
+test with a NOTE so a future fix produces a deliberate diff. Not a real
+bug in practice (matcher emits only `catalog_key`, Haiku emits only
+`play_catalog`+`fallback_text`; the contrived both-present case is
+LLM-merge speculation). Documented for follow-up.
+
+### Noise-clip import tool
+The 12 catalog entries are still zero-byte placeholders — real CC0
+clips are the last pre-merge gap. Built
+`kiosk/voice/scripts/import-noises.sh`: interactive bash tool that
+walks the 12 entries in order, prompts for source-file path + URL +
+creator + notes, runs `ffmpeg -ar 16000 -ac 1 -t 2 -b:a 64k` to
+normalise to the spec (mono, 16kHz, 2s hard cap, 64kbps MP3), and
+updates the right row in `SOURCES.md` automatically. Handles drag-drop
+quoted paths, `~` expansion, skip/replace/quit. Recommended source:
+Pixabay sound effects (no account, blanket permissive license).
+Freesound CC0 filter as backup with per-file license verification.
+
+Tool committed; the actual clip import is a follow-up since it needs
+the user to do the per-clip search/download interactively.
+
+### Files
+**New:** `kiosk/voice/scripts/import-noises.sh`,
+`kiosk/voice/homecal_voice/integration_test.py`.
+
+**Modified (fix-up):** `kiosk/voice/homecal_voice/{executor,main,matcher,
+catalog}.py` + tests, `kiosk/voice/homecal_voice/catalogs/noises.json`
+(deduped kitten synonym), `backend/src/schemas.ts`,
+`backend/src/repos/voiceUtterances.test.ts`,
+`frontend/src/components/manage/RecentConcernsSection.tsx`,
+`frontend/src/components/voice/voiceState.test.ts`.
+
+---
+
 ## 2026-06-07 — Kid-friendly voice intents (PR #5)
 
 Built three new voice intents aimed at the kids (Imogen and Penelope):
