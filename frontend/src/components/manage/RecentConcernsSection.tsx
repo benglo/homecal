@@ -7,7 +7,7 @@ import { SectionHeading } from './primitives/SectionHeading';
  *  parental review. Last 7 days. Read-only — no mark-as-reviewed flow in v1.
  *  Spec §7.3. */
 export function RecentConcernsSection() {
-  const { data, isLoading } = useRecentConcerns();
+  const { data, isLoading, isError } = useRecentConcerns();
   if (isLoading) return null;
   const rows = data ?? [];
 
@@ -20,7 +20,16 @@ export function RecentConcernsSection() {
       >
         Things the kids asked that the bot flagged as worth your eyes. Last 7 days.
       </p>
-      {rows.length === 0 ? (
+      {/* Safety surface: a query failure must never look like "all clear" —
+       *  a parent should know we couldn't check, not be falsely reassured. */}
+      {isError ? (
+        <p
+          className="text-text"
+          style={{ fontSize: 13, color: 'var(--warn, #d97706)' }}
+        >
+          Couldn't load concerns — check your connection and try again.
+        </p>
+      ) : rows.length === 0 ? (
         <p className="text-text-muted" style={{ fontSize: 13 }}>
           No recent concerns.
         </p>
