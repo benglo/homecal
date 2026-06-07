@@ -50,3 +50,30 @@ def test_term_at_end_of_string():
 def test_term_followed_by_punctuation():
     out = check_answer("Oh fuck!")
     assert out == REDIRECT_LINE
+
+
+# ---------------------------------------------------------------------------
+# Fix E — Group 3c: curly apostrophes + multi-banned-term
+# ---------------------------------------------------------------------------
+
+
+def test_curly_apostrophes_do_not_break_word_boundaries():
+    """Haiku occasionally outputs curly punctuation. \\b is ASCII-based, so
+    a curly apostrophe creates word boundaries differently than a straight
+    one — pin the current behaviour so we notice if it ever shifts."""
+    # A clean sentence with curly apostrophes must still pass through.
+    out = check_answer("That’s a great question — let’s ask your grown-up!")
+    assert "great question" in out
+
+    # A banned word with a curly apostrophe attached is still a banned word.
+    # If this ever stops matching, we'd want to know (curly is rare in
+    # natural speech but increasingly common in LLM output).
+    out2 = check_answer("oh “fuck” he said")
+    assert out2 == REDIRECT_LINE
+
+
+def test_multi_banned_term_answer_redirects_once():
+    """Two banned terms in one answer still produces a single redirect line.
+    Documents that the safety net replaces the whole answer (not partial)."""
+    out = check_answer("don't say fuck or shit, kids")
+    assert out == REDIRECT_LINE

@@ -1048,3 +1048,103 @@ def test_matcher_first_routing_llm_path_fetches_everything():
     assert "/api/chores" in fetched
     assert "/api/dinners" in fetched
     assert "/api/events" in fetched
+
+
+# ---------------------------------------------------------------------------
+# Fix E — Group 2: audit row shape on ok=False
+# ---------------------------------------------------------------------------
+
+
+def test_audit_on_ok_false_populates_intent_name_but_not_answer_concern():
+    """When the executor soft-fails, the audit row must record intent_name
+    (so 'which kind of intent failed' is queryable) but leave answer and
+    concern as None — those represent the spoken response and concern flag,
+    which don't exist on a failure."""
+    from unittest.mock import MagicMock
+    from homecal_voice.server_state import post_audit
+
+    with patch("homecal_voice.server_state.requests") as r:
+        post_audit(
+            base="http://x", token="t", id="u1",
+            transcript="make a dolphin noise", status="failed",
+            intent_json='{"intent":"noise_play"}', confidence=0.9,
+            duration_ms=200, error="unknown_catalog_key:dolphin",
+            source="llm",
+            intent_name="noise_play",   # explicitly set on failure
+            answer=None,                # NOT populated — kid heard nothing
+            concern=None,               # NOT applicable to noise_play
+        )
+    body = r.post.call_args.kwargs.get("json")
+    assert body["intent_name"] == "noise_play"
+    assert body["status"] == "failed"
+    assert "answer" not in body  # post_audit omits None kwargs
+    assert "concern" not in body
+
+
+def test_audit_on_quiet_hours_suppression_records_truth():
+    """The quiet-hours soft-failure must be greppable in the audit log so a
+    parent reviewing 'why did the chicken not play at 11pm' can find it.
+    intent_name=noise_play, status=failed, error=quiet_hours_suppressed."""
+    from unittest.mock import MagicMock
+    from homecal_voice.server_state import post_audit
+
+    with patch("homecal_voice.server_state.requests") as r:
+        post_audit(
+            base="http://x", token="t", id="u2",
+            transcript="make a chicken noise", status="failed",
+            intent_json='{"intent":"noise_play"}', confidence=1.0,
+            duration_ms=100, error="quiet_hours_suppressed",
+            source="matcher",
+            intent_name="noise_play",
+            answer=None, concern=None,
+        )
+    body = r.post.call_args.kwargs.get("json")
+    assert body["error"] == "quiet_hours_suppressed"
+    assert body["intent_name"] == "noise_play"
+
+
+# ---------------------------------------------------------------------------
+# Fix E — Group 3d: _gather_dinner_and_agenda partial failure
+# ---------------------------------------------------------------------------
+
+
+def test_gather_dinner_and_agenda_propagates_partial_failure_on_dinners():
+    """One endpoint failing must propagate — silent fall-back to (none)
+    makes a real outage look like 'no dinner today'."""
+    from unittest.mock import MagicMock
+    from homecal_voice.main import _gather_dinner_and_agenda
+    import pytest
+
+    def _get(url, **kw):
+        if "/api/dinners" in url:
+            r = MagicMock()
+            r.raise_for_status.side_effect = RuntimeError("dinners 500")
+            return r
+        r = MagicMock()
+        r.json.return_value = []
+        r.raise_for_status = MagicMock()
+        return r
+
+    with patch("homecal_voice.main._requests.get", side_effect=_get):
+        with pytest.raises(RuntimeError, match="dinners 500"):
+            _gather_dinner_and_agenda(api_base="http://x", today="2026-06-07")
+
+
+def test_gather_dinner_and_agenda_propagates_partial_failure_on_events():
+    from unittest.mock import MagicMock
+    from homecal_voice.main import _gather_dinner_and_agenda
+    import pytest
+
+    def _get(url, **kw):
+        if "/api/events" in url:
+            r = MagicMock()
+            r.raise_for_status.side_effect = RuntimeError("events 500")
+            return r
+        r = MagicMock()
+        r.json.return_value = []
+        r.raise_for_status = MagicMock()
+        return r
+
+    with patch("homecal_voice.main._requests.get", side_effect=_get):
+        with pytest.raises(RuntimeError, match="events 500"):
+            _gather_dinner_and_agenda(api_base="http://x", today="2026-06-07")

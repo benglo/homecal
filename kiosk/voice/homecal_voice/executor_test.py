@@ -866,3 +866,52 @@ def test_noise_play_clip_callable_returning_none_still_treated_as_success():
     intent = IntentResult("noise_play", {"catalog_key": "chicken"}, 1.0, "x", source="matcher")
     out = ex.apply(intent)
     assert out["ok"] is True
+
+
+# ---------------------------------------------------------------------------
+# Fix E — Group 3a: _truncate_words at exactly 40 words
+# ---------------------------------------------------------------------------
+
+
+def test_ask_question_truncation_at_exactly_40_words_preserves_full_answer():
+    """Lock the inclusive boundary: <= max_words → unchanged.
+    A future change from <= to < would silently drop the 40th word."""
+    answer_40 = " ".join([f"word{i}" for i in range(40)])
+    assert len(answer_40.split()) == 40
+    ex = Executor(base="http://api", token="t")
+    intent = IntentResult("ask_question", {"answer": answer_40, "concern": False}, 0.95, "x", source="llm")
+    out = ex.apply(intent)
+    assert out["spoken"] == answer_40  # not truncated
+
+
+# ---------------------------------------------------------------------------
+# Fix E — Group 3b: noise_play payload with BOTH catalog_key and play_catalog
+# ---------------------------------------------------------------------------
+
+
+def test_noise_play_prefers_catalog_key_over_play_catalog_when_both_present():
+    """Documents the key-selection precedence: `catalog_key` wins over
+    `play_catalog` (first truthy value via `or`), so the played clip is
+    always `chicken` when both are present.
+
+    NOTE: the current implementation returns `fallback_text` regardless of
+    which key resolved — this test pins that observable behaviour so any
+    future change to suppress `fallback_text` on the catalog_key path is
+    a deliberate, visible diff rather than a silent regression."""
+    play = MagicMock()
+    ex = Executor(base="http://api", token="t", play_clip=play)
+    intent = IntentResult(
+        "noise_play",
+        {"catalog_key": "chicken", "play_catalog": "dog", "fallback_text": "fallback"},
+        1.0, "x", source="matcher",
+    )
+    out = ex.apply(intent)
+    assert out["ok"] is True
+    # The played path must be chicken (catalog_key wins in the `or` expression).
+    played = play.call_args.args[0]
+    from pathlib import Path
+    assert Path(played).name == "chicken.mp3"
+    # Current behaviour: fallback_text is returned regardless of which key
+    # resolved. A future fix that suppresses it on catalog_key paths would
+    # change this assertion to `== ""`.
+    assert out["spoken"] == "fallback"
