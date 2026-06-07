@@ -637,72 +637,106 @@ def _fresh_matcher_with_v1():
     return m
 
 
-def test_extract_with_matcher_first_returns_matcher_hit_without_calling_llm(monkeypatch):
-    """When the regex matches, the LLM must not be called — that's the whole
-    point of the matcher (saves the OpenRouter round-trip)."""
-    from homecal_voice import main
-    cfg = MagicMock(homecal_api_base="http://api", intent_model="x", openrouter_api_key="k")
-    monkeypatch.setattr(main, "_gather_context_for_intent", lambda *, api_base, today: {
-        "family": [],
-        "raw_family": [],
-        "today_dinner": "(none)",
-        "today_agenda": [],
-        "chores": [],
-    })
-    monkeypatch.setattr("homecal_voice.matcher.default_matcher", _fresh_matcher_with_v1())
-    llm_called = MagicMock()
-    monkeypatch.setattr(main, "call_openrouter", llm_called)
+def test_extract_with_matcher_first_returns_matcher_hit_without_calling_llm():
+    """When the core regex matches (dinner_set), the LLM must not be called —
+    that's the whole point of the matcher (saves the OpenRouter round-trip)."""
+    from unittest.mock import patch, MagicMock
+    import homecal_voice.main as main_mod
+    from homecal_voice.matcher import Matcher
+    from homecal_voice.patterns_v1 import register_v1
 
-    out = main._extract_with_matcher_first(text="tonight's dinner is curry", cfg=cfg)
+    cfg = MagicMock(homecal_api_base="http://api", intent_model="x", openrouter_api_key="k")
+
+    # Stub out HTTP calls: family-members + chores return empty lists.
+    def _get(url, **kw):
+        r = MagicMock()
+        r.json.return_value = []
+        r.raise_for_status = MagicMock()
+        return r
+
+    # Replace staged matchers: empty kid_matcher, isolated core_matcher with v1.
+    empty_kid = Matcher()
+    isolated_core = Matcher()
+    register_v1(isolated_core)
+    llm_called = MagicMock()
+
+    with patch.object(main_mod, "kid_matcher", empty_kid):
+        with patch.object(main_mod, "core_matcher", isolated_core):
+            with patch("homecal_voice.main._requests.get", side_effect=_get):
+                with patch.object(main_mod, "call_openrouter", llm_called):
+                    out = main_mod._extract_with_matcher_first(
+                        text="tonight's dinner is curry", cfg=cfg
+                    )
+
     assert out.intent == "dinner_set"
     assert out.source == "matcher"
     llm_called.assert_not_called()
 
 
-def test_extract_with_matcher_first_falls_through_to_llm(monkeypatch):
+def test_extract_with_matcher_first_falls_through_to_llm():
     """Unrecognised text must reach Haiku unchanged."""
-    from homecal_voice import main
+    from unittest.mock import patch, MagicMock
+    import homecal_voice.main as main_mod
+    from homecal_voice.matcher import Matcher
+
     cfg = MagicMock(homecal_api_base="http://api", intent_model="x", openrouter_api_key="k")
-    monkeypatch.setattr(main, "_gather_context_for_intent", lambda *, api_base, today: {
-        "family": [],
-        "raw_family": [],
-        "today_dinner": "(none)",
-        "today_agenda": [],
-        "chores": [],
-    })
-    monkeypatch.setattr("homecal_voice.matcher.default_matcher", _fresh_matcher_with_v1())
-    monkeypatch.setattr(main, "call_openrouter",
-                        lambda **_: '{"intent":"unknown","reason":"no_match","confidence":0.0}')
+
+    def _get(url, **kw):
+        r = MagicMock()
+        r.json.return_value = []
+        r.raise_for_status = MagicMock()
+        return r
+
     noises_mock = MagicMock()
     noises_mock.entries = {}
-    monkeypatch.setattr("homecal_voice.catalog.load_noises", lambda: noises_mock)
 
-    out = main._extract_with_matcher_first(text="please play some music", cfg=cfg)
+    # Empty staged matchers so everything falls through to Haiku.
+    with patch.object(main_mod, "kid_matcher", Matcher()):
+        with patch.object(main_mod, "core_matcher", Matcher()):
+            with patch("homecal_voice.main._requests.get", side_effect=_get):
+                with patch.object(main_mod, "call_openrouter",
+                                  return_value='{"intent":"unknown","reason":"no_match","confidence":0.0}'):
+                    with patch("homecal_voice.catalog.load_noises", return_value=noises_mock):
+                        out = main_mod._extract_with_matcher_first(
+                            text="please play some music", cfg=cfg
+                        )
+
     assert out.intent == "unknown"
     assert out.source == "llm"
 
 
-def test_extract_with_matcher_first_propagates_backend_fetch_failure(monkeypatch):
+def test_extract_with_matcher_first_propagates_backend_fetch_failure():
     """A 5xx from /api/family-members must propagate out of the matcher path —
     NOT silently fall through to the LLM with empty lists. That's the same
     silent-failure mode the orchestration layer was hardened against; the
     matcher inherits the invariant."""
-    from homecal_voice import main
+    from unittest.mock import patch, MagicMock
+    import homecal_voice.main as main_mod
+    from homecal_voice.matcher import Matcher
+
     cfg = MagicMock(homecal_api_base="http://api", intent_model="x", openrouter_api_key="k")
-    monkeypatch.setattr("homecal_voice.matcher.default_matcher", _fresh_matcher_with_v1())
+
+    # Empty kid_matcher so we reach stage 2 where the HTTP call happens.
     llm = MagicMock()
-    monkeypatch.setattr(main, "call_openrouter", llm)
 
-    def boom(*, api_base, today):
-        raise RuntimeError("backend 503")
-    monkeypatch.setattr(main, "_gather_context_for_intent", boom)
+    def boom(url, **kw):
+        if "/api/family-members" in url:
+            raise RuntimeError("backend 503")
+        r = MagicMock()
+        r.json.return_value = []
+        r.raise_for_status = MagicMock()
+        return r
 
-    try:
-        main._extract_with_matcher_first(text="anything", cfg=cfg)
-    except RuntimeError as e:
-        assert "503" in str(e)
-    else:
-        assert False, "expected RuntimeError to propagate"
+    with patch.object(main_mod, "kid_matcher", Matcher()):
+        with patch.object(main_mod, "core_matcher", Matcher()):
+            with patch("homecal_voice.main._requests.get", side_effect=boom):
+                with patch.object(main_mod, "call_openrouter", llm):
+                    try:
+                        main_mod._extract_with_matcher_first(text="anything", cfg=cfg)
+                    except RuntimeError as e:
+                        assert "503" in str(e)
+                    else:
+                        assert False, "expected RuntimeError to propagate"
     llm.assert_not_called()
 
 
@@ -852,61 +886,53 @@ def test_quiet_safe_play_clip_returns_False_when_suppressed():
 
 
 # ---------------------------------------------------------------------------
-# _gather_context_for_intent
+# _gather_dinner_and_agenda
 # ---------------------------------------------------------------------------
 
-from homecal_voice.main import _gather_context_for_intent
+from homecal_voice.main import _gather_dinner_and_agenda
 
 
-def test_gather_context_returns_family_dinner_agenda_chores():
-    """Mocks the four GETs to return varied payloads; helper composes the prompt-ready dict."""
+def test_gather_dinner_and_agenda_returns_meal_and_agenda():
+    """Mocks dinners + events GETs; helper composes the prompt-ready dict."""
     def _get_side_effect(url, **_):
         r = MagicMock()
-        if "/api/family-members" in url:
-            r.json.return_value = [{"id": "fm1", "name": "Imogen"}, {"id": "fm2", "name": "Penelope"}]
-        elif "/api/dinners" in url:
+        if "/api/dinners" in url:
             r.json.return_value = [{"date": "2026-06-07", "meal": "Tacos"}]
         elif "/api/events" in url:
             r.json.return_value = [
                 {"title": "Swimming", "start": "2026-06-07T07:00:00Z"},
                 {"title": "Birthday party", "start": "2026-06-07T05:00:00Z"},
             ]
-        elif "/api/chores" in url:
-            r.json.return_value = [{"id": "c1", "title": "Bathroom", "assignedTo": "fm1"}]
         else:
-            r.json.return_value = []
+            raise AssertionError(f"unexpected fetch: {url}")
         r.raise_for_status = MagicMock()
         return r
 
     with patch("homecal_voice.main._requests.get", side_effect=_get_side_effect):
-        ctx = _gather_context_for_intent(api_base="http://x", today="2026-06-07")
+        ctx = _gather_dinner_and_agenda(api_base="http://x", today="2026-06-07")
 
-    assert "Imogen" in ctx["family"]
-    assert "Penelope" in ctx["family"]
     assert ctx["today_dinner"] == "Tacos"
     assert any("Swimming" in line for line in ctx["today_agenda"])
-    assert ctx["chores"] == [{"id": "c1", "title": "Bathroom", "assignedTo": "fm1"}]
-    assert ctx["raw_family"] == [{"id": "fm1", "name": "Imogen"}, {"id": "fm2", "name": "Penelope"}]
 
 
-def test_gather_context_no_dinner_today_returns_none_string():
+def test_gather_dinner_and_agenda_no_dinner_today_returns_none_string():
     def _get_side_effect(url, **_):
         r = MagicMock()
         r.json.return_value = []
         r.raise_for_status = MagicMock()
         return r
     with patch("homecal_voice.main._requests.get", side_effect=_get_side_effect):
-        ctx = _gather_context_for_intent(api_base="http://x", today="2026-06-07")
+        ctx = _gather_dinner_and_agenda(api_base="http://x", today="2026-06-07")
     assert ctx["today_dinner"] == "(none)"
     assert ctx["today_agenda"] == []
 
 
-def test_gather_context_propagates_http_error():
-    """An outage on family-members must NOT silently fall back to []
-    — same reasoning as _list_bare: empty family vs real outage need
-    distinct audit signals."""
+def test_gather_dinner_and_agenda_propagates_http_error_on_events():
+    """An outage on /api/events must NOT silently fall back to [] — same
+    reasoning as _list_bare: an empty agenda vs a real outage need distinct
+    audit signals."""
     def _get_side_effect(url, **_):
-        if "/api/family-members" in url:
+        if "/api/events" in url:
             raise RuntimeError("backend unreachable")
         r = MagicMock()
         r.json.return_value = []
@@ -916,4 +942,109 @@ def test_gather_context_propagates_http_error():
     import pytest
     with patch("homecal_voice.main._requests.get", side_effect=_get_side_effect):
         with pytest.raises(Exception):
-            _gather_context_for_intent(api_base="http://x", today="2026-06-07")
+            _gather_dinner_and_agenda(api_base="http://x", today="2026-06-07")
+
+
+# ---------------------------------------------------------------------------
+# Three-stage matcher routing
+# ---------------------------------------------------------------------------
+
+def test_matcher_first_routing_kid_hit_does_not_fetch_anything():
+    """A noise_play matcher hit must not hit the backend at all —
+    /api/family-members, /api/chores, /api/dinners, /api/events all
+    untouched. Backend outage doesn't kill noise."""
+    from unittest.mock import patch, MagicMock
+    import homecal_voice.main as main_mod
+    from homecal_voice.matcher import Matcher
+    from homecal_voice.patterns_kid import register_kid
+    from homecal_voice.main import _extract_with_matcher_first
+
+    cfg = MagicMock()
+    cfg.homecal_api_base = "http://api"
+    cfg.intent_model = "claude-haiku-4.5"
+    cfg.openrouter_api_key = "k"
+
+    # Build an isolated kid_matcher with patterns registered.
+    isolated_kid = Matcher()
+    register_kid(isolated_kid)
+
+    with patch.object(main_mod, "kid_matcher", isolated_kid):
+        with patch("homecal_voice.main._requests.get") as get_call:
+            result = _extract_with_matcher_first(text="make a chicken noise", cfg=cfg)
+
+    assert result.intent == "noise_play"
+    assert result.source == "matcher"
+    get_call.assert_not_called()
+
+
+def test_matcher_first_routing_core_hit_fetches_only_family_and_chores():
+    """A query_dinner matcher hit fetches family + chores (needed for the
+    matcher) but NOT dinners + events (those are LLM-only)."""
+    from unittest.mock import patch, MagicMock
+    import homecal_voice.main as main_mod
+    from homecal_voice.matcher import Matcher
+    from homecal_voice.patterns_v1 import register_v1
+    from homecal_voice.main import _extract_with_matcher_first
+
+    cfg = MagicMock()
+    cfg.homecal_api_base = "http://api"
+    cfg.intent_model = "claude-haiku-4.5"
+    cfg.openrouter_api_key = "k"
+
+    # Empty kid_matcher so stage 1 always misses; isolated core_matcher with v1.
+    isolated_core = Matcher()
+    register_v1(isolated_core)
+
+    def _get(url, **kw):
+        r = MagicMock()
+        if "/api/family-members" in url:
+            r.json.return_value = [{"id": "fm1", "name": "Imogen"}]
+        elif "/api/chores" in url:
+            r.json.return_value = []
+        else:
+            raise AssertionError(f"unexpected fetch on core-matcher path: {url}")
+        r.raise_for_status = MagicMock()
+        return r
+
+    with patch.object(main_mod, "kid_matcher", Matcher()):
+        with patch.object(main_mod, "core_matcher", isolated_core):
+            with patch("homecal_voice.main._requests.get", side_effect=_get):
+                result = _extract_with_matcher_first(text="what's for dinner tonight", cfg=cfg)
+    assert result.intent == "query_dinner"
+
+
+def test_matcher_first_routing_llm_path_fetches_everything():
+    """An ask_question (matcher miss on both stages) goes through the LLM
+    and fetches family+chores AND dinners+events. The pre-existing tests
+    cover the Haiku call; this test just confirms the fetch happens."""
+    from unittest.mock import patch, MagicMock
+    import homecal_voice.main as main_mod
+    from homecal_voice.matcher import Matcher
+    from homecal_voice.main import _extract_with_matcher_first
+
+    cfg = MagicMock()
+    cfg.homecal_api_base = "http://api"
+    cfg.intent_model = "claude-haiku-4.5"
+    cfg.openrouter_api_key = "k"
+
+    calls = []
+
+    def _get(url, **kw):
+        calls.append(url)
+        r = MagicMock()
+        r.json.return_value = []
+        r.raise_for_status = MagicMock()
+        return r
+
+    # Empty both matchers so everything falls through to Haiku.
+    with patch.object(main_mod, "kid_matcher", Matcher()):
+        with patch.object(main_mod, "core_matcher", Matcher()):
+            with patch("homecal_voice.main._requests.get", side_effect=_get):
+                with patch("homecal_voice.main.call_openrouter", return_value='{"intent":"unknown","reason":"x","confidence":0.5}'):
+                    _extract_with_matcher_first(text="why is the sky so blue today", cfg=cfg)
+
+    fetched = " ".join(calls)
+    assert "/api/family-members" in fetched
+    assert "/api/chores" in fetched
+    assert "/api/dinners" in fetched
+    assert "/api/events" in fetched

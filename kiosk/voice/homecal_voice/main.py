@@ -31,7 +31,9 @@ from homecal_voice.intent import (
     parse_intent_response,
     call_openrouter,
 )
+from homecal_voice.matcher import MatchContext, kid_matcher, core_matcher
 from homecal_voice.timezone import today_brisbane, BRISBANE_OFFSET_SECONDS
+from homecal_voice import catalog as kid_catalog
 
 log = logging.getLogger("homecal_voice.main")
 
@@ -422,17 +424,18 @@ def main() -> int:
     from homecal_voice.tts import speak as tts_speak, play_file as tts_play_file
     from homecal_voice.executor import Executor
     from homecal_voice.server_state import post_state, post_audit, post_heartbeat
-    from homecal_voice.matcher import MatchContext, default_matcher
     from homecal_voice.patterns_v1 import register_v1
     from homecal_voice.patterns_timer import register_timer
     from homecal_voice.patterns_kid import register_kid
 
-    # Register patterns once at startup. Order matters — v1 first so a real
-    # "tonight's dinner is X" beats any future timer pattern that captures
-    # the same shape (none today, but defensive against future bleed).
-    register_v1(default_matcher)
-    register_timer(default_matcher)
-    register_kid(default_matcher)
+    # Register patterns once at startup against the staged matchers.
+    # kid_matcher runs at stage 1 (catalog-only, no backend calls).
+    # core_matcher runs at stage 2 (needs family + chores).
+    # Order within core_matcher: v1 first so "tonight's dinner is X" beats
+    # any future timer pattern that captures the same shape.
+    register_kid(kid_matcher)
+    register_v1(core_matcher)
+    register_timer(core_matcher)
 
     mic = MicStream(device=cfg.audio_device)
     mic.start()
@@ -582,20 +585,17 @@ def _chore_strings_from(family: list, chores: list) -> list:
     return [f"{name}: {', '.join(titles)}" for name, titles in by_person.items()]
 
 
-def _gather_context_for_intent(*, api_base: str, today: str) -> dict:
-    """Fetch family + today's dinner + today's agenda + chores in parallel.
+def _gather_dinner_and_agenda(*, api_base: str, today: str) -> dict:
+    """Fetch today's dinner + agenda in parallel for the Haiku prompt.
 
-    All four endpoints hit at once via ThreadPoolExecutor. LAN latency per
-    call is ~5ms but in series that's 20ms; in parallel <10ms. The bigger
-    win: errors on any one endpoint propagate (same posture as _list_bare —
-    silent fall-back to [] makes a real outage look like 'unknown person').
+    Called only on stage 3 (matcher missed). Same error propagation as
+    _list_bare: a backend outage here surfaces; we don't pretend the
+    dinner is "(none)" when it's actually "we can't reach the calendar".
     """
     tomorrow = (datetime.fromisoformat(today) + timedelta(days=1)).date().isoformat()
     paths = {
-        "family": f"{api_base}/api/family-members",
         "dinners": f"{api_base}/api/dinners?start={today}&end={tomorrow}",
         "events":  f"{api_base}/api/events?start={today}T00:00:00Z&end={tomorrow}T00:00:00Z",
-        "chores":  f"{api_base}/api/chores",
     }
 
     def _get(url: str):
@@ -608,59 +608,62 @@ def _gather_context_for_intent(*, api_base: str, today: str) -> dict:
             return j["data"]
         return []
 
-    with ThreadPoolExecutor(max_workers=4) as ex:
+    with ThreadPoolExecutor(max_workers=2) as ex:
         futures = {name: ex.submit(_get, url) for name, url in paths.items()}
         results = {name: f.result() for name, f in futures.items()}
 
     dinners = results["dinners"]
     events = results["events"]
-
     return {
-        "family": [m.get("name", "") for m in results["family"]],
-        "raw_family": results["family"],          # for matcher MatchContext (needs IDs)
         "today_dinner": dinners[0]["meal"] if dinners else "(none)",
         "today_agenda": [
             f"{e.get('title','?')} at {e.get('start','?')[11:16]}"
             for e in events
         ],
-        "chores": results["chores"],
     }
 
 
 def _extract_with_matcher_first(*, text: str, cfg) -> IntentResult:
-    """Try the regex matcher first; fall through to Haiku on a miss.
+    """Three-stage routing: try the cheapest matcher first, fetch only the
+    context each stage actually needs.
 
-    Fetches family + chores + today's dinner + today's agenda in parallel
-    (ThreadPoolExecutor) so the Haiku prompt has the full context the
-    kid-intents need (ask_question references family/calendar, noise_play
-    needs the catalog key list, joke_tell needs no context). The matcher
-    only uses family + chores; the rest is overhead for matcher hits but
-    necessary for the cloud fallback. Saves ~15ms vs serial fetches.
+    Stage 1: noise / joke (catalog-only, no backend).
+    Stage 2: family + chores fetched in parallel → v1 / timer matchers.
+    Stage 3: dinners + events fetched in parallel → Haiku.
+
+    A backend outage on /api/events no longer kills noise_play or joke_tell.
     """
-    from homecal_voice.matcher import MatchContext, default_matcher
-    from homecal_voice import catalog as kid_catalog
-
     today = today_brisbane()
-    ctx_data = _gather_context_for_intent(api_base=cfg.homecal_api_base, today=today)
-    family = ctx_data["raw_family"]
-    chores = ctx_data["chores"]
+    empty_ctx = MatchContext(today=today, family=[], chores=[])
 
-    match_ctx = MatchContext(today=today, family=family, chores=chores)
-    matched = default_matcher.try_match(text, match_ctx)
+    # Stage 1 — kid matchers (catalog-only, no API call needed).
+    matched = kid_matcher.try_match(text, empty_ctx)
     if matched is not None:
-        log.info("matcher hit: intent=%s", matched.intent)
+        log.info("matcher hit (kid): intent=%s", matched.intent)
         return matched
 
+    # Stage 2 — fetch family + chores, try the core matchers.
+    family = _list_bare(f"{cfg.homecal_api_base}/api/family-members")
+    chores = _list_bare(f"{cfg.homecal_api_base}/api/chores")
+    core_ctx = MatchContext(today=today, family=family, chores=chores)
+    matched = core_matcher.try_match(text, core_ctx)
+    if matched is not None:
+        log.info("matcher hit (core): intent=%s", matched.intent)
+        return matched
+
+    # Stage 3 — Haiku fallback. Fetch the remaining context (dinners + events)
+    # only now that the cheaper paths are exhausted.
+    extra = _gather_dinner_and_agenda(api_base=cfg.homecal_api_base, today=today)
     noise_keys = list(kid_catalog.load_noises().entries.keys())
 
     return parse_intent_response(
         call_openrouter(
             system=build_system_prompt(
                 today_brisbane=today,
-                family=ctx_data["family"],
+                family=[m["name"] for m in family],
                 chores=_chore_strings_from(family, chores),
-                today_dinner=ctx_data["today_dinner"],
-                today_agenda=ctx_data["today_agenda"],
+                today_dinner=extra["today_dinner"],
+                today_agenda=extra["today_agenda"],
                 noise_keys=noise_keys,
             ),
             user=text,

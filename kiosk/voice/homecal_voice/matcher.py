@@ -102,3 +102,9 @@ class Matcher:
 # `default_matcher.register(...)` at import time; main.py imports this
 # singleton and uses it on the hot path.
 default_matcher = Matcher()
+
+# Staged matchers — kid_matcher's patterns need no backend context (catalog
+# lookups only), so the kid intents survive backend outages. core_matcher's
+# patterns need family + chores. Spec routing: §5.
+kid_matcher = Matcher()
+core_matcher = Matcher()
