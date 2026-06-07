@@ -152,16 +152,18 @@ def _is_quiet_hours(now: datetime | None = None) -> bool:
     return hour >= 20 or hour < 7
 
 
-def _quiet_safe_play_clip(play_clip, path: str) -> None:
-    """Wrap a play_clip callable with the quiet-hours gate.
+def _quiet_safe_play_clip(play_clip, path: str) -> bool:
+    """Play the clip unless we're inside the quiet window.
 
-    Silently no-ops during quiet hours — the kid sees the wall chip flash
-    'noise played' but hears nothing. This is by design (parents at peace
-    at 11pm), not a bug to surface."""
+    Returns True if the clip actually played, False if the quiet-hours gate
+    suppressed it. The caller is responsible for audit + UI honesty when
+    False — we must NOT pretend the kid heard a fart noise at 11pm.
+    """
     if _is_quiet_hours():
         log.info("quiet hours: suppressed play_clip(%s)", path)
-        return
+        return False
     play_clip(path)
+    return True
 
 
 def run_once(d: OneShotDeps) -> None:
@@ -329,7 +331,15 @@ def _run_after_wake(d: OneShotDeps) -> None:
             # audit row both need to reflect the soft failure so hit-rate
             # metrics don't double-count and the dashboard doesn't lie.
             err = out.get("error") or "executor_refused"
-            d.post_state(utterance_id=uid, kind="failed", payload={"reason": err})
+            # Quiet-hours suppression is a polite decline, not an error.
+            # Use a distinct reason so the wall chip can render appropriately,
+            # and avoid the "didn't catch that" copy in the failed-state label.
+            state_kind = "failed"
+            state_reason = err
+            if out.get("quiet_suppressed"):
+                state_kind = "failed"
+                state_reason = "quiet_hours"
+            d.post_state(utterance_id=uid, kind=state_kind, payload={"reason": state_reason})
             _audit(transcript, "failed", intent, error=err)
             _speak(out.get("spoken", ""))
             return

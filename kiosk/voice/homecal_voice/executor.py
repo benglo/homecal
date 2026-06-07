@@ -368,12 +368,27 @@ class Executor:
 
         clip_path = kid_catalog._CLIPS_DIR / filename
         try:
-            self._play_clip(str(clip_path))
+            played = self._play_clip(str(clip_path))
         except Exception as e:
             # If clip playback raises (mpg123 crash, ALSA busy, BT dropout), the
             # outer _try_execute would catch it and speak "Sorry, I couldn't reach
             # the calendar" — a lie. Audit truthfully and stay quiet instead.
             return {"ok": False, "spoken": "", "error": f"clip_play:{e}"}
+
+        # The play_clip callable may return None (older callable signature) or a
+        # bool (quiet-hours wrapper). Treat None as True for backwards compat;
+        # only explicit False means the wrapper actively suppressed playback.
+        if played is False:
+            # Quiet-hours suppressed the clip. The kid heard nothing — be honest
+            # in the audit so a parent reviewing logs sees what really happened,
+            # and don't flash the green ✓ on the wall by returning ok=True.
+            return {
+                "ok": False,
+                "spoken": "",
+                "error": "quiet_hours_suppressed",
+                "quiet_suppressed": True,
+            }
+
         # Catalog hit returns "" (no speech); Haiku-fallback returns fallback_text.
         return {"ok": True, "spoken": f.get("fallback_text", "")}
 

@@ -835,6 +835,22 @@ def test_quiet_safe_play_clip_allows_during_day():
     play.assert_called_once_with("/tmp/x.mp3")
 
 
+def test_quiet_safe_play_clip_returns_True_when_played():
+    play = MagicMock()
+    with patch("homecal_voice.main._is_quiet_hours", return_value=False):
+        result = _quiet_safe_play_clip(play, "/tmp/x.mp3")
+    assert result is True
+    play.assert_called_once()
+
+
+def test_quiet_safe_play_clip_returns_False_when_suppressed():
+    play = MagicMock()
+    with patch("homecal_voice.main._is_quiet_hours", return_value=True):
+        result = _quiet_safe_play_clip(play, "/tmp/x.mp3")
+    assert result is False
+    play.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # _gather_context_for_intent
 # ---------------------------------------------------------------------------

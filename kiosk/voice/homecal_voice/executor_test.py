@@ -837,3 +837,32 @@ def test_ask_question_no_regex_override_on_clean_answer():
     out = ex.apply(intent)
     assert out["ok"] is True
     assert out.get("regex_override") is False
+
+
+# ---------------------------------------------------------------------------
+# Fix B — quiet-hours suppression honesty (noise_play)
+# ---------------------------------------------------------------------------
+from unittest.mock import MagicMock
+
+
+def test_noise_play_quiet_hours_suppression_returns_ok_false():
+    """When the play_clip wrapper returns False (quiet hours), the executor
+    audits the truth: the kid heard nothing. Spec §3.11."""
+    play_returning_false = MagicMock(return_value=False)
+    ex = Executor(base="http://api", token="t", play_clip=play_returning_false)
+    intent = IntentResult("noise_play", {"catalog_key": "chicken"}, 1.0, "make a chicken noise", source="matcher")
+    out = ex.apply(intent)
+    assert out["ok"] is False
+    assert out["error"] == "quiet_hours_suppressed"
+    assert out.get("quiet_suppressed") is True
+    play_returning_false.assert_called_once()
+
+
+def test_noise_play_clip_callable_returning_none_still_treated_as_success():
+    """Backwards compat: a play_clip that returns None (raw tts_play_file)
+    is still a successful play — only explicit False means suppression."""
+    play_returning_none = MagicMock(return_value=None)
+    ex = Executor(base="http://api", token="t", play_clip=play_returning_none)
+    intent = IntentResult("noise_play", {"catalog_key": "chicken"}, 1.0, "x", source="matcher")
+    out = ex.apply(intent)
+    assert out["ok"] is True
