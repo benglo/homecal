@@ -367,7 +367,13 @@ class Executor:
             return {"ok": False, "spoken": "", "error": f"unknown_catalog_key:{key}"}
 
         clip_path = kid_catalog._CLIPS_DIR / filename
-        self._play_clip(str(clip_path))
+        try:
+            self._play_clip(str(clip_path))
+        except Exception as e:
+            # If clip playback raises (mpg123 crash, ALSA busy, BT dropout), the
+            # outer _try_execute would catch it and speak "Sorry, I couldn't reach
+            # the calendar" — a lie. Audit truthfully and stay quiet instead.
+            return {"ok": False, "spoken": "", "error": f"clip_play:{e}"}
         # Catalog hit returns "" (no speech); Haiku-fallback returns fallback_text.
         return {"ok": True, "spoken": f.get("fallback_text", "")}
 
@@ -387,9 +393,21 @@ class Executor:
 
         setup = f["setup"]
         punchline = f["punchline"]
-        self._speak(setup)
+        # Each half wrapped independently so a partial play is recorded honestly
+        # in the audit. Without this, a setup-then-TTS-exception case would land
+        # in the outer error path and speak "Sorry, I couldn't reach the calendar"
+        # AFTER the kid already heard the setup — a confusing UX lie.
+        try:
+            self._speak(setup)
+        except Exception as e:
+            return {"ok": False, "spoken": "", "error": f"joke_setup_tts:{e}", "spoken_inline": True}
         self._sleep(1.5)
-        self._speak(punchline)
+        try:
+            self._speak(punchline)
+        except Exception as e:
+            # Setup played but punchline failed. Record the partial answer so the
+            # audit row reflects what the kid actually heard.
+            return {"ok": False, "spoken": setup, "error": f"joke_punchline_tts:{e}", "spoken_inline": True}
         return {"ok": True, "spoken_inline": True, "spoken": f"{setup} ... {punchline}"}
 
     def _ask_question(self, f: dict) -> dict:
@@ -414,8 +432,16 @@ class Executor:
             return {"ok": True, "spoken": spoken, "concern": True}
 
         checked = safety.check_answer(answer)
+        # Spec §7.2 mandates this audit signal — without it the safety regex
+        # becomes silent and we can't measure how often Haiku slips a banned term.
+        regex_overrode = checked != answer
         spoken = _truncate_words(checked, _MAX_ANSWER_WORDS)
-        return {"ok": True, "spoken": spoken, "concern": False}
+        return {
+            "ok": True,
+            "spoken": spoken,
+            "concern": False,
+            "regex_override": regex_overrode,
+        }
 
     def _humanise(self, iso_date: str) -> str:
         today = today_brisbane()

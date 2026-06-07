@@ -786,3 +786,54 @@ def test_ask_question_concern_defaults_to_false_when_absent():
     out = ex.apply(intent)
     assert out["ok"] is True
     assert out.get("concern") is False
+
+
+def test_noise_play_clip_exception_audits_soft_failure():
+    """Spec: clip playback failures must not bubble into the wrong-error speak path."""
+    play = MagicMock(side_effect=RuntimeError("mpg123 crashed"))
+    ex = Executor(base="http://api", token="t", play_clip=play)
+    intent = IntentResult("noise_play", {"catalog_key": "chicken"}, 1.0, "make a chicken noise", source="matcher")
+    out = ex.apply(intent)
+    assert out["ok"] is False
+    assert out["spoken"] == ""
+    assert "clip_play" in out["error"]
+    play.assert_called_once()  # the failure was actually attempted
+
+
+def test_joke_tell_setup_exception_records_no_partial():
+    """If setup TTS raises, the audit answer is empty (nothing was heard)."""
+    speak = MagicMock(side_effect=[RuntimeError("tts down"), None])
+    ex = Executor(base="http://api", token="t", speak=speak, sleep=MagicMock())
+    intent = IntentResult("joke_tell", {"setup": "Why?", "punchline": "Because!"}, 1.0, "x", source="matcher")
+    out = ex.apply(intent)
+    assert out["ok"] is False
+    assert out["spoken"] == ""
+    assert "joke_setup_tts" in out["error"]
+
+
+def test_joke_tell_punchline_exception_records_partial_setup():
+    """If setup spoke but punchline TTS raised, audit `spoken` records what the kid heard."""
+    speak = MagicMock(side_effect=[None, RuntimeError("tts down")])
+    ex = Executor(base="http://api", token="t", speak=speak, sleep=MagicMock())
+    intent = IntentResult("joke_tell", {"setup": "Why?", "punchline": "Because!"}, 1.0, "x", source="matcher")
+    out = ex.apply(intent)
+    assert out["ok"] is False
+    assert out["spoken"] == "Why?"
+    assert "joke_punchline_tts" in out["error"]
+
+
+def test_ask_question_regex_override_flag_set_when_safety_fires():
+    """Audit must record the regex trip so it's observable."""
+    ex = Executor(base="http://api", token="t")
+    intent = IntentResult("ask_question", {"answer": "fuck the science", "concern": False}, 0.95, "x", source="llm")
+    out = ex.apply(intent)
+    assert out["ok"] is True
+    assert out.get("regex_override") is True
+
+
+def test_ask_question_no_regex_override_on_clean_answer():
+    ex = Executor(base="http://api", token="t")
+    intent = IntentResult("ask_question", {"answer": "It's blue!", "concern": False}, 0.95, "x", source="llm")
+    out = ex.apply(intent)
+    assert out["ok"] is True
+    assert out.get("regex_override") is False

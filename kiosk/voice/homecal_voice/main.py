@@ -339,6 +339,7 @@ def _run_after_wake(d: OneShotDeps) -> None:
             transcript, audit_status, intent,
             answer=out.get("spoken") or None,
             concern=out.get("concern"),
+            error="regex_override" if out.get("regex_override") else None,
         )
         if not out.get("spoken_inline"):
             _speak(out.get("spoken", ""))
