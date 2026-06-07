@@ -233,13 +233,29 @@ def _run_after_wake(d: OneShotDeps) -> None:
         """Close mic during playback (avoids TTS echo cascading wake), sleep
         2s to cover BT codec latency + BOOM 3 speaker decay, then reopen.
         try/finally so a playback exception can't strand the mic closed.
-        Wake LSTM reset is the outer run_once try/finally's job."""
+        Wake LSTM reset is the outer run_once try/finally's job.
+
+        Empty/whitespace text is a no-op — matcher-hit handlers like noise_play
+        return spoken="" and we'd otherwise POST it to OpenRouter, which 400s
+        on an empty body and pollutes the journal with phantom TTS failures.
+
+        A False return from d.speak (synth timeout, no player, etc.) used to be
+        swallowed silently — making a cloud TTS hiccup look identical to a
+        broken wake word from the user's side. Now logged as a WARNING with the
+        intended text so journalctl makes the failure greppable. The wall state
+        is left as whatever upstream posted (usually `applied` ✓) because the
+        action itself succeeded — only the spoken confirmation didn't."""
+        if not text or not text.strip():
+            return
         d.mic_off()
+        spoken_ok = False
         try:
-            d.speak(text)
+            spoken_ok = d.speak(text) is not False
             time.sleep(2.0)
         finally:
             d.mic_on()
+        if not spoken_ok:
+            log.warning("TTS produced no audio — user heard nothing for: %r", text[:120])
 
     def _play_didnt_catch() -> None:
         """Audible fallback when STT was blank/hallucinated/unintelligible.

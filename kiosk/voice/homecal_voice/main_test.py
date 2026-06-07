@@ -381,6 +381,60 @@ def test_speak_exception_still_calls_mic_on():
     deps.mic_on.assert_called()
 
 
+def test_speak_skipped_when_spoken_text_is_empty():
+    """noise_play matcher hits return spoken="" — the executor played the clip
+    already, no TTS is needed. Previously _speak called d.speak("") which 400s
+    on OpenRouter and pollutes the journal with phantom TTS failures."""
+    intent = IntentResult("noise_play", {"catalog_key": "fart"}, 1.0, "raw")
+    speak = MagicMock()
+    deps, _state, _audit = _make_deps(
+        extract_intent=MagicMock(return_value=intent),
+        execute=MagicMock(return_value={"ok": True, "spoken": ""}),
+        speak=speak,
+    )
+    run_once(deps)
+    speak.assert_not_called()
+    # Mic still untouched — no mic_off/mic_on dance for an empty utterance.
+    deps.mic_off.assert_not_called()
+    deps.mic_on.assert_not_called()
+
+
+def test_speak_skipped_when_spoken_text_is_whitespace():
+    """Defensive: whitespace-only text would also 400 OpenRouter."""
+    intent = IntentResult("dinner_set", {"date": "2026-06-04", "meal": "tacos"}, 0.95, "raw")
+    speak = MagicMock()
+    deps, _state, _audit = _make_deps(
+        extract_intent=MagicMock(return_value=intent),
+        execute=MagicMock(return_value={"ok": True, "spoken": "   \n  "}),
+        speak=speak,
+    )
+    run_once(deps)
+    speak.assert_not_called()
+
+
+def test_tts_returns_false_logs_warning_without_crashing(caplog):
+    """A cloud TTS read-timeout used to look identical to 'wake word broken'
+    from the user's side — they spoke, the action applied silently, no audio
+    came back. The bool return + WARNING is the signal that lets ops grep
+    `journalctl` for swallowed TTS hiccups instead of debugging from scratch."""
+    import logging
+    intent = IntentResult("timer_set", {"duration_sec": 60, "label": "pasta"}, 1.0, "raw")
+    speak = MagicMock(return_value=False)
+    deps, _state, _audit = _make_deps(
+        extract_intent=MagicMock(return_value=intent),
+        execute=MagicMock(return_value={"ok": True, "spoken": "Pasta timer set for 1 minute."}),
+        speak=speak,
+    )
+    with caplog.at_level(logging.WARNING, logger="homecal_voice.main"):
+        run_once(deps)
+    speak.assert_called_once()
+    # Mic recovery still happens — bool failure must not strand the mic closed.
+    deps.mic_off.assert_called()
+    deps.mic_on.assert_called()
+    assert any("TTS produced no audio" in r.message for r in caplog.records), \
+        f"expected WARNING log; got {[r.message for r in caplog.records]}"
+
+
 def test_play_clip_exception_still_calls_mic_on():
     """Same guarantee for the didn't-catch fallback path: if the MP3 player
     chokes, the mic still reopens."""

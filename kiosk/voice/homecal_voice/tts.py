@@ -3,6 +3,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import requests
@@ -25,24 +26,66 @@ def synthesize(
     voice: str,
     api_key: str,
     response_format: str = "mp3",
-    timeout_s: int = 15,
+    timeout_s: int = 10,
+    max_attempts: int = 2,
+    backoff_s: float = 0.5,
 ) -> bytes:
+    """POST to /audio/speech with bounded retry.
+
+    Retries on network-class errors (read/connect timeouts, dropped sockets)
+    and 5xx — those are transient and the journal shows OpenRouter's speech
+    endpoint hiccups regularly. Does NOT retry on 4xx, which are semantic
+    (bad model name, empty input, malformed voice) and won't fix themselves.
+
+    Worst case wall-clock = max_attempts * timeout_s + (max_attempts-1) * backoff_s.
+    Default 10s × 2 + 0.5s = 20.5s; the per-attempt cap matters more than the
+    total because the mic is closed for this whole window — too long and the
+    kid loses faith that anything is happening.
+    """
     # `voice` is required per OpenRouter's SpeechRequest schema, and
     # `response_format` is provider-specific (Gemini=pcm only, Kokoro=mp3, …).
     # Sending "default" / omitting either returned an opaque 500 in production.
-    r = requests.post(
-        "https://openrouter.ai/api/v1/audio/speech",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json={
-            "model": model,
-            "input": text,
-            "voice": voice,
-            "response_format": response_format,
-        },
-        timeout=timeout_s,
-    )
-    r.raise_for_status()
-    return r.content
+    payload = {
+        "model": model,
+        "input": text,
+        "voice": voice,
+        "response_format": response_format,
+    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+
+    for attempt in range(1, max_attempts + 1):
+        is_last = attempt == max_attempts
+        try:
+            r = requests.post(
+                "https://openrouter.ai/api/v1/audio/speech",
+                headers=headers,
+                json=payload,
+                timeout=timeout_s,
+            )
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+            log.warning("TTS attempt %d/%d transport error: %s", attempt, max_attempts, e)
+            if is_last:
+                raise
+            time.sleep(backoff_s)
+            continue
+
+        # 4xx → semantic; bail without retrying.
+        if 400 <= r.status_code < 500:
+            r.raise_for_status()
+
+        # 5xx → transient; retry within budget.
+        if r.status_code >= 500:
+            log.warning("TTS attempt %d/%d server %d", attempt, max_attempts, r.status_code)
+            if is_last:
+                r.raise_for_status()
+            time.sleep(backoff_s)
+            continue
+
+        return r.content
+
+    # Unreachable — every loop iteration either returns or raises (the is_last
+    # branches re-raise; intermediate failures `continue`).
+    raise RuntimeError("synthesize: exhausted attempts without returning or raising")
 
 
 def _detect_player() -> list[str] | None:
@@ -78,20 +121,27 @@ def play_file(path: str | os.PathLike) -> None:
     subprocess.run([*player, str(p)], check=False)
 
 
-def speak(text: str, *, model: str, voice: str, api_key: str, muted: bool = False) -> None:
+def speak(text: str, *, model: str, voice: str, api_key: str, muted: bool = False) -> bool:
+    """Synthesize `text` and play it. Returns True if the user actually heard
+    audio, False if anything (mute, synth error, no player) prevented playback.
+
+    Callers MUST act on a False return — silent TTS failure in the wild looks
+    indistinguishable from "wake word stopped working" because the user gets
+    no audible confirmation. See main._speak for the failure-handling path.
+    """
     if muted:
         log.info("muted; skipping TTS: %r", text)
-        return
+        return False
     try:
         audio = synthesize(text, model=model, voice=voice, api_key=api_key)
     except Exception as e:
         log.warning("TTS failed: %s", e)
-        return
+        return False
 
     player = _detect_player()
     if player is None:
         log.warning("no MP3 player available (install mpg123); skipping playback")
-        return
+        return False
 
     # `delete=False` so the playback subprocess can open the file after we've
     # closed our handle; explicit os.unlink in finally guarantees no /tmp leak.
@@ -101,6 +151,7 @@ def speak(text: str, *, model: str, voice: str, api_key: str, muted: bool = Fals
             f.write(audio)
             path = f.name
         subprocess.run([*player, path], check=False)
+        return True
     finally:
         if path is not None:
             try:
