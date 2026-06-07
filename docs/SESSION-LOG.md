@@ -4,6 +4,178 @@ Running log of work per session. Newest first. Pair with `git log` for exact dif
 
 ---
 
+## 2026-06-07 — Kid-friendly voice intents (PR #5)
+
+Built three new voice intents aimed at the kids (Imogen and Penelope):
+open-ended Q&A, silly sound effects, and jokes. Plus expanded audit
+logging — `voice_utterances` now records `intent_name`, `answer`, and
+`concern` so we can see what the bot actually says. PR #5 open.
+
+### Process
+Followed the full spec → plan → subagent-driven implementation cycle
+end-to-end (the first time on this project). Brainstormed the design via
+the `superpowers:brainstorming` skill, ran a 5-persona review (factual,
+senior engineer, security, consistency, redundancy) before locking the
+spec, generated a 21-task plan via `writing-plans`, then executed via
+`subagent-driven-development` — fresh subagent per task with spec +
+quality review checkpoints between tasks. Two CRITICAL findings were
+caught mid-execution (a misleading `concern` return type in the repo;
+deleted chore-complete fallback instructions in the prompt) and fixed
+inline before the next task.
+
+### Locked design decisions (from the review pass)
+- **Single Haiku call** for `ask_question` — intent + answer in one call.
+  Idempotency cost is real (a retry re-bills the answer tokens) but at
+  home scale it's ~$0.0001 per retry; the ~1s latency win on the only
+  latency-sensitive new path is worth more.
+- **No CHECK constraint** on `intent_name` in SQLite. SQLite can't ALTER
+  a CHECK; adding the 12th intent later would force a table rebuild on
+  the live DB. Zod at the API boundary is the gatekeeper.
+- **No composite `/api/voice/context` endpoint** — Pi uses a
+  `ThreadPoolExecutor` to hit the existing 4 endpoints in parallel.
+  Saves the new API surface for no meaningful latency cost at LAN.
+- **No dedicated safety judge** (second LLM call) in v1. Four-layer
+  defence (system prompt + regex tripwire + concern detection + audit
+  log review) ships first. Once the audit log shows real Haiku misses,
+  adding a Gemini-Flash safety judge becomes a justified v2 addition
+  with a real failure profile to tune against. Building it now means
+  tuning blind.
+- **Per-intent confidence thresholds.** `noise_play` and `joke_tell`
+  auto-apply at ANY confidence — a confirm-card ("did you want a joke?")
+  disrupts the gag. `ask_question` keeps the 0.85 threshold because a
+  wrong answer is worse than a confirm.
+- **Tiered redirect** for hard topics. Bot answers "why do people die"
+  with a gentle factual answer; redirects only on genuine parental-
+  judgment topics (Santa-truth, specific medical advice, etc).
+  Avoids training the kids that the wall is useless.
+- **Concerning-disclosure handler.** Haiku flags `concern: true` on
+  utterances suggesting medical emergency / abuse / self-harm. Bot
+  speaks a fixed disclosure line ("That sounds important. Please tell
+  your mum or dad right now — they want to help.") and the audit row
+  is flagged with `concern=1`. New phone Manage tab section ("Recent
+  voice concerns") surfaces last-7-days flagged rows for parental
+  review.
+
+### What landed
+**Backend (3 PRs of work):**
+- Migration v6: 3 nullable columns on `voice_utterances`
+  (`intent_name`, `answer`, `concern`). No CHECK, no new index — defer
+  until there's a slow query.
+- `voiceAuditBody` Zod + `voiceUtterances` repo accept the new fields.
+  `concern` normalised to `boolean | null` at the repo boundary
+  (SQLite returns `0 | 1 | null`; type lying would've bitten the
+  consumer).
+- `GET /api/voice/concerns?since=` returns rows where `concern=1` for
+  the phone review tray.
+
+**Frontend:**
+- `ParsedIntent` grows 3 variants; `isParsedIntent` validates each;
+  parametrised `pokeToAction` round-trip pin across all 11 variants
+  (4 timer from PR #4 + 3 new kid + 4 existing = canonical regression
+  set).
+- `VoiceChip.appliedLabel`: `ask_question` → "answered", `joke_tell` →
+  "😄 joke", `noise_play` → empty + suppress render. Same exhaustiveness
+  add in `ConfirmCard.describe`.
+- `useRecentConcerns` hook + `api.voiceConcerns` method. New
+  `RecentConcernsSection` mounted on phone Manage tab between Voice and
+  KioskShutdown sections.
+
+**Pi voice service:**
+- `catalog.py` — load + integrity check at startup. SystemExit on
+  malformed JSON or missing referenced clip so a typo fails at boot,
+  not at 6pm in the kitchen.
+- `safety.py` — word-boundary regex tripwire (5 unambiguous terms:
+  fuck/shit/cunt/rape/suicide). Test pins explicitly rule out false
+  positives: "grape" not matching "rape", "the dinosaur died out" not
+  matching, "I scraped my knee" not matching.
+- `patterns_kid.py` — matcher patterns for `noise_play` (verb + name +
+  optional "noise|sound"; synonym lookup with prefix fallback) and
+  `joke_tell` (`tell (me)? a joke|riddle` → random catalog pick).
+  Registered in default_matcher alongside v1 and timer patterns.
+- `intent.py` — `VALID_INTENTS` grows 3; `REQUIRED_FIELDS` covers the
+  3 new shapes; `SYSTEM_TEMPLATE` rewritten with kid persona, tiered
+  safety, jailbreak resistance (5 manoeuvres), false-attribution
+  defence, concerning-disclosure detection. `build_system_prompt`
+  accepts `today_dinner`, `today_agenda`, `noise_keys` kwargs.
+- `main.py` — per-intent `AUTO_APPLY_THRESHOLDS` map (MappingProxyType
+  frozen); `_gather_context_for_intent` uses ThreadPoolExecutor on the
+  4 endpoints; `_is_quiet_hours` + `_quiet_safe_play_clip` wrapper
+  mirrors the frontend chore-chime quiet window (20:00–07:00 Brisbane).
+- `executor.py` — three new handlers. `_noise_play` resolves
+  catalog_key OR play_catalog → clip path. `_joke_tell` speaks setup
+  → sleep(1.5) → punchline inline, returns `spoken_inline=True` so
+  main.py doesn't double-speak. `_ask_question` runs answer through
+  `safety.check_answer` (concern path BYPASSES it — distressed child
+  should hear the disclosure, not a deflection), truncates to 40 words.
+- `server_state.post_audit` + `main._audit` carry the three new
+  fields through to the backend.
+- `pyproject.toml` package-data glob: `clips/*.mp3` → `clips/**/*.mp3`,
+  added `catalogs/*.json` so the new bundled files actually ship.
+
+### Catalog content (v1)
+- **30 jokes** hand-curated per §7.4 rubric (no your-mum / appearance /
+  race / disability / scary / sarcasm; AU spelling). Setup+punchline
+  split so the executor can insert the 1.5s pause. Topic tagging
+  deferred to v2.
+- **12 noises**: fart, burp, chicken, cow, pig, dog, cat, lion, sneeze,
+  raspberry, drum, fanfare. Synonym table for kid forms ("doggy" →
+  "dog", "piggy" → "pig", "chook" → "chicken"). Bedtime-adjacent
+  entries (evil-laugh, monster, ghost, alarm) deliberately dropped per
+  the spec-review pass.
+- **The MP3s are zero-byte placeholders** — they satisfy the catalog
+  integrity check so the service boots and tests pass, but they're
+  silent. `clips/noises/SOURCES.md` documents the TODO: real CC0
+  clips need sourcing from Freesound (or recorded ourselves) and
+  re-encoded to mono 16kHz before kids hear this for real. This does
+  NOT block the rest of the implementation.
+
+### Test counts (start → end)
+- Backend: 183 → 196 (+13)
+- Frontend: 73 → 81 (+8)
+- Pi: 313 → 389 (+76)
+- All green, no regressions.
+
+### Deploy + verification
+- Docker container rebuilt — backend at `schemaVersion: 6`.
+  `/api/voice/concerns` returns `[]` (no flagged rows yet).
+- Kiosk reloaded — wall picks up the new `ParsedIntent` types +
+  Recent Concerns section.
+- Pi voice code rsync'd; `homecal-voice` service restarted; catalog
+  integrity check passed at startup; service active with mic_online
+  and fresh heartbeat.
+
+### Acceptance gates outstanding
+- 20-utterance kid smoke test (the user runs it; only they can speak
+  to the wall). Test plan in PR #5 description.
+- Real CC0 noise clips before the kids use it.
+- Eyeball pass on the joke catalog by the user (the §7.4 user-gate).
+
+### Files
+**New:** `backend/src/routes/voiceConcerns.{ts,test.ts}`,
+`frontend/src/components/manage/RecentConcernsSection.{tsx,test.tsx}`,
+`frontend/src/core/hooks/useData.test.ts`,
+`kiosk/voice/homecal_voice/{catalog,safety,patterns_kid}.py` + tests,
+`kiosk/voice/homecal_voice/catalogs/{noises,jokes,safety_terms}.json`,
+`kiosk/voice/homecal_voice/catalogs/jokes.README.md`,
+`kiosk/voice/homecal_voice/clips/noises/{fart,burp,chicken,cow,pig,dog,cat,lion,sneeze,raspberry,drum,fanfare}.mp3` (placeholder)
++ `SOURCES.md`,
+`docs/superpowers/specs/2026-06-06-kid-intents-design.md`,
+`docs/superpowers/plans/2026-06-06-kid-intents.md`.
+
+**Modified:** `backend/src/db/migrate.ts` (v6),
+`backend/src/repos/voiceUtterances.ts`, `backend/src/schemas.ts`,
+`backend/src/routes/voice.ts`, `backend/src/server.ts`,
+`frontend/src/core/model/types.ts`, `frontend/src/core/api/client.ts`,
+`frontend/src/core/hooks/useData.ts`,
+`frontend/src/components/voice/voiceState.{ts,test.ts}`,
+`frontend/src/components/voice/ConfirmCard.tsx`,
+`frontend/src/components/controls/VoiceChip.{tsx,test.ts}`,
+`frontend/src/layouts/PhoneLayout.tsx`,
+`kiosk/voice/homecal_voice/{intent,main,executor,server_state}.py`
+(+ tests), `kiosk/voice/pyproject.toml`.
+
+---
+
 ## 2026-06-06 (evening) — Pi voice deploy + timer intent type-guard fix
 
 Deployed the matcher + timer code to the Pi (it had been sitting on master
