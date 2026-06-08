@@ -89,6 +89,11 @@ VAD_GAIN=5.0
 ENERGY_RMS_THRESHOLD=5500.0
 TTS_MODEL=hexgrad/kokoro-82m
 TTS_VOICE=af_bella
+# TTS dispatch — `cloud` ships safe; flip to `lan` after manual validation
+# against the kokoro-tts sidecar (see specs/2026-06-08-local-tts-sidecar-design.md).
+TTS_BACKEND=cloud
+TTS_SERVER_URL=http://192.168.1.94:8789
+TTS_SERVER_TIMEOUT_S=3
 DAILY_REQUEST_CAP=200
 AUDIO_DEVICE=default
 ENV
