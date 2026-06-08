@@ -12,6 +12,7 @@ def post_audit(
     *, base, token, id, transcript, status, intent_json, confidence,
     duration_ms, error, source=None,
     intent_name=None, answer=None, concern=None,
+    tts_provider=None, tts_latency_ms=None,
 ):
     body = {
         "id": id, "transcript": transcript, "status": status,
@@ -29,6 +30,10 @@ def post_audit(
         body["answer"] = answer
     if concern is not None:
         body["concern"] = concern
+    if tts_provider is not None:
+        body["tts_provider"] = tts_provider
+    if tts_latency_ms is not None:
+        body["tts_latency_ms"] = tts_latency_ms
     r = requests.post(f"{base}/api/voice/audit", json=body, headers=_hdrs(token), timeout=5)
     r.raise_for_status()
 

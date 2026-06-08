@@ -68,3 +68,33 @@ def test_post_audit_concern_true_serialises_correctly():
         )
     body = r.post.call_args.kwargs.get("json")
     assert body["concern"] is True
+
+
+def test_post_audit_sends_tts_provider_and_latency(requests_mock):
+    requests_mock.post("http://api/api/voice/audit", json={"ok": True})
+    post_audit(
+        base="http://api", token="t", id="u1",
+        transcript="hello", status="applied",
+        intent_json=None, confidence=None, duration_ms=None,
+        error=None, source=None, intent_name=None,
+        answer=None, concern=None,
+        tts_provider="kokoro_lan", tts_latency_ms=234,
+    )
+    body = requests_mock.last_request.json()
+    assert body["tts_provider"] == "kokoro_lan"
+    assert body["tts_latency_ms"] == 234
+
+
+def test_post_audit_omits_tts_fields_when_unset(requests_mock):
+    requests_mock.post("http://api/api/voice/audit", json={"ok": True})
+    post_audit(
+        base="http://api", token="t", id="u1",
+        transcript="hello", status="applied",
+        intent_json=None, confidence=None, duration_ms=None,
+        error=None, source=None, intent_name=None,
+        answer=None, concern=None,
+    )
+    body = requests_mock.last_request.json()
+    # Either absent or explicit null — both are valid per voiceAuditBody
+    assert body.get("tts_provider") in (None,)
+    assert body.get("tts_latency_ms") in (None,)
