@@ -156,6 +156,23 @@ def test_detect_player_falls_back_to_ffplay():
         assert cmd is not None and cmd[0] == "ffplay"
 
 
+def test_detect_player_prefers_ffplay_over_mpg123_when_both_present():
+    """WAV from the LAN sidecar plays natively in ffplay/paplay; mpg123 is
+    MP3-only. With local TTS, prefer the WAV-capable players first."""
+    with patch("homecal_voice.tts.shutil.which") as which:
+        which.side_effect = lambda b: f"/usr/bin/{b}" if b in ("ffplay", "mpg123") else None
+        cmd = _detect_player()
+        assert cmd is not None and cmd[0] == "ffplay"
+
+
+def test_detect_player_falls_back_to_mpg123_when_only_one_available():
+    """If only mpg123 is installed, we still use it (cloud MP3 path)."""
+    with patch("homecal_voice.tts.shutil.which") as which:
+        which.side_effect = lambda b: "/usr/bin/mpg123" if b == "mpg123" else None
+        cmd = _detect_player()
+        assert cmd is not None and cmd[0] == "mpg123"
+
+
 # ---------------------------------------------------------------------------
 # synthesize_lan
 # ---------------------------------------------------------------------------

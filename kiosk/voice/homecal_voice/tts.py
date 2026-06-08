@@ -89,16 +89,17 @@ def synthesize(
 
 
 def _detect_player() -> list[str] | None:
-    """Pick the first available CLI MP3 player. Order chosen so PipeWire's
-    native client (`pw-play`) wins when present — it speaks PCM/Opus/MP3 via
-    libsndfile/ffmpeg and shares the same audio graph the rest of the kiosk
-    uses. Falls back to mpg123, then ffplay. `aplay` is intentionally NOT in
-    the list — it's WAV/PCM only and silently fails on MP3."""
+    """Pick the first available CLI player.
+
+    Order with the LAN sidecar in mind: ffplay + paplay + pw-play all handle
+    WAV natively (which is what the sidecar returns). mpg123 only handles
+    MP3 (the cloud fallback path's format) so it sits last. aplay is
+    intentionally absent — WAV-only and silently fails on MP3."""
     candidates: tuple[tuple[str, list[str]], ...] = (
-        ("mpg123", ["mpg123", "-q"]),
         ("ffplay", ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet"]),
-        ("pw-play", ["pw-play"]),
         ("paplay", ["paplay"]),
+        ("pw-play", ["pw-play"]),
+        ("mpg123", ["mpg123", "-q"]),
     )
     for binary, cmd in candidates:
         if shutil.which(binary):
