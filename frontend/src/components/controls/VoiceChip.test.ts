@@ -5,7 +5,7 @@ import { ZONE } from '../../core/util/time';
 
 describe('labelFor', () => {
   it('idle invites the wake word', () => {
-    expect(labelFor({ kind: 'idle' })).toBe('say "hey mycroft"');
+    expect(labelFor({ kind: 'idle' })).toBe('say "hey luna"');
   });
 
   it('listening and thinking show progress', () => {

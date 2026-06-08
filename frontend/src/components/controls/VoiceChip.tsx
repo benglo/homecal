@@ -58,7 +58,7 @@ export function ttsDotColor(status: Pick<VoiceStatus, 'mic_online' | 'muted' | '
 /** What the chip shows for a given overlay state when voice is NOT muted. */
 export function labelFor(state: OverlayState): string {
   switch (state.kind) {
-    case 'idle': return 'say "hey mycroft"';
+    case 'idle': return 'say "hey luna"';
     case 'listening': return 'listening…';
     case 'thinking': return 'thinking…';
     case 'confirming': return 'confirm?';
