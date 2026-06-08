@@ -189,11 +189,14 @@ export type VoiceOverlayKind =
   | 'idle' | 'listening' | 'thinking' | 'confirming'
   | 'applied' | 'failed' | 'mic_offline' | 'voice_offline';
 
+export type TtsProvider = 'kokoro_lan' | 'openrouter' | 'clip' | 'none';
+
 export interface VoiceStatus {
   mic_online: boolean;
   last_heartbeat_at: string | null;
   mute_until: string | null;
   muted: boolean;
+  last_tts_provider: TtsProvider | null;
 }
 
 export interface VoiceConcern {
