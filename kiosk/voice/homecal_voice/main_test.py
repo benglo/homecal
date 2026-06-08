@@ -1202,3 +1202,52 @@ def test_gather_dinner_and_agenda_propagates_partial_failure_on_events():
     with patch("homecal_voice.main._requests.get", side_effect=_get):
         with pytest.raises(RuntimeError, match="events 500"):
             _gather_dinner_and_agenda(api_base="http://x", today="2026-06-07")
+
+
+# ---------------------------------------------------------------------------
+# Task 20 — LAN sidecar health cache + TTS daily cap
+# ---------------------------------------------------------------------------
+
+
+def test_lan_state_starts_reachable_with_stale_cache():
+    """Cold start: cache is stale → next call treats sidecar as reachable
+    until proven otherwise."""
+    from homecal_voice.main import _lan_state, mark_lan_attempt, lan_reachable
+    _lan_state["checked_at"] = 0.0
+    _lan_state["reachable"] = False  # previous run was bad
+    # Cold cache: even with stored False, an expired TTL means try-again
+    assert lan_reachable() is True
+
+
+def test_lan_state_stays_unreachable_for_ttl_after_failure(monkeypatch):
+    from homecal_voice.main import _lan_state, mark_lan_attempt, lan_reachable
+    import homecal_voice.main as main_mod
+    fake_now = [1000.0]
+    monkeypatch.setattr(main_mod.time, "time", lambda: fake_now[0])
+    mark_lan_attempt(success=False)
+    assert lan_reachable() is False
+    # Within 30s TTL — still unreachable, no probe
+    fake_now[0] += 20
+    assert lan_reachable() is False
+    # After 30s — try again
+    fake_now[0] += 15
+    assert lan_reachable() is True
+
+
+def test_under_tts_cap_resets_per_day(monkeypatch):
+    from homecal_voice.main import _under_tts_cap, _tts_cap_state
+    _tts_cap_state.update(day="", count=0)
+    # Today's date
+    import homecal_voice.main as main_mod
+    monkeypatch.setattr(main_mod, "today_brisbane", lambda: "2026-06-08")
+
+    class FakeCfg:
+        daily_request_cap = 3
+
+    for _ in range(3):
+        assert _under_tts_cap(FakeCfg()) is True
+    assert _under_tts_cap(FakeCfg()) is False  # 4th call over cap
+
+    # Day rolls over → counter resets
+    monkeypatch.setattr(main_mod, "today_brisbane", lambda: "2026-06-09")
+    assert _under_tts_cap(FakeCfg()) is True

@@ -692,6 +692,43 @@ def _extract_with_matcher_first(*, text: str, cfg) -> IntentResult:
 _mute_state = {"muted": False, "checked_at": 0.0}
 
 
+# LAN sidecar reachability cache. Mirrors is_muted_locally — the first /tts
+# call after the TTL acts as the probe; failures mark the sidecar down for
+# the next LAN_HEALTH_TTL_SEC seconds so subsequent utterances jump straight
+# to cloud without paying the timeout each time.
+LAN_HEALTH_TTL_SEC = 30
+_lan_state = {"reachable": True, "checked_at": 0.0}
+
+
+def lan_reachable() -> bool:
+    """True if we should try the LAN sidecar this turn. Cache-fresh + last
+    attempt failed → False (skip LAN). Cache-stale → True (try again)."""
+    now = time.time()
+    if now - _lan_state["checked_at"] > LAN_HEALTH_TTL_SEC:
+        return True
+    return bool(_lan_state["reachable"])
+
+
+def mark_lan_attempt(success: bool) -> None:
+    """Record the outcome of a /tts attempt for the health cache."""
+    _lan_state["reachable"] = success
+    _lan_state["checked_at"] = time.time()
+
+
+# Cloud-TTS-fallback daily cap. Mirrors _under_cap for the main request flow,
+# but tracks TTS-specific calls so a broken sidecar can't quietly burn cloud
+# budget. Resets at Brisbane midnight (today_brisbane rolls over).
+_tts_cap_state = {"day": "", "count": 0}
+
+
+def _under_tts_cap(cfg) -> bool:
+    today = today_brisbane()
+    if _tts_cap_state["day"] != today:
+        _tts_cap_state.update(day=today, count=0)
+    _tts_cap_state["count"] += 1
+    return _tts_cap_state["count"] <= cfg.daily_request_cap
+
+
 def is_muted_locally(cfg) -> bool:
     """Cached mute check. Fails SAFE: a backend outage returns True so we
     don't burn cloud STT/intent calls on every wake while operators can't
