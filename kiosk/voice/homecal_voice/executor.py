@@ -14,7 +14,7 @@ import logging
 import requests
 
 from homecal_voice.intent import IntentResult
-from homecal_voice.timezone import today_brisbane
+from homecal_voice.timezone import today_brisbane, is_quiet_hours
 from homecal_voice import catalog as kid_catalog
 from homecal_voice import safety
 
@@ -123,12 +123,16 @@ class Executor:
         play_clip: Optional[Callable[[str], None]] = None,
         speak: Optional[Callable[[str], None]] = None,
         sleep: Optional[Callable[[float], None]] = None,
+        play_bytes: Optional[Callable[[bytes, str], None]] = None,
+        fetch_catalog: Optional[Callable[[str, str], "bytes | None"]] = None,
     ):
         self.base = base.rstrip("/")
         self.headers = {"X-Pi-Token": token, "Content-Type": "application/json"}
         self._play_clip = play_clip
         self._speak = speak
         self._sleep = sleep
+        self._play_bytes = play_bytes
+        self._fetch_catalog = fetch_catalog
         self._handlers = {
             "dinner_set": self._dinner_set,
             "chore_complete": self._chore_complete,
@@ -353,13 +357,42 @@ class Executor:
           - no play_clip dep wired (older runtime configuration)
           - key not in catalog
           - both keys missing from payload
-        """
-        if self._play_clip is None:
-            return {"ok": False, "spoken": "", "error": "noise_play_no_player"}
 
+        New path (when fetch_catalog + play_bytes are both wired):
+          Pulls pre-rendered WAV bytes from the sidecar catalog endpoint and
+          plays them directly, bypassing the on-disk clip file. Falls through
+          to the existing clip-file path on a catalog miss (None return).
+        """
         key = f.get("catalog_key") or f.get("play_catalog")
         if not key:
             return {"ok": False, "spoken": "", "error": "noise_play_missing_key"}
+
+        # 1. New path: pull pre-rendered WAV from sidecar catalog endpoint.
+        if self._fetch_catalog is not None and self._play_bytes is not None:
+            try:
+                audio = self._fetch_catalog("noise", key)
+            except Exception as e:
+                log.warning("catalog fetch failed (%s); falling back to clip path", e)
+                audio = None
+            if audio is not None:
+                # Quiet-hours gate: same window as the clip path.
+                if is_quiet_hours():
+                    log.info("quiet hours: suppressed catalog noise_play(%s)", key)
+                    return {
+                        "ok": False,
+                        "spoken": "",
+                        "error": "quiet_hours_suppressed",
+                        "quiet_suppressed": True,
+                    }
+                try:
+                    self._play_bytes(audio, format="wav")
+                except Exception as e:
+                    return {"ok": False, "spoken": "", "error": f"clip_play:{e}"}
+                return {"ok": True, "spoken": ""}
+
+        # 2. Existing fallback path: on-disk clip file via play_clip.
+        if self._play_clip is None:
+            return {"ok": False, "spoken": "", "error": "noise_play_no_player"}
 
         noises = kid_catalog.load_noises()
         filename = noises.entries.get(key)

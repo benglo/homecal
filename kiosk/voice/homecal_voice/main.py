@@ -32,7 +32,7 @@ from homecal_voice.intent import (
     call_openrouter,
 )
 from homecal_voice.matcher import MatchContext, kid_matcher, core_matcher
-from homecal_voice.timezone import today_brisbane, BRISBANE_OFFSET_SECONDS
+from homecal_voice.timezone import today_brisbane, BRISBANE_OFFSET_SECONDS, is_quiet_hours
 from homecal_voice import catalog as kid_catalog
 
 log = logging.getLogger("homecal_voice.main")
@@ -153,14 +153,13 @@ def _is_hallucination(t: str) -> bool:
 
 
 def _is_quiet_hours(now: datetime | None = None) -> bool:
-    """Brisbane 20:00 (inclusive) — 07:00 (exclusive) — mirrors the chore-chime
-    quiet window in the frontend. Used to gate noise_play clip playback so a
-    fart noise at 11pm doesn't fire."""
-    if now is None:
-        now = datetime.now(timezone.utc)
-    brisbane = now + timedelta(seconds=BRISBANE_OFFSET_SECONDS)
-    hour = brisbane.hour
-    return hour >= 20 or hour < 7
+    """Thin shim — delegates to the shared helper in homecal_voice.timezone.
+
+    Kept here so existing call sites (_quiet_safe_play_clip) don't need
+    touching; the logic lives in timezone.is_quiet_hours to break the
+    main → executor circular import that would result from executor importing
+    directly from main."""
+    return is_quiet_hours(now)
 
 
 def _quiet_safe_play_clip(play_clip, path: str) -> bool:
@@ -516,7 +515,7 @@ def main() -> int:
     from homecal_voice.wake import WakeDetector, load_default_model
     from homecal_voice.endpointer import Endpointer, load_silero_vad
     from homecal_voice.stt import transcribe_with_fallback as stt_transcribe
-    from homecal_voice.tts import speak as tts_speak, play_file as tts_play_file, synthesize_lan as tts_synthesize_lan
+    from homecal_voice.tts import speak as tts_speak, play_file as tts_play_file, synthesize_lan as tts_synthesize_lan, fetch_catalog as tts_fetch_catalog
     from homecal_voice.executor import Executor
     from homecal_voice.server_state import post_state, post_audit, post_heartbeat
     from homecal_voice.patterns_v1 import register_v1
@@ -571,6 +570,13 @@ def main() -> int:
             muted=is_muted_locally(cfg),
         ),
         sleep=time.sleep,
+        play_bytes=lambda audio, fmt: _play_audio_bytes(audio, fmt),
+        fetch_catalog=lambda kind, key: tts_fetch_catalog(
+            kind, key,
+            server_url=cfg.tts_server_url,
+            token=cfg.pi_api_token,
+            timeout_s=cfg.tts_server_timeout_s,
+        ),
     )
 
     _start_mute_sse(cfg)

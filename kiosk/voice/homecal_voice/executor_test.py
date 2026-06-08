@@ -915,3 +915,48 @@ def test_noise_play_prefers_catalog_key_over_play_catalog_when_both_present():
     # resolved. A future fix that suppresses it on catalog_key paths would
     # change this assertion to `== ""`.
     assert out["spoken"] == "fallback"
+
+
+# ---------------------------------------------------------------------------
+# Task 22 — _noise_play hits sidecar catalog endpoint
+# ---------------------------------------------------------------------------
+
+
+def test_noise_play_uses_catalog_fetch_when_provided(monkeypatch):
+    """When fetch_catalog returns bytes, _noise_play plays those bytes and
+    returns spoken="" (no TTS dance for matcher hits)."""
+    from homecal_voice.executor import Executor
+    from homecal_voice.intent import IntentResult
+
+    play_bytes = MagicMock()
+    fetch_catalog = MagicMock(return_value=b"RIFFfake")
+
+    ex = Executor(
+        base="http://api", token="t",
+        play_clip=MagicMock(), speak=MagicMock(),
+        play_bytes=play_bytes, fetch_catalog=fetch_catalog,
+    )
+    out = ex.apply(IntentResult("noise_play", {"catalog_key": "fart"}, 1.0, "raw"))
+    assert out["ok"] is True
+    assert out["spoken"] == ""
+    fetch_catalog.assert_called_once_with("noise", "fart")
+    play_bytes.assert_called_once_with(b"RIFFfake", format="wav")
+
+
+def test_noise_play_falls_through_to_old_path_on_catalog_miss():
+    """If fetch_catalog returns None (404), fall through to today's
+    play_clip-from-disk behaviour."""
+    from homecal_voice.executor import Executor
+    from homecal_voice.intent import IntentResult
+
+    play_clip = MagicMock()
+    fetch_catalog = MagicMock(return_value=None)
+    ex = Executor(
+        base="http://api", token="t",
+        play_clip=play_clip, speak=MagicMock(),
+        play_bytes=MagicMock(), fetch_catalog=fetch_catalog,
+    )
+    out = ex.apply(IntentResult("noise_play", {"catalog_key": "fart"}, 1.0, "raw"))
+    # On a miss, today's behaviour: load the clip file from disk + play_clip it.
+    play_clip.assert_called_once()
+    assert out["ok"] is True
