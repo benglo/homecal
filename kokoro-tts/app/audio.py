@@ -30,3 +30,30 @@ def to_wav_bytes(samples: np.ndarray) -> bytes:
         w.setframerate(SAMPLE_RATE)
         w.writeframes(pcm.tobytes())
     return buf.getvalue()
+
+
+LEAD_SILENCE_MS = 100  # Masks Boom 3 A2DP wake-up clipping the first phoneme
+PEAK_DBFS = -3.0       # Headroom for downstream re-encoding (BT codec)
+
+
+def prepend_silence(samples: np.ndarray) -> np.ndarray:
+    """Prepend LEAD_SILENCE_MS of zeros. Bluetooth speakers — Boom 3
+    specifically — drop the first 150-400ms of audio after an idle period
+    while their amplifier wakes up. The leading zeros become the throwaway
+    bytes, the actual speech survives."""
+    n = SAMPLE_RATE * LEAD_SILENCE_MS // 1000
+    silence = np.zeros(n, dtype=samples.dtype)
+    return np.concatenate([silence, samples])
+
+
+def peak_normalize(samples: np.ndarray) -> np.ndarray:
+    """Scale so the peak absolute value sits at PEAK_DBFS.
+
+    Eliminates loudness variance across ONNX runtime / quantization versions
+    so the kid never has to ask 'why was that one so quiet?' Silent input
+    (all zeros) returns unchanged — no divide-by-zero."""
+    peak = float(np.max(np.abs(samples)))
+    if peak < 1e-9:
+        return samples
+    target_linear = 10 ** (PEAK_DBFS / 20)
+    return samples * (target_linear / peak)
