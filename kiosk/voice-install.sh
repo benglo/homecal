@@ -93,7 +93,9 @@ TTS_VOICE=af_bella
 # against the kokoro-tts sidecar (see specs/2026-06-08-local-tts-sidecar-design.md).
 TTS_BACKEND=cloud
 TTS_SERVER_URL=http://192.168.1.94:8789
-TTS_SERVER_TIMEOUT_S=3
+# Long ask_question/joke answers (40+ words) need ~6-7s sidecar synth on
+# the i5-7400; 10s leaves margin so they don't false-timeout into cloud.
+TTS_SERVER_TIMEOUT_S=10
 DAILY_REQUEST_CAP=200
 AUDIO_DEVICE=default
 ENV

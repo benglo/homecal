@@ -76,5 +76,5 @@ def load_config() -> Config:
         audio_device=os.environ.get("AUDIO_DEVICE", "default"),
         tts_backend=backend,
         tts_server_url=os.environ.get("TTS_SERVER_URL", "http://192.168.1.94:8789").rstrip("/"),
-        tts_server_timeout_s=int(os.environ.get("TTS_SERVER_TIMEOUT_S", "3")),
+        tts_server_timeout_s=int(os.environ.get("TTS_SERVER_TIMEOUT_S", "10")),
     )

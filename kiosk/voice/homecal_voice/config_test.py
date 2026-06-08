@@ -63,10 +63,12 @@ def test_tts_server_url_default_and_override(monkeypatch):
     monkeypatch.setenv("TTS_SERVER_URL", "http://10.0.0.5:8000")
     assert load_config().tts_server_url == "http://10.0.0.5:8000"
 
-def test_tts_server_timeout_default_is_3s(monkeypatch):
+def test_tts_server_timeout_default_is_10s(monkeypatch):
+    """Bumped from 3s after long ask_question replies (40-word Haiku answers
+    take ~6-7s to synth on the i5-7400) false-timed-out into the cloud path."""
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-xxx")
     monkeypatch.setenv("HOMECAL_API_BASE", "http://192.168.1.94:8787")
     monkeypatch.setenv("PI_API_TOKEN", "abc123")
     monkeypatch.delenv("TTS_SERVER_TIMEOUT_S", raising=False)
     cfg = load_config()
-    assert cfg.tts_server_timeout_s == 3
+    assert cfg.tts_server_timeout_s == 10
