@@ -4,9 +4,10 @@ import { Mic, MicOff, Loader2, Check, AlertCircle } from 'lucide-react';
 import type { ComponentType, SVGProps } from 'react';
 import { useVoiceStatus } from '../../core/hooks/useData';
 import { useMuteVoice } from '../../core/hooks/useMutations';
+import { useIsWall } from '../../core/hooks/useIsWall';
 import { ZONE } from '../../core/util/time';
 import type { OverlayState } from '../voice/voiceState';
-import type { ParsedIntent } from '../../core/model/types';
+import type { ParsedIntent, VoiceStatus } from '../../core/model/types';
 
 type LucideIcon = ComponentType<SVGProps<SVGSVGElement> & { size?: number | string }>;
 type Kind = OverlayState['kind'];
@@ -43,6 +44,16 @@ const PRESETS: Preset[] = [
     compute: () => new Date(Date.now() + 365 * 24 * 60 * 60_000).toISOString(),
   },
 ];
+
+/** Returns the CSS colour for the ambient TTS-health dot on the wall chip.
+ *  Uses actual repo tokens: --ok (green), --stale (amber), --text-muted (grey). */
+export function ttsDotColor(status: Pick<VoiceStatus, 'mic_online' | 'muted' | 'last_tts_provider'>): string {
+  if (!status.mic_online || status.muted) return 'var(--text-muted)';
+  if (status.last_tts_provider === 'clip' || status.last_tts_provider === 'none') {
+    return 'var(--stale)';
+  }
+  return 'var(--ok)';
+}
 
 /** What the chip shows for a given overlay state when voice is NOT muted. */
 export function labelFor(state: OverlayState): string {
@@ -105,6 +116,7 @@ interface Props {
 export function VoiceChip({ state }: Props) {
   const { data: status } = useVoiceStatus();
   const mute = useMuteVoice();
+  const isWall = useIsWall();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -157,8 +169,24 @@ export function VoiceChip({ state }: Props) {
     setOpen((o) => !o);
   };
 
+  const dot = isWall && status ? (
+    <span
+      style={{
+        position: 'absolute',
+        top: 4,
+        right: 4,
+        width: 6,
+        height: 6,
+        borderRadius: '50%',
+        background: ttsDotColor(status),
+      }}
+      aria-hidden="true"
+    />
+  ) : null;
+
   return (
     <div ref={rootRef} style={{ position: 'relative' }}>
+      {dot}
       <button
         type="button"
         onClick={handleClick}
