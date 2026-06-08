@@ -436,6 +436,22 @@ class Executor:
         if missing:
             return {"ok": False, "spoken": "", "error": f"missing_fields:{','.join(missing)}"}
 
+        joke_id = f.get("joke_id")
+        if joke_id and self._fetch_catalog and self._play_bytes:
+            try:
+                audio = self._fetch_catalog("joke", joke_id)
+            except Exception as e:
+                log.warning("joke catalog fetch failed (%s); falling back to TTS", e)
+                audio = None
+            if audio is not None:
+                try:
+                    self._play_bytes(audio, format="wav")
+                except Exception as e:
+                    return {"ok": False, "spoken": "", "error": f"joke_play:{e}",
+                            "spoken_inline": True}
+                return {"ok": True, "spoken_inline": True,
+                        "spoken": f"{f.get('setup','')} ... {f.get('punchline','')}"}
+
         if self._speak is None or self._sleep is None:
             return {"ok": False, "spoken": "", "error": "joke_tell_no_speaker"}
 

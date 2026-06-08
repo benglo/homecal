@@ -960,3 +960,56 @@ def test_noise_play_falls_through_to_old_path_on_catalog_miss():
     # On a miss, today's behaviour: load the clip file from disk + play_clip it.
     play_clip.assert_called_once()
     assert out["ok"] is True
+
+
+# ---------------------------------------------------------------------------
+# Task 23 — _joke_tell hits sidecar joke catalog endpoint
+# ---------------------------------------------------------------------------
+
+
+def test_joke_tell_uses_catalog_fetch_when_provided():
+    from homecal_voice.executor import Executor
+    from homecal_voice.intent import IntentResult
+
+    play_bytes = MagicMock()
+    fetch_catalog = MagicMock(return_value=b"RIFFjokeaudio")
+
+    ex = Executor(
+        base="http://api", token="t",
+        play_clip=MagicMock(), speak=MagicMock(), sleep=MagicMock(),
+        play_bytes=play_bytes, fetch_catalog=fetch_catalog,
+    )
+    out = ex.apply(IntentResult(
+        "joke_tell",
+        {"joke_id": "j001", "setup": "Why X?", "punchline": "Because Y"},
+        1.0, "raw",
+    ))
+    assert out["ok"] is True
+    assert out.get("spoken_inline") is True
+    fetch_catalog.assert_called_once_with("joke", "j001")
+    play_bytes.assert_called_once_with(b"RIFFjokeaudio", format="wav")
+
+
+def test_joke_tell_falls_through_to_tts_setup_pause_punchline_on_miss():
+    """If fetch_catalog returns None (joke not pre-rendered), fall back to
+    today's setup → 1.5s pause → punchline via TTS."""
+    from homecal_voice.executor import Executor
+    from homecal_voice.intent import IntentResult
+
+    speak = MagicMock()
+    sleep = MagicMock()
+    fetch_catalog = MagicMock(return_value=None)
+    ex = Executor(
+        base="http://api", token="t",
+        play_clip=MagicMock(), speak=speak, sleep=sleep,
+        play_bytes=MagicMock(), fetch_catalog=fetch_catalog,
+    )
+    out = ex.apply(IntentResult(
+        "joke_tell",
+        {"joke_id": "j999", "setup": "Knock knock", "punchline": "Who's there"},
+        1.0, "raw",
+    ))
+    assert out["ok"] is True
+    speak.assert_any_call("Knock knock")
+    sleep.assert_called_once_with(1.5)
+    speak.assert_any_call("Who's there")
