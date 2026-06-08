@@ -19,5 +19,24 @@ test('v6 adds intent_name, answer, concern columns; no CHECK constraint on inten
   const row = db.prepare(`SELECT intent_name FROM voice_utterances WHERE id='t1'`).get() as { intent_name: string };
   assert.equal(row.intent_name, 'some_future_intent');
 
-  assert.equal(db.pragma('user_version', { simple: true }), 6);
+  assert.equal(db.pragma('user_version', { simple: true }), 7);
+});
+
+test('v7 adds tts_provider and tts_latency_ms columns to voice_utterances', () => {
+  const db = new Database(':memory:');
+  runMigrations(db);
+  const cols = db.prepare("SELECT name, type FROM pragma_table_info('voice_utterances')").all() as { name: string; type: string }[];
+  const byName = Object.fromEntries(cols.map(c => [c.name, c.type]));
+  assert.equal(byName.tts_provider, 'TEXT');
+  assert.equal(byName.tts_latency_ms, 'INTEGER');
+
+  // No CHECK constraint on tts_provider — enum is enforced in Zod only.
+  db.prepare(`INSERT INTO voice_utterances
+    (id, created_at, transcript, status, tts_provider, tts_latency_ms)
+    VALUES ('t1', '2026-06-08T00:00:00Z', 'x', 'applied', 'kokoro_lan', 123)`).run();
+  const row = db.prepare(`SELECT tts_provider, tts_latency_ms FROM voice_utterances WHERE id='t1'`).get() as { tts_provider: string; tts_latency_ms: number };
+  assert.equal(row.tts_provider, 'kokoro_lan');
+  assert.equal(row.tts_latency_ms, 123);
+
+  assert.equal(db.pragma('user_version', { simple: true }), 7);
 });

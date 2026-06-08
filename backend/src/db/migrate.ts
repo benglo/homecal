@@ -166,6 +166,19 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE voice_utterances ADD COLUMN concern INTEGER;
     `);
   },
+  // v7 — TTS provenance. Records WHERE the spoken reply came from so a
+  // sustained kokoro_lan → openrouter drift in the audit log is visible.
+  // tts_latency_ms is end-to-end wall-clock from the Pi's perspective
+  // (includes LAN/cloud round-trip), distinct from the sidecar's X-Synth-Ms
+  // which is server-side synth only. No CHECK on tts_provider: Zod is the
+  // gatekeeper, and a SQLite CHECK forces a table rebuild every time we add
+  // a provider.
+  (db) => {
+    db.exec(`
+      ALTER TABLE voice_utterances ADD COLUMN tts_provider TEXT;
+      ALTER TABLE voice_utterances ADD COLUMN tts_latency_ms INTEGER;
+    `);
+  },
 ];
 
 /** Seed categories — idempotent, Okabe–Ito palette from the design system. */
