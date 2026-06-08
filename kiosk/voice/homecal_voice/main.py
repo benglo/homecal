@@ -83,6 +83,15 @@ class OneShotDeps:
     mic_off: Callable
     mic_on: Callable
     play_clip: Callable
+    # LAN sidecar TTS + play-bytes (added for the fallback ladder).
+    # speak_lan: (text) -> (bytes, int) | raises  — cfg is captured in the lambda
+    # speak_cloud: existing cloud TTS path (bool return); aliased from `speak`
+    # play_bytes: (audio: bytes, format: str) -> None
+    # cfg: passed so _speak can call _under_tts_cap without re-reading env vars.
+    speak_lan: Callable
+    speak_cloud: Callable
+    play_bytes: Callable
+    cfg: object
 
 
 def _intent_payload(intent: IntentResult) -> dict:
@@ -206,6 +215,12 @@ def _run_after_wake(d: OneShotDeps) -> None:
     def _elapsed() -> int:
         return int(time.time() * 1000) - started_ms
 
+    # Side-channel dict for tts provider/latency captured inside _speak and
+    # forwarded to the audit row that immediately follows each _speak call.
+    # Closure dict (not a dataclass attr) keeps the coupling local to this
+    # frame so other run_once invocations don't bleed state.
+    _last_tts: dict = {}
+
     def _audit(
         transcript: str,
         status: str,
@@ -214,6 +229,8 @@ def _run_after_wake(d: OneShotDeps) -> None:
         *,
         answer: str | None = None,
         concern: bool | None = None,
+        tts_provider: str | None = None,
+        tts_latency_ms: int | None = None,
     ) -> None:
         d.post_audit(
             id=uid,
@@ -227,35 +244,66 @@ def _run_after_wake(d: OneShotDeps) -> None:
             intent_name=intent.intent if intent else None,
             answer=answer,
             concern=concern,
+            tts_provider=tts_provider,
+            tts_latency_ms=tts_latency_ms,
         )
 
     def _speak(text: str) -> None:
-        """Close mic during playback (avoids TTS echo cascading wake), sleep
-        2s to cover BT codec latency + BOOM 3 speaker decay, then reopen.
-        try/finally so a playback exception can't strand the mic closed.
-        Wake LSTM reset is the outer run_once try/finally's job.
+        """LAN → cloud (capped) → clip → silent fallback ladder.
+
+        Closes the mic for the entire playback window so the pw-record pipe
+        cannot buffer echo and cascade post-reply wakes. try/finally ensures
+        mic_on fires even when playback raises.
 
         Empty/whitespace text is a no-op — matcher-hit handlers like noise_play
-        return spoken="" and we'd otherwise POST it to OpenRouter, which 400s
-        on an empty body and pollutes the journal with phantom TTS failures.
+        return spoken="" and the cloud path would 400 on an empty body.
 
-        A False return from d.speak (synth timeout, no player, etc.) used to be
-        swallowed silently — making a cloud TTS hiccup look identical to a
-        broken wake word from the user's side. Now logged as a WARNING with the
-        intended text so journalctl makes the failure greppable. The wall state
-        is left as whatever upstream posted (usually `applied` ✓) because the
-        action itself succeeded — only the spoken confirmation didn't."""
+        After returning, _last_tts carries {"provider": ..., "latency_ms": ...}
+        so the _audit call that follows can tag the row with TTS metadata."""
         if not text or not text.strip():
             return
+
         d.mic_off()
-        spoken_ok = False
+        provider: str | None = None
+        latency_ms: int | None = None
+        played = False
+
         try:
-            spoken_ok = d.speak(text) is not False
+            # 1. LAN sidecar (preferred — lower latency, no cloud spend)
+            if lan_reachable():
+                try:
+                    t0 = time.time()
+                    audio, _synth_ms = d.speak_lan(text)
+                    d.play_bytes(audio, "wav")
+                    latency_ms = int((time.time() - t0) * 1000)
+                    provider = "kokoro_lan"
+                    mark_lan_attempt(success=True)
+                    played = True
+                except (_requests.RequestException, _requests.exceptions.ConnectionError) as e:
+                    log.warning("LAN TTS failed (%s); falling back to cloud", e)
+                    mark_lan_attempt(success=False)
+
+            # 2. Cloud fallback (existing speak path), capped per day to
+            # prevent a stuck sidecar silently burning the OpenRouter budget.
+            if not played and _under_tts_cap(d.cfg):
+                ok = d.speak_cloud(text)
+                if ok:
+                    provider = "openrouter"
+                    played = True
+
+            # 3. Clip fallback — always available, no network dependency.
+            if not played:
+                from homecal_voice.tts import CLIP_DIDNT_CATCH
+                d.play_clip(CLIP_DIDNT_CATCH)
+                provider = "clip"
+                log.warning("TTS produced no audio — fell to didnt_catch for: %r", text[:120])
+
             time.sleep(2.0)
         finally:
             d.mic_on()
-        if not spoken_ok:
-            log.warning("TTS produced no audio — user heard nothing for: %r", text[:120])
+
+        _last_tts["provider"] = provider
+        _last_tts["latency_ms"] = latency_ms
 
     def _play_didnt_catch() -> None:
         """Audible fallback when STT was blank/hallucinated/unintelligible.
@@ -331,10 +379,8 @@ def _run_after_wake(d: OneShotDeps) -> None:
                      built); audit `failed` with the executor's error string,
                      post-state `failed` — must NOT flash the green ✓ or the
                      audit log becomes a false-success oracle.
-        - ok=True:   audit `audit_status` (applied or confirmed), post-state
-                     `applied`. Order matters — chip's ✓ flash + audit row
-                     write happen BEFORE _speak so they run in parallel with
-                     TTS playback + drain instead of after.
+        - ok=True:   post-state `applied` first (chip's ✓ flash runs while TTS
+                     plays), then _speak, then audit with tts_provider tagged.
         """
         try:
             out = d.execute(intent)
@@ -361,16 +407,19 @@ def _run_after_wake(d: OneShotDeps) -> None:
             _audit(transcript, "failed", intent, error=err)
             _speak(out.get("spoken", ""))
             return
+        # ✓ flash fires immediately; TTS plays while the wall is already green.
         d.post_state(utterance_id=uid, kind="applied",
                      payload={"intent": _intent_payload(intent)})
+        if not out.get("spoken_inline"):
+            _speak(out.get("spoken", ""))
         _audit(
             transcript, audit_status, intent,
             answer=out.get("spoken") or None,
             concern=out.get("concern"),
             error="regex_override" if out.get("regex_override") else None,
+            tts_provider=_last_tts.get("provider"),
+            tts_latency_ms=_last_tts.get("latency_ms"),
         )
-        if not out.get("spoken_inline"):
-            _speak(out.get("spoken", ""))
 
     if intent.confidence >= auto_apply_threshold(intent.intent):
         _try_execute("applied")
@@ -427,6 +476,36 @@ def _on_sigterm(*_):
     log.info("SIGTERM received; shutting down")
 
 
+def _play_audio_bytes(audio: bytes, format: str) -> None:  # noqa: A002
+    """Write raw audio bytes to a tempfile and play it with the detected player.
+
+    Mirrors the post-synth playback path in tts.speak() but for raw bytes so
+    the LAN sidecar path (which returns WAV bytes directly) doesn't need to
+    go through the cloud speak() wrapper. `delete=False` + explicit unlink
+    matches the pattern in tts.speak to avoid /tmp leaks."""
+    import os
+    import subprocess
+    import tempfile
+    from homecal_voice.tts import _detect_player
+    player = _detect_player()
+    if player is None:
+        log.warning("no audio player available; cannot play %s bytes", len(audio))
+        return
+    path = None
+    try:
+        suffix = f".{format}"
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
+            f.write(audio)
+            path = f.name
+        subprocess.run([*player, path], check=False)
+    finally:
+        if path is not None:
+            try:
+                os.unlink(path)
+            except OSError as e:
+                log.debug("could not unlink audio tempfile %s: %s", path, e)
+
+
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     cfg = load_config()
@@ -437,7 +516,7 @@ def main() -> int:
     from homecal_voice.wake import WakeDetector, load_default_model
     from homecal_voice.endpointer import Endpointer, load_silero_vad
     from homecal_voice.stt import transcribe_with_fallback as stt_transcribe
-    from homecal_voice.tts import speak as tts_speak, play_file as tts_play_file
+    from homecal_voice.tts import speak as tts_speak, play_file as tts_play_file, synthesize_lan as tts_synthesize_lan
     from homecal_voice.executor import Executor
     from homecal_voice.server_state import post_state, post_audit, post_heartbeat
     from homecal_voice.patterns_v1 import register_v1
@@ -552,6 +631,24 @@ def main() -> int:
                 mic_off=mic_off,
                 mic_on=mic_on,
                 play_clip=tts_play_file,
+                # LAN sidecar: cfg fields captured in the lambda so speak_lan
+                # receives only `text`; the test mocks just assert called_once().
+                speak_lan=lambda text: tts_synthesize_lan(
+                    text,
+                    server_url=cfg.tts_server_url,
+                    token=cfg.pi_api_token,
+                    voice=cfg.tts_voice,
+                    timeout_s=cfg.tts_server_timeout_s,
+                ),
+                speak_cloud=lambda text: tts_speak(
+                    text,
+                    model=cfg.tts_model,
+                    voice=cfg.tts_voice,
+                    api_key=cfg.openrouter_api_key,
+                    muted=is_muted_locally(cfg),
+                ),
+                play_bytes=lambda audio, format: _play_audio_bytes(audio, format),
+                cfg=cfg,
             )
             if not _under_cap():
                 log.warning("daily request cap %d reached; sleeping", cfg.daily_request_cap)

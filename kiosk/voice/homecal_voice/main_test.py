@@ -5,6 +5,7 @@ branch (auto-apply, silent low-conf, mid-conf confirm yes/no/timeout/edit,
 STT exception) is exercised here against mock collaborators.
 """
 
+import requests as _requests
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -24,6 +25,9 @@ def _make_deps(
     extract_intent=None,
     execute=None,
     speak=None,
+    speak_lan=None,
+    speak_cloud=None,
+    play_bytes=None,
     feed_results=(False, False, True),
 ):
     mic_frames = iter([_speech()] * 1000)
@@ -35,6 +39,17 @@ def _make_deps(
     ep.had_speech = True
     state = MagicMock()
     audit = MagicMock()
+    # Resolve speak_cloud: explicit speak_cloud wins, then speak (backward compat),
+    # then a fresh mock.  speak_lan defaults to raising ConnectionError so all
+    # existing tests skip LAN and fall straight through to cloud.
+    _speak_cloud = speak_cloud or speak or MagicMock()
+    _speak_lan = speak_lan or MagicMock(
+        side_effect=_requests.exceptions.ConnectionError("no sidecar in tests")
+    )
+    _play_bytes = play_bytes or MagicMock()
+    # cfg mock: daily_request_cap=200 so _under_tts_cap works in ladder tests.
+    cfg_mock = MagicMock()
+    cfg_mock.daily_request_cap = 200
     deps = OneShotDeps(
         next_frame=lambda: next(mic_frames),
         wake=wake,
@@ -43,7 +58,10 @@ def _make_deps(
         transcribe=transcribe or MagicMock(return_value="default"),
         extract_intent=extract_intent or MagicMock(),
         execute=execute or MagicMock(return_value={"ok": True, "spoken": "ok."}),
-        speak=speak or MagicMock(),
+        # `speak` kept as the same object as `speak_cloud` for backward compat —
+        # tests that do `deps.speak.assert_called_once()` still work because
+        # _speak calls d.speak_cloud, which IS deps.speak.
+        speak=_speak_cloud,
         post_state=state,
         post_audit=audit,
         utterance_id=lambda: "u1",
@@ -51,6 +69,10 @@ def _make_deps(
         mic_off=MagicMock(),
         mic_on=MagicMock(),
         play_clip=MagicMock(),
+        speak_lan=_speak_lan,
+        speak_cloud=_speak_cloud,
+        play_bytes=_play_bytes,
+        cfg=cfg_mock,
     )
     return deps, state, audit
 
@@ -1251,3 +1273,89 @@ def test_under_tts_cap_resets_per_day(monkeypatch):
     # Day rolls over → counter resets
     monkeypatch.setattr(main_mod, "today_brisbane", lambda: "2026-06-09")
     assert _under_tts_cap(FakeCfg()) is True
+
+
+# ---------------------------------------------------------------------------
+# Task 21 — _speak() fallback ladder: LAN → cloud (capped) → clip → silent
+# ---------------------------------------------------------------------------
+
+
+def test_speak_lan_happy_path(monkeypatch):
+    """LAN reachable + sidecar returns audio → played, audit tagged kokoro_lan."""
+    from homecal_voice.main import run_once, _lan_state, _tts_cap_state
+    intent = IntentResult("dinner_set", {"date": "2026-06-04", "meal": "tacos"}, 0.95, "raw")
+    speak_lan = MagicMock(return_value=(b"RIFFfake", 234))   # (audio, latency_ms)
+    speak_cloud = MagicMock()
+    play_bytes = MagicMock()
+    deps, _state, audit = _make_deps(
+        extract_intent=MagicMock(return_value=intent),
+        execute=MagicMock(return_value={"ok": True, "spoken": "Saved tacos for today."}),
+        speak_lan=speak_lan, speak_cloud=speak_cloud, play_bytes=play_bytes,
+    )
+    _lan_state["reachable"] = True
+    _lan_state["checked_at"] = 9e9    # cache fresh
+    _tts_cap_state.update(day="", count=0)
+    run_once(deps)
+    speak_lan.assert_called_once()
+    speak_cloud.assert_not_called()
+    assert audit.call_args.kwargs["tts_provider"] == "kokoro_lan"
+    assert audit.call_args.kwargs["tts_latency_ms"] >= 0
+
+
+def test_speak_falls_back_to_cloud_when_lan_fails(monkeypatch):
+    """LAN raises ConnectionError → falls back to cloud; audit tagged openrouter."""
+    from homecal_voice.main import _lan_state, _tts_cap_state
+    intent = IntentResult("dinner_set", {"date": "2026-06-04", "meal": "tacos"}, 0.95, "raw")
+    speak_lan = MagicMock(side_effect=_requests.exceptions.ConnectionError("nope"))
+    speak_cloud = MagicMock(return_value=True)
+    deps, _state, audit = _make_deps(
+        extract_intent=MagicMock(return_value=intent),
+        execute=MagicMock(return_value={"ok": True, "spoken": "Saved."}),
+        speak_lan=speak_lan, speak_cloud=speak_cloud,
+    )
+    _lan_state["checked_at"] = 0   # cold cache → tries LAN, fails, falls to cloud
+    _tts_cap_state.update(day="", count=0)
+    run_once(deps)
+    speak_lan.assert_called_once()
+    speak_cloud.assert_called_once()
+    assert audit.call_args.kwargs["tts_provider"] == "openrouter"
+
+
+def test_speak_falls_back_to_clip_when_lan_and_cloud_both_fail(monkeypatch):
+    """Both LAN and cloud fail → clip fallback; audit tagged clip."""
+    from homecal_voice.main import _lan_state, _tts_cap_state
+    intent = IntentResult("dinner_set", {"date": "2026-06-04", "meal": "tacos"}, 0.95, "raw")
+    speak_lan = MagicMock(side_effect=_requests.exceptions.ConnectionError("nope"))
+    speak_cloud = MagicMock(return_value=False)   # cloud returned False
+    deps, _state, audit = _make_deps(
+        extract_intent=MagicMock(return_value=intent),
+        execute=MagicMock(return_value={"ok": True, "spoken": "Saved."}),
+        speak_lan=speak_lan, speak_cloud=speak_cloud,
+    )
+    _lan_state["checked_at"] = 0
+    _tts_cap_state.update(day="", count=0)
+    run_once(deps)
+    deps.play_clip.assert_called_once()  # didnt_catch.mp3
+    assert audit.call_args.kwargs["tts_provider"] == "clip"
+
+
+def test_speak_skips_cloud_when_tts_cap_hit(monkeypatch):
+    """LAN fails + daily TTS cap exhausted → clip fallback, cloud never called."""
+    import homecal_voice.main as main_mod
+    from homecal_voice.main import _lan_state, _tts_cap_state
+    monkeypatch.setattr(main_mod, "today_brisbane", lambda: "2026-06-08")
+    intent = IntentResult("dinner_set", {"date": "2026-06-04", "meal": "tacos"}, 0.95, "raw")
+    speak_lan = MagicMock(side_effect=_requests.exceptions.ConnectionError("nope"))
+    speak_cloud = MagicMock()
+    deps, _state, audit = _make_deps(
+        extract_intent=MagicMock(return_value=intent),
+        execute=MagicMock(return_value={"ok": True, "spoken": "Saved."}),
+        speak_lan=speak_lan, speak_cloud=speak_cloud,
+    )
+    _lan_state["checked_at"] = 0
+    # Exhaust cap before this call (cap is 200 per mock cfg, so set count high)
+    _tts_cap_state.update(day="2026-06-08", count=999_999)
+    run_once(deps)
+    speak_cloud.assert_not_called()
+    deps.play_clip.assert_called_once()
+    assert audit.call_args.kwargs["tts_provider"] == "clip"
