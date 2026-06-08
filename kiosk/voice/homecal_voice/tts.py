@@ -121,6 +121,51 @@ def play_file(path: str | os.PathLike) -> None:
     subprocess.run([*player, str(p)], check=False)
 
 
+def synthesize_lan(
+    text: str,
+    *,
+    server_url: str,
+    token: str,
+    voice: str,
+    timeout_s: int,
+) -> tuple[bytes, int]:
+    """POST /tts to the LAN sidecar; return (WAV bytes, sidecar synth ms).
+
+    Raises on any non-2xx, on timeout, or on connection error — caller
+    handles the fallback ladder. Does NOT retry; that's the cloud path's job."""
+    r = requests.post(
+        f"{server_url.rstrip('/')}/tts",
+        headers={"X-Pi-Token": token, "Content-Type": "application/json"},
+        json={"text": text, "voice": voice},
+        timeout=timeout_s,
+    )
+    r.raise_for_status()
+    latency = int(r.headers.get("X-Synth-Ms") or 0)
+    return r.content, latency
+
+
+def fetch_catalog(
+    kind: str,
+    key: str,
+    *,
+    server_url: str,
+    token: str,
+    timeout_s: int,
+) -> bytes | None:
+    """GET /catalog/{kind}/{key}. Returns bytes on 200, None on 404
+    (catalog miss — caller falls through to whatever the matcher was
+    going to do anyway). Raises on other errors."""
+    r = requests.get(
+        f"{server_url.rstrip('/')}/catalog/{kind}/{key}",
+        headers={"X-Pi-Token": token},
+        timeout=timeout_s,
+    )
+    if r.status_code == 404:
+        return None
+    r.raise_for_status()
+    return r.content
+
+
 def speak(text: str, *, model: str, voice: str, api_key: str, muted: bool = False) -> bool:
     """Synthesize `text` and play it. Returns True if the user actually heard
     audio, False if anything (mute, synth error, no player) prevented playback.

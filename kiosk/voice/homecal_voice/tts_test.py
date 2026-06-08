@@ -3,7 +3,7 @@ from unittest.mock import patch
 import pytest
 import requests
 
-from homecal_voice.tts import speak, synthesize, _detect_player
+from homecal_voice.tts import speak, synthesize, _detect_player, synthesize_lan, fetch_catalog
 
 
 def test_synthesize_returns_audio_bytes(requests_mock):
@@ -154,3 +154,79 @@ def test_detect_player_falls_back_to_ffplay():
         which.side_effect = lambda b: f"/usr/bin/{b}" if b == "ffplay" else None
         cmd = _detect_player()
         assert cmd is not None and cmd[0] == "ffplay"
+
+
+# ---------------------------------------------------------------------------
+# synthesize_lan
+# ---------------------------------------------------------------------------
+
+def test_synthesize_lan_returns_wav_bytes_on_200(requests_mock):
+    requests_mock.post(
+        "http://test-server:8789/tts",
+        content=b"RIFF\x00\x00\x00\x00WAVEdataXYZ",
+        headers={"content-type": "audio/wav", "x-synth-ms": "234"},
+    )
+    audio, latency_ms = synthesize_lan(
+        "hello", server_url="http://test-server:8789",
+        token="t", voice="af_bella", timeout_s=3,
+    )
+    assert audio.startswith(b"RIFF")
+    assert latency_ms == 234
+
+
+def test_synthesize_lan_raises_on_5xx(requests_mock):
+    requests_mock.post("http://test-server:8789/tts", status_code=503)
+    with pytest.raises(requests.exceptions.HTTPError):
+        synthesize_lan("hi", server_url="http://test-server:8789", token="t",
+                       voice="af_bella", timeout_s=3)
+
+
+def test_synthesize_lan_raises_on_timeout(requests_mock):
+    requests_mock.post("http://test-server:8789/tts",
+                       exc=requests.exceptions.ReadTimeout("nope"))
+    with pytest.raises(requests.exceptions.ReadTimeout):
+        synthesize_lan("hi", server_url="http://test-server:8789", token="t",
+                       voice="af_bella", timeout_s=3)
+
+
+def test_synthesize_lan_sends_token_in_header(requests_mock):
+    requests_mock.post(
+        "http://test-server:8789/tts",
+        content=b"RIFF\x00\x00\x00\x00WAVEdata",
+        headers={"x-synth-ms": "10"},
+    )
+    synthesize_lan("hi", server_url="http://test-server:8789", token="abc",
+                   voice="af_bella", timeout_s=3)
+    assert requests_mock.last_request.headers["X-Pi-Token"] == "abc"
+
+
+# ---------------------------------------------------------------------------
+# fetch_catalog
+# ---------------------------------------------------------------------------
+
+def test_fetch_catalog_returns_bytes_on_200(requests_mock):
+    requests_mock.get(
+        "http://test-server:8789/catalog/noise/fart",
+        content=b"RIFF\x00\x00\x00\x00WAVEdata",
+    )
+    audio = fetch_catalog("noise", "fart",
+                          server_url="http://test-server:8789",
+                          token="t", timeout_s=3)
+    assert audio.startswith(b"RIFF")
+
+
+def test_fetch_catalog_returns_none_on_404(requests_mock):
+    requests_mock.get("http://test-server:8789/catalog/noise/missing",
+                      status_code=404)
+    result = fetch_catalog("noise", "missing",
+                           server_url="http://test-server:8789",
+                           token="t", timeout_s=3)
+    assert result is None
+
+
+def test_fetch_catalog_raises_on_5xx(requests_mock):
+    requests_mock.get("http://test-server:8789/catalog/noise/x",
+                      status_code=503)
+    with pytest.raises(requests.exceptions.HTTPError):
+        fetch_catalog("noise", "x", server_url="http://test-server:8789",
+                      token="t", timeout_s=3)
