@@ -24,3 +24,49 @@ def test_load_config_missing_required(monkeypatch):
     monkeypatch.delenv("PI_API_TOKEN", raising=False)
     with pytest.raises(ConfigError, match="OPENROUTER_API_KEY"):
         load_config()
+
+def test_tts_backend_defaults_to_cloud(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-xxx")
+    monkeypatch.setenv("HOMECAL_API_BASE", "http://192.168.1.94:8787")
+    monkeypatch.setenv("PI_API_TOKEN", "abc123")
+    monkeypatch.delenv("TTS_BACKEND", raising=False)
+    cfg = load_config()
+    assert cfg.tts_backend == "cloud"
+
+def test_tts_backend_reads_env(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-xxx")
+    monkeypatch.setenv("HOMECAL_API_BASE", "http://192.168.1.94:8787")
+    monkeypatch.setenv("PI_API_TOKEN", "abc123")
+    monkeypatch.setenv("TTS_BACKEND", "lan")
+    cfg = load_config()
+    assert cfg.tts_backend == "lan"
+
+def test_tts_backend_rejects_invalid_value(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-xxx")
+    monkeypatch.setenv("HOMECAL_API_BASE", "http://192.168.1.94:8787")
+    monkeypatch.setenv("PI_API_TOKEN", "abc123")
+    monkeypatch.setenv("TTS_BACKEND", "wrong")
+    try:
+        load_config()
+    except ValueError as e:
+        assert "TTS_BACKEND" in str(e)
+    else:
+        raise AssertionError("expected ValueError")
+
+def test_tts_server_url_default_and_override(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-xxx")
+    monkeypatch.setenv("HOMECAL_API_BASE", "http://192.168.1.94:8787")
+    monkeypatch.setenv("PI_API_TOKEN", "abc123")
+    monkeypatch.delenv("TTS_SERVER_URL", raising=False)
+    cfg = load_config()
+    assert cfg.tts_server_url == "http://192.168.1.94:8789"
+    monkeypatch.setenv("TTS_SERVER_URL", "http://10.0.0.5:8000")
+    assert load_config().tts_server_url == "http://10.0.0.5:8000"
+
+def test_tts_server_timeout_default_is_3s(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-xxx")
+    monkeypatch.setenv("HOMECAL_API_BASE", "http://192.168.1.94:8787")
+    monkeypatch.setenv("PI_API_TOKEN", "abc123")
+    monkeypatch.delenv("TTS_SERVER_TIMEOUT_S", raising=False)
+    cfg = load_config()
+    assert cfg.tts_server_timeout_s == 3

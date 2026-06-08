@@ -25,6 +25,9 @@ class Config:
     tts_voice: str
     daily_request_cap: int
     audio_device: str
+    tts_backend: str
+    tts_server_url: str
+    tts_server_timeout_s: int
 
 def _require(name: str) -> str:
     v = os.environ.get(name)
@@ -35,6 +38,9 @@ def _require(name: str) -> str:
 def load_config() -> Config:
     if ENV_FILE.exists():
         load_dotenv(ENV_FILE, override=False)
+    backend = os.environ.get("TTS_BACKEND", "cloud").lower()
+    if backend not in ("lan", "cloud"):
+        raise ValueError(f"TTS_BACKEND must be 'lan' or 'cloud', got {backend!r}")
     return Config(
         openrouter_api_key=_require("OPENROUTER_API_KEY"),
         homecal_api_base=_require("HOMECAL_API_BASE"),
@@ -68,4 +74,7 @@ def load_config() -> Config:
         tts_voice=os.environ.get("TTS_VOICE", "af_bella"),
         daily_request_cap=int(os.environ.get("DAILY_REQUEST_CAP", "200")),
         audio_device=os.environ.get("AUDIO_DEVICE", "default"),
+        tts_backend=backend,
+        tts_server_url=os.environ.get("TTS_SERVER_URL", "http://192.168.1.94:8789").rstrip("/"),
+        tts_server_timeout_s=int(os.environ.get("TTS_SERVER_TIMEOUT_S", "3")),
     )
