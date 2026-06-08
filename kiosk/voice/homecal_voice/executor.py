@@ -388,7 +388,7 @@ class Executor:
                     self._play_bytes(audio, format="wav")
                 except Exception as e:
                     return {"ok": False, "spoken": "", "error": f"clip_play:{e}"}
-                return {"ok": True, "spoken": ""}
+                return {"ok": True, "spoken": "", "tts_provider": "kokoro_lan"}
 
         # 2. Existing fallback path: on-disk clip file via play_clip.
         if self._play_clip is None:
@@ -450,7 +450,8 @@ class Executor:
                     return {"ok": False, "spoken": "", "error": f"joke_play:{e}",
                             "spoken_inline": True}
                 return {"ok": True, "spoken_inline": True,
-                        "spoken": f"{f.get('setup','')} ... {f.get('punchline','')}"}
+                        "spoken": f"{f.get('setup','')} ... {f.get('punchline','')}",
+                        "tts_provider": "kokoro_lan"}
 
         if self._speak is None or self._sleep is None:
             return {"ok": False, "spoken": "", "error": "joke_tell_no_speaker"}

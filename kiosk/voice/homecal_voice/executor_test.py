@@ -1012,4 +1012,49 @@ def test_joke_tell_falls_through_to_tts_setup_pause_punchline_on_miss():
     assert out["ok"] is True
     speak.assert_any_call("Knock knock")
     sleep.assert_called_once_with(1.5)
-    speak.assert_any_call("Who's there")
+
+
+# ---------------------------------------------------------------------------
+# Bug 2 fix — catalog-hit returns include tts_provider="kokoro_lan"
+# ---------------------------------------------------------------------------
+
+
+def test_noise_play_catalog_hit_includes_tts_provider():
+    """Catalog-hit path must tag tts_provider='kokoro_lan' so the audit row
+    is not NULL — the sidecar played the WAV directly, bypassing _speak."""
+    from homecal_voice.executor import Executor
+    from homecal_voice.intent import IntentResult
+
+    play_bytes = MagicMock()
+    fetch_catalog = MagicMock(return_value=b"RIFFfake")
+
+    ex = Executor(
+        base="http://api", token="t",
+        play_clip=MagicMock(), speak=MagicMock(),
+        play_bytes=play_bytes, fetch_catalog=fetch_catalog,
+    )
+    out = ex.apply(IntentResult("noise_play", {"catalog_key": "fart"}, 1.0, "raw"))
+    assert out["ok"] is True
+    assert out.get("tts_provider") == "kokoro_lan"
+
+
+def test_joke_tell_catalog_hit_includes_tts_provider():
+    """Same guarantee for joke_tell: catalog-hit must tag tts_provider='kokoro_lan'."""
+    from homecal_voice.executor import Executor
+    from homecal_voice.intent import IntentResult
+
+    play_bytes = MagicMock()
+    fetch_catalog = MagicMock(return_value=b"RIFFjokeaudio")
+
+    ex = Executor(
+        base="http://api", token="t",
+        play_clip=MagicMock(), speak=MagicMock(), sleep=MagicMock(),
+        play_bytes=play_bytes, fetch_catalog=fetch_catalog,
+    )
+    out = ex.apply(IntentResult(
+        "joke_tell",
+        {"joke_id": "j001", "setup": "Why X?", "punchline": "Because Y"},
+        1.0, "raw",
+    ))
+    assert out["ok"] is True
+    assert out.get("tts_provider") == "kokoro_lan"

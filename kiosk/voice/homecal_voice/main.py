@@ -268,8 +268,11 @@ def _run_after_wake(d: OneShotDeps) -> None:
         played = False
 
         try:
-            # 1. LAN sidecar (preferred — lower latency, no cloud spend)
-            if lan_reachable():
+            # 1. LAN sidecar (preferred — lower latency, no cloud spend).
+            # Only tried when TTS_BACKEND=lan; cloud-only deploys skip this
+            # branch entirely so a missing sidecar doesn't pay a 3s timeout
+            # per utterance during the validation window (spec §12.3).
+            if d.cfg.tts_backend == "lan" and lan_reachable():
                 try:
                     t0 = time.time()
                     audio, _synth_ms = d.speak_lan(text)
@@ -411,13 +414,19 @@ def _run_after_wake(d: OneShotDeps) -> None:
                      payload={"intent": _intent_payload(intent)})
         if not out.get("spoken_inline"):
             _speak(out.get("spoken", ""))
+        # Prefer the executor's tts_provider hint (set when the catalog played
+        # audio directly without going through _speak). Fall back to _last_tts
+        # which is populated only when _speak ran. Latency is only meaningful
+        # on the _speak path — catalog plays don't have a synthesis round-trip.
+        audit_provider = out.get("tts_provider") or _last_tts.get("provider")
+        audit_latency = _last_tts.get("latency_ms")
         _audit(
             transcript, audit_status, intent,
             answer=out.get("spoken") or None,
             concern=out.get("concern"),
             error="regex_override" if out.get("regex_override") else None,
-            tts_provider=_last_tts.get("provider"),
-            tts_latency_ms=_last_tts.get("latency_ms"),
+            tts_provider=audit_provider,
+            tts_latency_ms=audit_latency,
         )
 
     if intent.confidence >= auto_apply_threshold(intent.intent):

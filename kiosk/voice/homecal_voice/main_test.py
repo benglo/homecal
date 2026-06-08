@@ -29,6 +29,7 @@ def _make_deps(
     speak_cloud=None,
     play_bytes=None,
     feed_results=(False, False, True),
+    cfg=None,
 ):
     mic_frames = iter([_speech()] * 1000)
     wake = MagicMock()
@@ -47,9 +48,14 @@ def _make_deps(
         side_effect=_requests.exceptions.ConnectionError("no sidecar in tests")
     )
     _play_bytes = play_bytes or MagicMock()
-    # cfg mock: daily_request_cap=200 so _under_tts_cap works in ladder tests.
-    cfg_mock = MagicMock()
-    cfg_mock.daily_request_cap = 200
+    # cfg mock: tts_backend="lan" + daily_request_cap=200 so existing tests keep
+    # their current behaviour (LAN path tried, falls back to cloud via ConnectionError).
+    if cfg is None:
+        cfg_mock = MagicMock()
+        cfg_mock.tts_backend = "lan"
+        cfg_mock.daily_request_cap = 200
+    else:
+        cfg_mock = cfg
     deps = OneShotDeps(
         next_frame=lambda: next(mic_frames),
         wake=wake,
@@ -1359,3 +1365,56 @@ def test_speak_skips_cloud_when_tts_cap_hit(monkeypatch):
     speak_cloud.assert_not_called()
     deps.play_clip.assert_called_once()
     assert audit.call_args.kwargs["tts_provider"] == "clip"
+
+
+# ---------------------------------------------------------------------------
+# Bug 1 fix — TTS_BACKEND=cloud must bypass LAN entirely
+# ---------------------------------------------------------------------------
+
+
+def test_speak_skips_lan_when_backend_is_cloud(monkeypatch):
+    """TTS_BACKEND=cloud must bypass the LAN attempt entirely so deploys
+    can ship with cloud-only behaviour while the sidecar is validated."""
+    from homecal_voice.main import _lan_state, _tts_cap_state
+    intent = IntentResult("dinner_set", {"date": "2026-06-04", "meal": "tacos"}, 0.95, "raw")
+    speak_lan = MagicMock(return_value=(b"RIFFfake", 234))
+    speak_cloud = MagicMock(return_value=True)
+    cfg_cloud_only = MagicMock()
+    cfg_cloud_only.tts_backend = "cloud"
+    cfg_cloud_only.daily_request_cap = 200
+    cfg_cloud_only.tts_voice = "af_bella"
+    cfg_cloud_only.tts_server_url = "http://test:8789"
+    cfg_cloud_only.pi_api_token = "t"
+    cfg_cloud_only.tts_server_timeout_s = 3
+    deps, _state, audit = _make_deps(
+        extract_intent=MagicMock(return_value=intent),
+        execute=MagicMock(return_value={"ok": True, "spoken": "Saved."}),
+        speak_lan=speak_lan, speak_cloud=speak_cloud,
+        cfg=cfg_cloud_only,
+    )
+    _lan_state["checked_at"] = 9e9   # cache fresh + reachable=True
+    _lan_state["reachable"] = True
+    _tts_cap_state.update(day="", count=0)
+    run_once(deps)
+    speak_lan.assert_not_called()    # LAN skipped because backend=cloud
+    speak_cloud.assert_called_once()
+    assert audit.call_args.kwargs["tts_provider"] == "openrouter"
+
+
+# ---------------------------------------------------------------------------
+# Bug 2 fix — catalog hits should audit tts_provider='kokoro_lan' in main
+# ---------------------------------------------------------------------------
+
+
+def test_catalog_hit_audits_kokoro_lan(monkeypatch):
+    """noise_play catalog hit should write tts_provider='kokoro_lan' to the
+    audit row even though _speak is never called (executor played the
+    pre-rendered WAV directly)."""
+    intent = IntentResult("noise_play", {"catalog_key": "fart"}, 1.0, "raw")
+    execute = MagicMock(return_value={"ok": True, "spoken": "", "tts_provider": "kokoro_lan"})
+    deps, _state, audit = _make_deps(
+        extract_intent=MagicMock(return_value=intent),
+        execute=execute,
+    )
+    run_once(deps)
+    assert audit.call_args.kwargs["tts_provider"] == "kokoro_lan"
