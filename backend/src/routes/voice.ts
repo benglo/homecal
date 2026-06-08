@@ -35,6 +35,8 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
       intentName: body.intent_name ?? null,
       answer: body.answer ?? null,
       concern: body.concern ?? null,
+      ttsProvider: body.tts_provider ?? null,
+      ttsLatencyMs: body.tts_latency_ms ?? null,
     });
     reply.code(201).send({ ok: true });
   });

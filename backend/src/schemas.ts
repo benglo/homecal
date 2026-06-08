@@ -161,6 +161,8 @@ export const voiceAuditBody = z.object({
   intent_name: z.enum(VOICE_INTENT_NAMES).nullable().optional(),
   answer: z.string().max(4000).nullable().optional(),
   concern: z.boolean().nullable().optional(),
+  tts_provider: z.enum(['kokoro_lan', 'openrouter', 'clip', 'none']).nullable().optional(),
+  tts_latency_ms: z.number().int().min(0).nullable().optional(),
 });
 
 export const voiceHeartbeatBody = z.object({

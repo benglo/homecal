@@ -11,12 +11,14 @@ setupIsolatedDb('voiceUtterances-repo');
 
 let insertUtterance: typeof import('./voiceUtterances').insertUtterance;
 let listUtterances: typeof import('./voiceUtterances').listUtterances;
+let getLastTtsProvider: typeof import('./voiceUtterances').getLastTtsProvider;
 let db: Database.Database;
 
 before(async () => {
   const repo = await import('./voiceUtterances');
   insertUtterance = repo.insertUtterance;
   listUtterances = repo.listUtterances;
+  getLastTtsProvider = repo.getLastTtsProvider;
   const dbMod = await import('../db');
   db = dbMod.getDb();
 });
@@ -206,4 +208,37 @@ test('voiceAuditBody rejects unknown intent_name', () => {
     intent_name: 'totally_fake_intent',
   });
   assert.equal(r.success, false);
+});
+
+test('insertUtterance round-trips tts_provider and tts_latency_ms', () => {
+  insertUtterance({
+    id: '0191ec00-0000-7000-8000-000000000020',
+    transcript: 'hi',
+    intentJson: null,
+    confidence: null,
+    status: 'applied',
+    durationMs: null,
+    error: null,
+    source: null,
+    intentName: null,
+    answer: null,
+    concern: null,
+    ttsProvider: 'kokoro_lan',
+    ttsLatencyMs: 234,
+  });
+  const rows = listUtterances({ limit: 10 });
+  assert.equal(rows[0].ttsProvider, 'kokoro_lan');
+  assert.equal(rows[0].ttsLatencyMs, 234);
+});
+
+test('getLastTtsProvider returns most recent non-null provider', () => {
+  insertUtterance({ id: '0191ec00-0000-7000-8000-000000000030', transcript: 'a', intentJson: null, confidence: null, status: 'applied', durationMs: null, error: null, source: null, ttsProvider: 'kokoro_lan' });
+  insertUtterance({ id: '0191ec00-0000-7000-8000-000000000031', transcript: 'b', intentJson: null, confidence: null, status: 'applied', durationMs: null, error: null, source: null, ttsProvider: null });
+  insertUtterance({ id: '0191ec00-0000-7000-8000-000000000032', transcript: 'c', intentJson: null, confidence: null, status: 'applied', durationMs: null, error: null, source: null, ttsProvider: 'openrouter' });
+  assert.equal(getLastTtsProvider(), 'openrouter');
+});
+
+test('getLastTtsProvider returns null when no rows have a provider', () => {
+  insertUtterance({ id: '0191ec00-0000-7000-8000-000000000040', transcript: 'a', intentJson: null, confidence: null, status: 'applied', durationMs: null, error: null, source: null, ttsProvider: null });
+  assert.equal(getLastTtsProvider(), null);
 });
