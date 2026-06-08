@@ -38,6 +38,7 @@ This is the binding tradeoff: voice quality requires a cloud LLM, and we accept 
 9. **No silent data loss.** If user walks away without confirming a low-confidence card, the parsed intent drops to a `PendingReviewTray` (visible on Agenda + phone) rather than vanishing.
 10. **Quiet hours:** mirror the existing chore-chime window (20:00–07:00 Brisbane) — wake still fires and confirmations still appear, but TTS replies are suppressed.
 11. **Audit log persists transcripts.** Every utterance writes a `voice_utterances` row (id, ts, transcript, intent_json, confidence, status). Used for false-positive analysis, debugging, and future training data.
+12. **"Single-origin" applies to the browser only.** Pi → backend and Pi → kokoro-tts are LAN service-to-service calls and live outside this constraint. See `2026-06-08-local-tts-sidecar-design.md`.
 
 ---
 
