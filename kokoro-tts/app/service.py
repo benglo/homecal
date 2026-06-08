@@ -4,8 +4,10 @@ State (module-level `state`) holds the loaded Synth. The lifespan handler
 loads + warms the model at startup, sets state.ready=True, and tears down
 on shutdown. Tests can substitute state.synth with a mock without doing
 the lifespan dance."""
+import re
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Response, status
@@ -70,3 +72,29 @@ def tts(req: TtsRequest, _=Depends(require_pi_token)):
         media_type="audio/wav",
         headers={"X-Synth-Ms": str(latency_ms)},
     )
+
+
+_SAFE_KEY = re.compile(r"^[a-z0-9_-]{1,64}$")
+
+
+def _read_catalog_clip(kind: str, key: str) -> bytes:
+    """Read a pre-rendered WAV from the catalog dir. Key must match a
+    strict charset — rejecting anything else closes off path-traversal
+    cleanly (no `..`, no `/`, no urlencoded sneakiness)."""
+    if not _SAFE_KEY.match(key):
+        raise HTTPException(status_code=400, detail="invalid key")
+    cfg = from_env()
+    path = Path(cfg.catalog_dir) / kind / f"{key}.wav"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"{kind}:{key} not found")
+    return path.read_bytes()
+
+
+@app.get("/catalog/noise/{key}")
+def catalog_noise(key: str, _=Depends(require_pi_token)):
+    return Response(content=_read_catalog_clip("noise", key), media_type="audio/wav")
+
+
+@app.get("/catalog/joke/{joke_id}")
+def catalog_joke(joke_id: str, _=Depends(require_pi_token)):
+    return Response(content=_read_catalog_clip("joke", joke_id), media_type="audio/wav")

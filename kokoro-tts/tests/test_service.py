@@ -96,3 +96,49 @@ def test_tts_503_when_synth_not_loaded():
     c = _make_client(synth=None, ready=False)
     r = c.post("/tts", json={"text": "hi"}, headers={"X-Pi-Token": "test-token"})
     assert r.status_code == 503
+
+
+def test_catalog_noise_requires_auth():
+    c = _make_client()
+    r = c.get("/catalog/noise/fart")
+    assert r.status_code == 401
+
+
+def test_catalog_noise_returns_wav_for_existing_key(tmp_path, monkeypatch):
+    # Override the catalog dir at runtime via env (cfg.from_env reads env each call).
+    cache = tmp_path / "noise"
+    cache.mkdir(parents=True)
+    (cache / "fart.wav").write_bytes(b"RIFF\x00\x00\x00\x00WAVEdataX")
+    monkeypatch.setenv("KOKORO_CATALOG_DIR", str(tmp_path))
+    c = _make_client()
+    r = c.get("/catalog/noise/fart", headers={"X-Pi-Token": "test-token"})
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "audio/wav"
+    assert r.content.startswith(b"RIFF")
+
+
+def test_catalog_noise_404_for_missing_key(tmp_path, monkeypatch):
+    (tmp_path / "noise").mkdir(parents=True)
+    monkeypatch.setenv("KOKORO_CATALOG_DIR", str(tmp_path))
+    c = _make_client()
+    r = c.get("/catalog/noise/unknown", headers={"X-Pi-Token": "test-token"})
+    assert r.status_code == 404
+
+
+def test_catalog_joke_returns_wav(tmp_path, monkeypatch):
+    cache = tmp_path / "joke"
+    cache.mkdir(parents=True)
+    (cache / "j001.wav").write_bytes(b"RIFF\x00\x00\x00\x00WAVEdataY")
+    monkeypatch.setenv("KOKORO_CATALOG_DIR", str(tmp_path))
+    c = _make_client()
+    r = c.get("/catalog/joke/j001", headers={"X-Pi-Token": "test-token"})
+    assert r.status_code == 200
+    assert r.content.startswith(b"RIFF")
+
+
+def test_catalog_rejects_path_traversal(tmp_path, monkeypatch):
+    monkeypatch.setenv("KOKORO_CATALOG_DIR", str(tmp_path))
+    c = _make_client()
+    r = c.get("/catalog/noise/..%2F..%2Fetc%2Fpasswd",
+              headers={"X-Pi-Token": "test-token"})
+    assert r.status_code in (400, 404)
