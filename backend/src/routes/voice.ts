@@ -3,7 +3,7 @@ import { parseBody } from './helpers';
 import {
   voiceStateBody, voiceAuditBody, voiceHeartbeatBody, voiceMuteBody,
 } from '../schemas';
-import { insertUtterance } from '../repos/voiceUtterances';
+import { insertUtterance, getLastTtsProvider } from '../repos/voiceUtterances';
 import { getMuteUntil, setMuteUntil } from '../repos/voiceSettings';
 import { broker } from '../realtime';
 import { voiceState } from '../voice/state';
@@ -57,6 +57,7 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
       last_heartbeat_at: voiceState.lastHeartbeatAt(),
       mute_until: mu,
       muted: !!mu && new Date(mu).getTime() > now.getTime(),
+      last_tts_provider: getLastTtsProvider(),
     };
   });
 
