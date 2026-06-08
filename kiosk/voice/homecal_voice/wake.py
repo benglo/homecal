@@ -9,16 +9,16 @@ log = logging.getLogger("homecal_voice.wake")
 class WakeDetector:
     """openWakeWord-backed wake detector with trigger-level + refractory window.
 
-    `wake_name` must be the versioned scoring key returned by Model.predict()
-    (e.g. 'hey_mycroft_v0.1'), NOT the user-facing short name. With the wrong
-    key, Model.predict() silently returns 0 for every frame and wake never
-    fires. Use `load_default_model` to get both the Model and the correct key.
+    `wake_name` must be the exact scoring key returned by Model.predict()
+    (e.g. 'hey_luna'). With the wrong key, Model.predict() silently returns
+    0 for every frame and wake never fires. Use `load_default_model` to get
+    both the Model and the correct key.
 
     After every utterance the orchestration must call `reset()` — killing
     the mic prevents echo audio reaching the model but the wake LSTM is
-    still primed with pattern memory from the user's "Hey Mycroft", and
+    still primed with pattern memory from the user's wake phrase, and
     fresh ambient frames combine with that primed state to false-fire.
-    Both mic kill AND state reset are required.
+    Both mic kill AND state reset are required after every utterance.
     """
     model: object
     wake_name: str
@@ -72,18 +72,32 @@ class WakeDetector:
             self._activations = 0
         return False
 
-def load_default_model(wake_name_prefix: str = "hey_mycroft") -> Tuple[object, str]:
+def load_default_model(wake_name_prefix: str = "hey_luna") -> Tuple[object, str]:
     """Load an openWakeWord model and return (Model, scoring_key).
 
     `wake_name_prefix` is matched against the ONNX file basename; the scoring
-    key is the basename without the .onnx suffix (e.g. 'hey_mycroft_v0.1').
+    key is the basename without the .onnx suffix (e.g. 'hey_luna').
+
+    Search order:
+      1. homecal-managed wake_models/ alongside this file (custom models ship here)
+      2. openWakeWord package's resources/models/ (built-in bundle, fallback)
+    Custom models take priority so hey_luna (not in the upstream bundle) loads
+    by name without touching the installed package.
     """
     import openwakeword
     from openwakeword.model import Model
+
+    # 1. Custom wake models bundled with homecal-voice
+    own_models_dir = os.path.join(os.path.dirname(__file__), "wake_models")
+    own_candidates = glob.glob(os.path.join(own_models_dir, "*.onnx"))
+
+    # 2. Upstream openWakeWord bundle (hey_mycroft, hey_jarvis, etc.)
     pkg = os.path.dirname(openwakeword.__file__)
-    candidates = glob.glob(os.path.join(pkg, "resources", "models", "*.onnx"))
-    matches = [p for p in candidates if wake_name_prefix in os.path.basename(p)]
+    pkg_candidates = glob.glob(os.path.join(pkg, "resources", "models", "*.onnx"))
+
+    all_candidates = own_candidates + pkg_candidates
+    matches = [p for p in all_candidates if wake_name_prefix in os.path.basename(p)]
     if not matches:
-        raise RuntimeError(f"no oWW model on disk matches {wake_name_prefix!r}: {candidates}")
+        raise RuntimeError(f"no oWW model on disk matches {wake_name_prefix!r}: {all_candidates}")
     scoring_key = os.path.splitext(os.path.basename(matches[0]))[0]
-    return Model(wakeword_model_paths=matches), scoring_key
+    return Model(wakeword_model_paths=matches[:1]), scoring_key

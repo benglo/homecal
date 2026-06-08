@@ -45,7 +45,7 @@ def load_config() -> Config:
         openrouter_api_key=_require("OPENROUTER_API_KEY"),
         homecal_api_base=_require("HOMECAL_API_BASE"),
         pi_api_token=_require("PI_API_TOKEN"),
-        wake_word=os.environ.get("WAKE_WORD", "hey_mycroft"),
+        wake_word=os.environ.get("WAKE_WORD", "hey_luna"),
         # Higher than the openWakeWord default — ambient noise + BT idle hiss
         # produced ~6 false wakes/minute at 0.5. Real wakes score 0.97+ on
         # this mic so 0.7 leaves plenty of headroom.

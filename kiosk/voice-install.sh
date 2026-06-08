@@ -79,7 +79,7 @@ cat <<'ENV'
 OPENROUTER_API_KEY=sk-or-...
 HOMECAL_API_BASE=http://192.168.1.94:8787
 PI_API_TOKEN=...
-WAKE_WORD=hey_mycroft
+WAKE_WORD=hey_luna
 WHISPER_MODEL=small.en-q5_1
 WHISPER_SERVER_URL=http://127.0.0.1:8080/inference
 STT_MODEL=google/gemini-3-flash-preview

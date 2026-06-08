@@ -36,7 +36,7 @@ where = ["."]
 include = ["homecal_voice*"]
 
 [tool.setuptools.package-data]
-homecal_voice = ["clips/**/*.mp3", "catalogs/*.json"]
+homecal_voice = ["clips/**/*.mp3", "catalogs/*.json", "wake_models/*.onnx"]
 
 [tool.pytest.ini_options]
 testpaths = ["homecal_voice"]
