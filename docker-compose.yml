@@ -27,3 +27,28 @@ services:
       - NODE_ENV=production
       # Shared secret with the Pi voice service (set in .env). Empty → voice routes 503.
       - PI_API_TOKEN=${PI_API_TOKEN:-}
+
+  kokoro-tts:
+    build:
+      context: ./kokoro-tts
+      dockerfile: Dockerfile
+      additional_contexts:
+        # Make the catalogs reachable from the kokoro-tts build context without
+        # duplicating files in the repo. Docker BuildKit feature.
+        catalogs: ./kiosk/voice/homecal_voice/catalogs
+    platform: linux/amd64
+    restart: unless-stopped
+    mem_limit: 1500m
+    ports:
+      - "8789:8789"
+    environment:
+      - PI_API_TOKEN=${PI_API_TOKEN:-}
+      - KOKORO_MODEL_PATH=/app/models/kokoro-v1.0.fp16.onnx
+      - KOKORO_VOICES_PATH=/app/models/voices-v1.0.bin
+      - KOKORO_CATALOG_DIR=/app/cache
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8789/healthz || exit 1"]
+      interval: 30s
+      timeout: 2s
+      start_period: 30s
+      retries: 3

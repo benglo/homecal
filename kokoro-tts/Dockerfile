@@ -15,13 +15,12 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy code + models + catalogs (catalogs come from a build context arg).
+# Copy code + models.
 COPY app/ ./app/
 COPY models/ ./models/
 
-# Catalogs live in the parent repo; mount them at build time.
-ARG CATALOGS_SRC=catalogs
-COPY ${CATALOGS_SRC}/ ./catalogs/
+# Catalogs come from the parent repo via BuildKit additional_contexts.
+COPY --from=catalogs . ./catalogs/
 
 # Build-time pre-render of noise + joke clips. Writes into ./cache/{noise,joke}/.
 ENV PI_API_TOKEN=build-time-placeholder \
