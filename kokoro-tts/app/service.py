@@ -8,8 +8,10 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Optional
 
-from fastapi import FastAPI, Response
+from fastapi import Depends, FastAPI, HTTPException, Response, status
+from pydantic import BaseModel, Field
 
+from app.auth import require_pi_token
 from app.config import from_env
 from app.synth import Synth
 
@@ -44,3 +46,27 @@ def healthz():
     if not state.ready or state.synth is None:
         return Response(status_code=503)
     return {"ok": True, "model_loaded": True, "warm": True}
+
+
+class TtsRequest(BaseModel):
+    text: str = Field(..., min_length=0)
+    voice: str | None = None
+
+
+@app.post("/tts")
+def tts(req: TtsRequest, _=Depends(require_pi_token)):
+    if state.synth is None or not state.ready:
+        return Response(status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+    text = req.text or ""
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="text must be non-empty")
+    cfg = from_env()
+    if len(text) > cfg.max_text_chars:
+        raise HTTPException(status_code=413, detail=f"text exceeds {cfg.max_text_chars} chars")
+    voice = req.voice or cfg.default_voice
+    wav, latency_ms = state.synth.synthesize(text, voice=voice)
+    return Response(
+        content=wav,
+        media_type="audio/wav",
+        headers={"X-Synth-Ms": str(latency_ms)},
+    )

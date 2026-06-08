@@ -32,3 +32,67 @@ def test_healthz_does_not_require_auth():
     c = _make_client(ready=True)
     r = c.get("/healthz")  # no X-Pi-Token header
     assert r.status_code == 200
+
+
+def _synth_returning(wav=b"RIFFxxxxWAVEfake", latency_ms=42):
+    s = MagicMock()
+    s.synthesize.return_value = (wav, latency_ms)
+    return s
+
+
+def test_tts_requires_auth():
+    c = _make_client(synth=_synth_returning())
+    r = c.post("/tts", json={"text": "hi"})
+    assert r.status_code == 401
+
+
+def test_tts_returns_wav_bytes_with_latency_header():
+    s = _synth_returning(wav=b"RIFF\x00\x00\x00\x00WAVEdataXYZ", latency_ms=123)
+    c = _make_client(synth=s)
+    r = c.post("/tts", json={"text": "hello world"}, headers={"X-Pi-Token": "test-token"})
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "audio/wav"
+    assert r.headers["x-synth-ms"] == "123"
+    assert r.content.startswith(b"RIFF")
+
+
+def test_tts_uses_default_voice_when_omitted():
+    s = _synth_returning()
+    c = _make_client(synth=s)
+    c.post("/tts", json={"text": "hello"}, headers={"X-Pi-Token": "test-token"})
+    _, kwargs = s.synthesize.call_args
+    assert kwargs["voice"] == "af_bella"
+
+
+def test_tts_passes_voice_when_provided():
+    s = _synth_returning()
+    c = _make_client(synth=s)
+    c.post("/tts", json={"text": "hello", "voice": "bf_emma"},
+           headers={"X-Pi-Token": "test-token"})
+    _, kwargs = s.synthesize.call_args
+    assert kwargs["voice"] == "bf_emma"
+
+
+def test_tts_400_on_empty_text():
+    c = _make_client(synth=_synth_returning())
+    r = c.post("/tts", json={"text": ""}, headers={"X-Pi-Token": "test-token"})
+    assert r.status_code == 400
+
+
+def test_tts_400_on_whitespace_text():
+    c = _make_client(synth=_synth_returning())
+    r = c.post("/tts", json={"text": "   \n  "}, headers={"X-Pi-Token": "test-token"})
+    assert r.status_code == 400
+
+
+def test_tts_413_when_text_too_long():
+    c = _make_client(synth=_synth_returning())
+    too_long = "x" * 501
+    r = c.post("/tts", json={"text": too_long}, headers={"X-Pi-Token": "test-token"})
+    assert r.status_code == 413
+
+
+def test_tts_503_when_synth_not_loaded():
+    c = _make_client(synth=None, ready=False)
+    r = c.post("/tts", json={"text": "hi"}, headers={"X-Pi-Token": "test-token"})
+    assert r.status_code == 503
