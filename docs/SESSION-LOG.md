@@ -4,6 +4,98 @@ Running log of work per session. Newest first. Pair with `git log` for exact dif
 
 ---
 
+## 2026-06-08 — Local TTS sidecar shipped + Hey Luna wake word (PR #5 extension)
+
+Two stacked features landed on `feat/voice-kid-intents` on top of the existing kid-intents work, both deployed live: a Python Kokoro sidecar on the home server (replaces OpenRouter for TTS) and a swap from "Hey Mycroft" to a custom-trained "Hey Luna" wake word. 30 commits total since the plan landed.
+
+### Brainstorm → spec → plan (TTS sidecar)
+
+Started from yesterday's TTS read-timeout fix (single retry + bool return + WARNING log). The retry was a band-aid; this session was about the cure. Empirical bench-first:
+
+- Pi 5 (Cortex-A76, 2GB): Kokoro fp16 = 2.8× RT (5.6 s synth for 2 s audio). int8 was actually slower (5.5× RT) — ARM int8 GEMM kernels aren't well-optimized in onnxruntime for this CPU. Local-on-Pi ruled out — would replace occasional cloud bad days with consistently mediocre ones.
+- Home server (i5-7400 x86, 16GB): Kokoro fp16 = 0.6× RT (1.2 s synth for 2 s audio). Beats typical cloud in the happy path. **This is where the sidecar lives.**
+
+4-persona pre-write review (senior backend, SRE, audio specialist, family-UX) converged on:
+- Separate container in compose, `mem_limit: 1500m`, `platform: linux/amd64`, model + voices baked in
+- WAV (24 kHz int16 mono) over LAN; no MP3/Opus re-encoding
+- Pre-rendered noise + joke catalogs at image build time (kills the empty-string TTS bug + the 1.2s pause before a fart sound)
+- Pi-side ladder: `lan → cloud (capped/day) → didnt_catch.mp3 → silent + WARNING`
+- 30 s health cache mirroring `is_muted_locally`
+- One voice, vary prosody not identity (UX persona was emphatic — Mycroft is a character, multiple voices = multiple characters = confusing for kids)
+
+Spec at `docs/superpowers/specs/2026-06-08-local-tts-sidecar-design.md`. Plan at `docs/superpowers/plans/2026-06-08-local-tts-sidecar.md` — 28 numbered TDD tasks across 5 layers.
+
+### Subagent-driven implementation (28 tasks)
+
+Per-task workflow: implementer subagent → spec-compliance reviewer → code-quality reviewer → mark complete. Started all on Haiku 4.5; bumped to Sonnet 4.6 after T11 (Docker work) for the integration-heavy tasks (T12 compose, T14 backend schema+repo+route, T17 LAN helpers, T21 the big `_speak` ladder, T22 noise_play catalog, T23 joke_tell catalog, T25 VoiceChip dot). Haiku stayed on the mechanical tasks. Reviewers stayed Haiku throughout — caught every issue.
+
+Haiku misses across the session: two minor dead-import amends (T2 dropped `import os` after review caught; T10 redefined `SAMPLE_RATE` locally instead of just removing it). Both fixed with one-line amends. Otherwise verbatim spec → code.
+
+### Final cross-cutting review caught two real integration bugs
+
+After all 27 implementation tasks landed (T28 = manual e2e), a final Sonnet code-reviewer pass surfaced bugs that per-task reviews missed:
+
+1. **`TTS_BACKEND=cloud` env was parsed but never gated `_speak`'s LAN attempt.** The spec's rollout strategy ("ship cloud, validate, flip to lan") wouldn't work — `_speak` always tried LAN first regardless. Fix: `if d.cfg.tts_backend == "lan" and lan_reachable():` — one-line gate.
+2. **Catalog hits audited `tts_provider=NULL`.** `_noise_play` and `_joke_tell` returned `{"ok": True, "spoken": ""}` for matcher hits; `_try_execute` called `_speak("")` (no-op) so `_last_tts` was never populated. The wall dot would have been blind to TTS health on the most common kid intents. Fix: executor catalog branches return `"tts_provider": "kokoro_lan"` in the result dict; `_try_execute` prefers that hint over `_last_tts` when present.
+
+Both fixes in commit `01e31e7` with new tests. Total: 451/451 pi-voice + 200/200 backend + 88/88 frontend + 37/37 sidecar.
+
+### Live deploy hiccups
+
+Real-world things the plan didn't anticipate:
+
+- **Docker BuildKit version**: dev server has Docker v20.10 + BuildKit v0.8, which predates `additional_contexts` (needed v0.9+). Worked around by spinning up a `docker-container` buildx builder (`bk-new`, BuildKit v0.30). Worth a one-line note in `docs/deploy.md` — added to follow-up list.
+- **Rsync wiped `silero_vad.onnx`**: that file is install-script-seeded (not in the repo) at `~/homecal-voice/silero_vad.onnx`. My initial rsync command dropped `--exclude='models/'` to ship the new `wake_models/` dir; `--delete` wiped Silero. Service crashed on the missing VAD. Restored via `curl` from the snakers4 repo. Added `--exclude='silero_vad.onnx'` for future deploys; properly fixing it (moving Silero into the package proper) is a follow-up PR.
+- **`TTS_SERVER_TIMEOUT_S=3` too tight for `ask_question`**: live test of "Hey Luna, what's the time?" timed out at 3 s and fell to cloud. Bench confirmed: a 30-word Haiku answer synthesizes in ~6.7 s on the dev server (the answer is ~9.5 s of audio at 0.6× RT). Bumped to 10 s in `voice-install.sh` + `config.py` defaults (commit `49e0400`). Spec §9 had actually anticipated this ("long answers up the timeout to 8s") — should have read more carefully when picking the default.
+
+### Hey Luna wake word swap
+
+Custom-trained openWakeWord ONNX dropped at repo root. Set up `kiosk/voice/homecal_voice/wake_models/` as the homecal-managed model dir; renamed the ONNX to `hey_luna.onnx` so the scoring key derives cleanly. Extended `wake.py` `load_default_model()` to search `wake_models/` first then fall back to the openWakeWord bundle — `hey_mycroft` and friends still load by name. `WAKE_WORD=hey_mycroft` → `hey_luna` defaults flipped in `config.py` + `voice-install.sh`. Frontend chip's idle hint updated from `say "hey mycroft"` to `say "hey luna"`.
+
+The initial Luna model fired at 0.543–0.761 confidence (threshold is 0.5). User dropped a +20k-steps retrained version (`hey_luna(1).onnx`); after the swap, confidence jumped to 0.825 on the next "Hey Luna" — meaningful improvement.
+
+### State at end of session
+
+- 30 commits ahead of `master` on `feat/voice-kid-intents` (kid-intents + sidecar + wake word + timeout bump + retrained model + chip text)
+- PR #5 updated to cover both features. Live wall checklist in the PR body
+- Sidecar live at `192.168.1.94:8789`, healthy, serving `/healthz`, `/tts`, `/catalog/{noise,joke}/{key}`
+- Backend rebuilt with migration v7 (`tts_provider`, `tts_latency_ms` columns + `/api/voice/status.last_tts_provider`)
+- Pi running with `TTS_BACKEND=lan`, `TTS_SERVER_TIMEOUT_S=10`, `WAKE_WORD=hey_luna`
+- First successful LAN utterance: "Hey, what's the time?" → ask_question applied, `tts_provider=kokoro_lan`, `tts_latency_ms=15770` (includes synth + 9.5 s playback + 2 s post-decay sleep — perceived first-audio latency ~7 s vs cloud's ~14 s)
+
+### Verify the live build
+
+```bash
+# Sidecar
+curl -fsS http://192.168.1.94:8789/healthz   # {"ok":true,"model_loaded":true,"warm":true}
+
+# Backend (new columns)
+curl -fsS http://192.168.1.94:8787/api/voice/status   # last_tts_provider key present
+
+# Pi service
+ssh hbadmin@192.168.1.135 'systemctl is-active homecal-voice && grep -E "TTS_BACKEND|WAKE_WORD|TTS_SERVER_TIMEOUT" /etc/homecal-voice.env'
+
+# Migration
+node -e 'const d=require("better-sqlite3")("./data/calendar.db",{readonly:true});console.log(d.pragma("user_version",{simple:true}))'   # 7
+```
+
+### Open follow-ups (separate PRs)
+
+- **Move `silero_vad.onnx` into the package** (`vad_models/` mirroring `wake_models/`). User has consented; small PR after this one merges.
+- **`tts_latency_ms` for cloud path**: T21's ladder only times the LAN branch. Wrap `d.speak_cloud(text)` in a `time.time()` bracket so the audit captures it for cloud too.
+- **Graceful SIGTERM in `_run_after_wake`**: every restart logs a `StopIteration` traceback from `main.py:620` (frame iterator dies on signal). systemd recovers cleanly but the `FAILURE` log is noise. Catch it in `run_once`.
+- **`docs/deploy.md` BuildKit note**: hosts with BuildKit < v0.9 need a `docker-container` buildx builder for the `additional_contexts` feature.
+- **Live wall checklist** still pending: noise catalog hit, joke catalog playback, sidecar-down failover, wall dot stays green throughout.
+
+### Watch-outs carried forward
+
+- Rsync to Pi MUST `--exclude='silero_vad.onnx'` until the file moves into the package.
+- The 3-second TTS timeout was a footgun for `ask_question` — keep the 10s default unless we move to chunked/streaming synth (deferred per spec §4).
+- The retrained Luna model is in `wake_models/hey_luna.onnx`. The original `Hey_Luna_20260205_012007.onnx` staging file at repo root is no longer needed but harmless; user may want to delete.
+- Wake threshold is 0.5; observed retrained Luna scores 0.825 on clean utterances — there's headroom for tightening if false fires become an issue.
+
+---
+
 ## 2026-06-07 (afternoon) — PR #5 review pass + 6 fix-up commits + noise-import tool
 
 5-persona PR review (code, tests, comments, silent-failure, types) on PR
