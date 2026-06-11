@@ -21,6 +21,8 @@ import { SectionHeading } from '../components/manage/primitives/SectionHeading';
 import { EventEditorSheet } from '../components/sheets/EventEditorSheet';
 import { CategoryEditorSheet } from '../components/sheets/CategoryEditorSheet';
 import { DinnerEditorSheet } from '../components/sheets/DinnerEditorSheet';
+import { QuickAddSheet } from '../components/sheets/QuickAddSheet';
+import { defaultSlot, type SlotSelection } from '../components/calendar/slotSelection';
 import { KioskShutdown } from '../components/manage/KioskShutdown';
 import { RecentConcernsSection } from '../components/manage/RecentConcernsSection';
 
@@ -36,6 +38,7 @@ export function PhoneLayout() {
   const [eventTarget, setEventTarget] = useState<{ occ: EventOccurrence | null } | null>(null);
   const [categoryTarget, setCategoryTarget] = useState<{ cat: Category | null } | null>(null);
   const [dinnerDate, setDinnerDate] = useState<string | null>(null);
+  const [slotTarget, setSlotTarget] = useState<SlotSelection | null>(null);
 
   const view = tab === 'week' ? 'week' : 'agenda';
   const win = eventWindow(view, anchor);
@@ -56,7 +59,7 @@ export function PhoneLayout() {
 
   const openFab = () => {
     if (tab === 'manage') setCategoryTarget({ cat: null });
-    else setEventTarget({ occ: null });
+    else setSlotTarget(defaultSlot(now));
   };
 
   return (
@@ -125,7 +128,7 @@ export function PhoneLayout() {
         )}
       </main>
 
-      {!eventTarget && !categoryTarget && !dinnerDate && (
+      {!eventTarget && !categoryTarget && !dinnerDate && !slotTarget && (
         <Fab onClick={openFab} label={tab === 'manage' ? 'Add category' : 'Add event'} />
       )}
 
@@ -144,6 +147,18 @@ export function PhoneLayout() {
           open
           onClose={() => setDinnerDate(null)}
           initialDate={dinnerDate}
+        />
+      )}
+      {slotTarget && (
+        <QuickAddSheet
+          open
+          onClose={() => setSlotTarget(null)}
+          categories={categories}
+          slot={slotTarget}
+          onDinner={(date) => {
+            setSlotTarget(null);
+            setDinnerDate(date);
+          }}
         />
       )}
     </div>
