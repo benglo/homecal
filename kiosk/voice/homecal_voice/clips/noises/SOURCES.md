@@ -27,10 +27,10 @@ mislabels; cross-check the page's license badge before downloading.
 
 | Clip | Source URL | Original creator | License | Notes |
 |---|---|---|---|---|
-| fart.mp3 | TODO | TODO | CC0 | |
-| burp.mp3 | TODO | TODO | CC0 | |
-| chicken.mp3 | TODO | TODO | CC0 | |
-| cow.mp3 | TODO | TODO | CC0 | |
+| fart.mp3 | Sound Effect by <a href="https://pixabay.com/users/apebble-45160680/?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=228244">aPebble</a> from <a href="https://pixabay.com/sound-effects//?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=228244">Pixabay</a> | apebble | CC0 |  |
+| burp.mp3 |  | Eritnhut | CC0 |  |
+| chicken.mp3 | Dragon studio |  | CC0 |  |
+| cow.mp3 |  | Dragon studio | CC0 |  |
 | pig.mp3 | TODO | TODO | CC0 | |
 | dog.mp3 | TODO | TODO | CC0 | |
 | cat.mp3 | TODO | TODO | CC0 | |

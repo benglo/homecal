@@ -20,3 +20,6 @@ data/
 .claude/
 .superpowers/
 debug/
+
+# transient drop folder for the noise-import script (FTP staging)
+kiosk/voice/homecal_voice/clips/noises/_incoming/
