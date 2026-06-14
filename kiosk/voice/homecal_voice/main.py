@@ -183,7 +183,13 @@ def run_once(d: OneShotDeps) -> None:
     while True:
         f = d.next_frame()
         if d.muted():
+            # Drop any trigger that arrived while muted — tap-to-talk must not
+            # queue up and fire the instant the user unmutes.
+            _listen_trigger.clear()
             continue
+        if _listen_trigger.is_set():
+            _listen_trigger.clear()
+            break
         if d.wake.step(f):
             break
 
@@ -199,6 +205,8 @@ def run_once(d: OneShotDeps) -> None:
 
 
 def _run_after_wake(d: OneShotDeps) -> None:
+    # A tap during this cycle must be dropped, not queued for the next loop.
+    _listen_trigger.clear()
     uid = d.utterance_id()
     d.post_state(utterance_id=uid, kind="listening", payload={"vu": 0.0})
 
@@ -476,6 +484,10 @@ def _run_after_wake(d: OneShotDeps) -> None:
 
 
 _shutdown = False
+
+# Set by the SSE thread when the wall taps tap-to-talk; consumed (and cleared)
+# by run_once to start a listen cycle without the wake word.
+_listen_trigger = threading.Event()
 
 
 def _on_sigterm(*_):
@@ -879,8 +891,11 @@ def _start_mute_sse(cfg) -> None:
                         if line and line.startswith(b"data: "):
                             try:
                                 import json as _json
-                                poke = _json.loads(line[6:].decode())
-                                if poke.get("kind") == "voice":
+                                from homecal_voice.poke_handlers import classify_poke
+                                action = classify_poke(_json.loads(line[6:].decode()))
+                                if action == "listen":
+                                    _listen_trigger.set()
+                                elif action == "mute":
                                     _mute_state["checked_at"] = 0.0
                             except Exception:
                                 pass
