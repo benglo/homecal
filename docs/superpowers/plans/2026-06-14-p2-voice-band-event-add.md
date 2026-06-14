@@ -21,6 +21,13 @@
 - `listen_request` is poked **directly** via `broker.poke('voice', {kind:'listen_request'})` (like `mute_changed`), NOT through `/api/voice/state` — it is not a `VOICE_STATE_KINDS` value and carries no `utterance_id`.
 - Voice UI is **wall-only**. No band/chip changes on phone/desktop.
 
+**Deliberate divergences from the spec (post panel-review — the spec is now slightly stale on these):**
+- Intent field is **`duration_min`** (not the spec's `duration_minutes`) — shorter, consistent across all four touchpoints here.
+- **No `all_day` intent field** — the executor derives all-day from absence of `time` (one less field for Haiku to get wrong).
+- Transcript rides the existing **`thinking.transcript_partial`** field, not a new `transcript` field (zero churn to the reducer's existing shape).
+- **`confirming`** hides the band and shows only `ConfirmCard` (which already renders `Heard: "<transcript>"`), rather than band-under-card. The transcript is not lost.
+- **"Tap anywhere to cancel"** during `listening` (spec mockup) is **deferred** — the chip only starts a cycle in v1; cancel-mid-listen is a follow-up.
+
 ---
 
 ## File map
@@ -35,6 +42,7 @@
 | `frontend/src/components/voice/bandView.ts` | NEW pure view-model for the band |
 | `frontend/src/components/voice/bandView.test.ts` | NEW tests |
 | `frontend/src/components/voice/VoiceBand.tsx` | NEW band component (renders bandView) |
+| `frontend/src/styles/index.css` | + `voiceBar` keyframe (beside `voicePulse`/`spin`) |
 | `frontend/src/components/voice/ConfirmCard.tsx` | + `event_add` in `describe()` |
 | `frontend/src/core/api/client.ts` | + `triggerListen()` |
 | `frontend/src/core/hooks/useMutations.ts` | + `useTriggerListen()` |
@@ -57,12 +65,14 @@
 - [ ] **Step 1: Write the failing test** (append to `voice.test.ts`)
 
 ```ts
-test('POST /api/voice/listen: pokes voice listen_request + 200', async () => {
+// NO PI token header — the wall (browser, no token) calls this, mirroring the
+// unguarded PUT /api/voice/mute. The test must exercise the unauthenticated path.
+test('POST /api/voice/listen: pokes voice listen_request + 200 (no token)', async () => {
   const seen: unknown[] = [];
   const off = broker.subscribe((p: { kind: string; payload?: unknown }) => {
     if (p.kind === 'voice') seen.push(p.payload);
   });
-  const r = await app.inject({ method: 'POST', url: '/api/voice/listen', headers: PI });
+  const r = await app.inject({ method: 'POST', url: '/api/voice/listen' });
   off();
   assert.equal(r.statusCode, 200);
   assert.deepEqual(r.json(), { ok: true });
@@ -70,7 +80,7 @@ test('POST /api/voice/listen: pokes voice listen_request + 200', async () => {
 });
 ```
 
-> Note: confirm the broker's subscribe API name by reading `backend/src/realtime.ts` — it exposes `subscribe(fn)` returning an unsubscribe thunk (the SSE route uses it). If the method differs, match it; the assertion on the poke payload is the point.
+> Verified: `broker.subscribe(fn)` exists in `backend/src/realtime.ts` and returns an unsubscribe thunk. The SSE callback receives the full poke `{kind:'voice', at, payload}` — so filter on `p.kind` and read `p.payload`, matching the existing `/state` test.
 
 - [ ] **Step 2: Run it, expect fail**
 
@@ -80,16 +90,20 @@ Expected: FAIL — route returns 404.
 - [ ] **Step 3: Add the route** (in `voice.ts`, beside the existing `/api/voice/state` route)
 
 ```ts
-  // Tap-to-talk: the wall asks the Pi to start a listen cycle without the wake
-  // word. Fire-and-forget — no body, no DB. Poked directly (not via /state)
-  // because it carries no utterance_id and isn't a VOICE_STATE_KINDS value.
-  app.post('/api/voice/listen', { preHandler: piGuard }, async (_req, reply) => {
+  // Tap-to-talk: the wall (browser, NO Pi token) asks the Pi to start a listen
+  // cycle without the wake word. UNGUARDED — mirrors PUT /api/voice/mute, which
+  // is also browser-called and unguarded. LAN/no-auth threat model: any LAN
+  // device that could hit this could already POST /api/events or toggle mute,
+  // and the kitchen mic is physically always-on for the wake word — so this
+  // grants no new capability. Fire-and-forget; no body, no DB. Poked directly
+  // (not via /state): it carries no utterance_id and isn't a VOICE_STATE_KINDS value.
+  app.post('/api/voice/listen', async (_req, reply) => {
     broker.poke('voice', { kind: 'listen_request' });
     reply.code(200).send({ ok: true });
   });
 ```
 
-> `piGuard` mirrors the `/state` route — the wall already sends the Pi token for voice mutations? Check: `/api/voice/mute` (called by the wall) — confirm whether it uses `piGuard`. The wall is LAN/no-auth in v1; if `/mute` has NO preHandler, drop `preHandler: piGuard` here too so the browser can call it. Match `/api/voice/mute`'s guard exactly.
+> **Decision (committed): no `piGuard`.** Verified `backend/src/routes/voice.ts`: `/api/voice/mute` is a browser-called `PUT` with no `preHandler`; `/state`,`/audit`,`/heartbeat` are Pi-called and guarded. `/listen` is browser-called, so it must be unguarded or the token-less wall 401s. Do not add the guard.
 
 - [ ] **Step 4: Run it, expect pass**
 
@@ -256,15 +270,20 @@ export interface BandView {
 
 const HIDDEN: BandView = { visible: false, tone: 'accent', primary: '', secondary: '', showVu: false };
 
+// Bound the transcript before it hits the DOM + aria-live region. A pathological
+// STT result (rare runaway / cloud-audio fallback) would otherwise be announced
+// in full by a screen reader and blow out the single-line band.
+const MAX_TRANSCRIPT = 140;
+
 /** Pure view-model for VoiceBand. The band is the wall's active-voice surface;
- *  `confirming` is rendered by ConfirmCard and the offline/idle states by the
- *  chip, so the band stays hidden for those. */
+ *  `confirming` is rendered by ConfirmCard (which already shows the transcript)
+ *  and the offline/idle states by the chip, so the band stays hidden for those. */
 export function bandView(state: OverlayState): BandView {
   switch (state.kind) {
     case 'listening':
       return { visible: true, tone: 'accent', primary: 'Listening…', secondary: '', showVu: true };
     case 'thinking': {
-      const t = state.transcript_partial.trim();
+      const t = state.transcript_partial.trim().slice(0, MAX_TRANSCRIPT);
       return t
         ? { visible: true, tone: 'accent', primary: `“${t}”`, secondary: 'thinking…', showVu: false }
         : { visible: true, tone: 'accent', primary: 'thinking…', secondary: '', showVu: false };
@@ -331,9 +350,13 @@ export function VoiceBand({ state }: { state: OverlayState }) {
     <div
       role="status"
       aria-live="polite"
-      className="flex shrink-0 items-center gap-4 border-t"
+      className="absolute left-0 right-0 bottom-0 flex items-center gap-4 border-t"
       style={{
-        minHeight: 72,
+        // OVERLAY the ControlBar (88px tall) rather than reflowing the calendar —
+        // a flex sibling would shrink the grid 88px on every utterance. The root
+        // WallLayout div is position:relative (Task 8) so this anchors to it.
+        height: 88,
+        zIndex: 30,
         padding: '0 24px',
         background: 'var(--surface-2)',
         borderColor: color,
@@ -483,6 +506,9 @@ Replace `handleClick` and wire pointer handlers. Replace the existing `handleCli
     if (muted) { mute.mutate(null); setOpen(false); return; }
     if (longPress.current) { longPress.current = false; return; } // long-press already opened the menu
     if (open) { setOpen(false); return; }
+    // Ignore taps while a cycle is already active (or a trigger is in flight) —
+    // prevents mic-thrash from impatient double-taps. `state` is the chip's prop.
+    if (trigger.isPending || (state.kind !== 'idle' && state.kind !== 'mic_offline' && state.kind !== 'voice_offline')) return;
     trigger.mutate(); // tap → start listening
   };
 ```
@@ -538,19 +564,23 @@ git commit -m "feat(frontend): ConfirmCard summarises event_add"
 **Files:**
 - Modify: `frontend/src/layouts/WallLayout.tsx`
 
-- [ ] **Step 1: Import + render.** Add the import:
+- [ ] **Step 1: Import + render as an overlay.** Add the import:
 ```tsx
 import { VoiceBand } from '../components/voice/VoiceBand';
 ```
-Render the band **directly above** the `<ControlBar … />` (so it sits between the calendar surface and the control bar, sliding up over it visually):
+The root `WallLayout` div must be `position:relative` so the band anchors to it. It currently is:
+```tsx
+<div className="flex flex-col h-full overflow-hidden" style={{ filter: 'brightness(var(--kiosk-brightness))' }}>
+```
+Add `relative` to the className:
+```tsx
+<div className="relative flex flex-col h-full overflow-hidden" style={{ filter: 'brightness(var(--kiosk-brightness))' }}>
+```
+Render `<VoiceBand>` as the **last child** of that root (so it paints on top of the ControlBar it overlays), near the other overlays (`VirtualKeyboard`, `VoiceOverlay`):
 ```tsx
       <VoiceBand state={overlay} />
-      <ControlBar
-        view={view}
-        ...
-      />
 ```
-(`overlay` is the existing `useReducer` state already in `WallLayout`.)
+(`overlay` is the existing `useReducer` state already in `WallLayout`. `VoiceBand` returns `null` when idle/confirming/offline, so it only paints over the ControlBar while voice is active. Leave `<ControlBar>` exactly where it is — do NOT move it.)
 
 - [ ] **Step 2: Type-check + suite**
 
@@ -693,7 +723,7 @@ git commit -m "feat(pi): SSE thread sets a listen trigger on tap-to-talk poke"
 **Files:**
 - Modify: `kiosk/voice/homecal_voice/main.py`
 
-The `run_once` loop breaks on wake-word detection. It must also break when `_listen_trigger` is set — but only when not muted, and it must clear the trigger so it fires once.
+The `run_once` loop breaks on wake-word detection. It must also break when `_listen_trigger` is set — but only when not muted, and it must clear the trigger so it fires once. **Commit this together with Task 10** (Task 10 alone is inert — the trigger is set but unconsumed — so they form one logical change; the split is only to keep the SSE-thread edit and the wake-loop edit reviewable separately).
 
 - [ ] **Step 1: Modify the `run_once` loop** (lines ~183-189):
 
@@ -710,6 +740,13 @@ The `run_once` loop breaks on wake-word detection. It must also break when `_lis
             break
         if d.wake.step(f):
             break
+```
+
+- [ ] **Step 1b: Drain stale triggers at the START of `_run_after_wake`** so a tap that lands *during* a cycle (recording/STT/confirm/TTS can run 10s+) doesn't queue and auto-fire the next cycle — the spec says mid-cycle taps are ignored. Add as the first line of `_run_after_wake` (after the docstring):
+
+```python
+    # A tap during this cycle must be dropped, not queued for the next loop.
+    _listen_trigger.clear()
 ```
 
 - [ ] **Step 2: Run the suite**
@@ -952,33 +989,51 @@ _BNE = timezone(timedelta(hours=10))
 ```
 (extend the existing datetime import to `from datetime import date as Date, datetime, timezone, timedelta`).
 
+> **Reuse note:** `homecal_voice/timezone.py` already encodes the Brisbane offset (it's imported here for `today_brisbane`/`is_quiet_hours`, and `_query_agenda` builds `+10:00` windows). Before adding `_BNE`, check `timezone.py` for an existing tz/offset constant and import it instead — one source of truth for UTC+10. Only define `_BNE` locally if `timezone.py` exposes nothing reusable.
+
 Add the handler (beside `_dinner_set`):
 
 ```python
     def _event_add(self, f: dict) -> dict:
-        title = _canon_meal(f["title"])  # same title-case-preserving canon as meals
+        # Title from STT; backend caps at 256 — clamp here so a rambling
+        # transcript fails-soft to a truthful reply instead of a backend 400
+        # surfaced as the misleading "couldn't reach the calendar".
+        title = _canon_meal(f["title"])[:256]
         date = f["date"]
-        category_id = self._resolve_category(f.get("category"))
         time = f.get("time")
-        if time:
-            start_local = datetime.fromisoformat(f"{date}T{time}:00").replace(tzinfo=_BNE)
-            dur = int(f.get("duration_min") or 60)
-            end_local = start_local + timedelta(minutes=dur)
-            start = start_local.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            end = end_local.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            all_day = False
-            when_spoken = f"{self._humanise(date)} at {_speak_time(time)}"
-        else:
-            start = end = date
-            all_day = True
-            when_spoken = self._humanise(date)
-        r = requests.post(
-            f"{self.base}/api/events",
-            json={"categoryId": category_id, "title": title, "start": start, "end": end, "allDay": all_day},
-            headers=self.headers,
-            timeout=API_TIMEOUT_SEC,
-        )
-        r.raise_for_status()
+        try:
+            if time:
+                start_local = datetime.fromisoformat(f"{date}T{time}:00").replace(tzinfo=_BNE)
+                # Clamp Haiku-supplied duration to a sane window (5min..24h).
+                dur = max(5, min(int(f.get("duration_min") or 60), 1440))
+                end_local = start_local + timedelta(minutes=dur)
+                start = start_local.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                end = end_local.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                all_day = False
+                when_spoken = f"{self._humanise(date)} at {_speak_time(time)}"
+            else:
+                # All-day stores bare YYYY-MM-DD (spec §0; matches the wall's
+                # quickAddPayload.ts all-day shape — do NOT expand to T00:00Z).
+                start = end = date
+                all_day = True
+                when_spoken = self._humanise(date)
+        except (ValueError, TypeError):
+            # Malformed date/time from Haiku (e.g. time:"4pm"). Honest copy, not
+            # a false backend-outage; _try_execute renders this as `failed`.
+            return {"ok": False, "spoken": "I didn't catch the date and time."}
+
+        category_id = self._resolve_category(f.get("category"))
+        try:
+            r = requests.post(
+                f"{self.base}/api/events",
+                json={"categoryId": category_id, "title": title, "start": start, "end": end, "allDay": all_day},
+                headers=self.headers,
+                timeout=API_TIMEOUT_SEC,
+            )
+            r.raise_for_status()
+        except requests.HTTPError:
+            # Backend rejected the event (validation). Truthful copy.
+            return {"ok": False, "spoken": "I couldn't add that event."}
         return {"ok": True, "spoken": f"Added {title} on {when_spoken}."}
 
     def _resolve_category(self, name: "str | None") -> str:
@@ -1057,3 +1112,17 @@ gh pr create --base master --head feat/voice-p2 --title "P2: voice band + tap-to
 - **Type consistency:** `OverlayState.applied.reply` (Task 2) is read by `bandView` (Task 3) and set by the Pi applied poke (Task 12); `event_add` fields (`title`,`date`,`time?`,`duration_min?`,`category?`) are consistent across the frontend type (Task 2), ConfirmCard (Task 7), the Pi prompt schema (Task 13), and the executor handler (Task 15); `classify_poke` return values (`"listen"`/`"mute"`) match the SSE consumer (Task 10); `_listen_trigger` is defined (Task 10) before use (Task 11).
 - **Decision recorded:** Task 13 deliberately avoids adding a categories template var to keep `build_system_prompt`'s signature stable — the executor owns category resolution + fallback. This is the single intentional simplification vs. the spec's "category matched by name" (still satisfied, just resolved server-side on the Pi rather than hinted to Haiku).
 - **Ordering:** backend → frontend types/state/band/chip/layout → Pi trigger → Pi intent/executor → build. Each task commits independently; the feature is only end-to-end wired after Task 15, verified in Task 16.
+
+## Panel review (5 split-role reviewers) — applied changes
+
+A factual, senior-engineer, security, consistency, and redundancy reviewer each read this plan against the live code. Fixes folded in:
+- **[CRITICAL] `/api/voice/listen` is now unguarded** (matches the browser-called `/mute`); the test no longer sends a Pi token. The guarded version + token-sending test would have shipped a route the wall can't call.
+- **[BLOCKER] VoiceBand is now a positioned overlay** (`absolute bottom-0`, root `relative`) over the 88px ControlBar, not a flex sibling — avoids shrinking/reflowing the calendar on every utterance.
+- **[IMPORTANT] Mid-cycle taps drained** via `_listen_trigger.clear()` at the start of `_run_after_wake` (spec: ignore taps during a cycle).
+- **[IMPORTANT] `_event_add` hardened**: title clamp 256, `duration_min` clamp 5–1440, date/time parse guarded, backend rejection → honest spoken copy (not "couldn't reach the calendar").
+- **[IMPORTANT] Band transcript clamped** to 140 chars (DOM + aria-live safety).
+- **Chip ignores taps while a cycle is active / trigger in flight** (anti-thrash).
+- **Tasks 10+11 commit together** (Task 10 alone is inert); **reuse `timezone.py`** offset instead of a fresh `_BNE` if available.
+- **Documented** the 5 deliberate spec divergences (`duration_min`, no `all_day` field, `transcript_partial` reuse, ConfirmCard-owns-confirming, deferred tap-to-cancel) and added the `styles/index.css` file-map row.
+- **Confirmed solid by the panel:** `math.inf` always-confirm (no matcher bypass), executor → standard `POST /api/events` (zod-validated, parameterised SQL), no XSS (no `dangerouslySetInnerHTML`), no token logging, and the Brisbane→UTC math (verified by execution: 16:00 → `06:00Z`).
+- **Kept as-is (judged justified):** `bandView`/`VoiceBand` split, `poke_handlers.py` extraction, `reply` field (reply text originates server-side; not derivable on the client), `duration_min` default 60. The `Waveform` was retained (matches the approved mockup; cheap), unlike the redundancy reviewer's optional-cut suggestion.
