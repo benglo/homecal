@@ -68,4 +68,15 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
     broker.poke('voice', { kind: 'mute_changed', mute_until: body.until });
     return { ok: true, mute_until: body.until };
   });
+
+  // Tap-to-talk: the wall (browser, NO Pi token) asks the Pi to start a listen
+  // cycle without the wake word. UNGUARDED — mirrors PUT /api/voice/mute, which
+  // is also browser-called and unguarded. LAN/no-auth threat model: any LAN
+  // device that could hit this could already POST /api/events or toggle mute,
+  // and the kitchen mic is physically always-on for the wake word — so this
+  // grants no new capability. Fire-and-forget; no body, no DB.
+  app.post('/api/voice/listen', async (_req, reply) => {
+    broker.poke('voice', { kind: 'listen_request' });
+    reply.code(200).send({ ok: true });
+  });
 }
