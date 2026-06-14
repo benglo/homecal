@@ -31,6 +31,10 @@ function describe(intent: ParsedIntent): string {
     case 'ask_question': return `Answer your question`;
     case 'noise_play': return `Play a noise`;
     case 'joke_tell': return `Tell a joke`;
+    case 'event_add': {
+      const when = intent.time ? `${intent.date} ${intent.time}` : intent.date;
+      return `Add "${intent.title}" — ${when}`;
+    }
     case 'unknown':
       return `(didn't parse: ${intent.reason})`;
   }
