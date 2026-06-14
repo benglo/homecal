@@ -8,7 +8,7 @@ import interactionPlugin from '@fullcalendar/interaction';
 import type { Category, EventOccurrence } from '../../core/model/types';
 import { nowBne } from '../../core/util/time';
 import { makeRenderChip } from './renderChip';
-import { mapSlotSelection, type SlotSelection } from './slotSelection';
+import { mapSlotSelection, mapDateClick, type SlotSelection } from './slotSelection';
 
 interface Props {
   view: 'week' | 'month';
@@ -70,11 +70,17 @@ export function GridCalendar({ view, date, occurrences, categories, onEventClick
         selectable={!!onSlotSelect}
         selectMirror
         unselectAuto={false}
-        selectLongPressDelay={250}
+        // Touch: a plain tap fires dateClick; a long-press (150ms) + drag fires
+        // select for an explicit range. Mouse: selectMinDistance keeps a click
+        // from also firing select (it would double with dateClick) — a real drag
+        // still selects a range.
+        selectLongPressDelay={150}
+        selectMinDistance={5}
         events={events}
         eventContent={renderChip}
         eventClick={(arg) => onEventClick?.(arg.event.extendedProps.occ as EventOccurrence)}
         select={(arg) => onSlotSelect?.(mapSlotSelection(arg, nowBne()))}
+        dateClick={(arg) => onSlotSelect?.(mapDateClick(arg, nowBne()))}
       />
     </div>
   );
