@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { DateTime } from 'luxon';
-import { mapSlotSelection, defaultSlot } from './slotSelection';
+import { mapSlotSelection, mapDateClick, defaultSlot } from './slotSelection';
 import { ZONE } from '../../core/util/time';
 
 // FC hands us local JS Dates; the kiosk/desktop browser runs in Brisbane.
@@ -39,6 +39,21 @@ describe('mapSlotSelection — month (dayGrid)', () => {
     expect(
       mapSlotSelection({ start: bne('2026-06-20T00:00:00'), end: bne('2026-06-23T00:00:00'), allDay: true }, NOW),
     ).toEqual({ date: '2026-06-20', endDate: '2026-06-22', allDay: true });
+  });
+});
+
+describe('mapDateClick — single tap', () => {
+  it('week tap (timed point) → 1-hour draft', () => {
+    expect(
+      mapDateClick({ date: bne('2026-06-11T14:00:00'), allDay: false }, NOW),
+    ).toEqual({ date: '2026-06-11', time: '14:00', endTime: '15:00', allDay: false });
+  });
+
+  it('month tap (all-day point) → timed draft at next half-hour, NOT an inverted range', () => {
+    // NOW is 09:10 → nextHalfHour 09:30. Must not produce endDate < date.
+    expect(
+      mapDateClick({ date: bne('2026-06-20T00:00:00'), allDay: true }, NOW),
+    ).toEqual({ date: '2026-06-20', time: '09:30', endTime: '10:30', allDay: false });
   });
 });
 

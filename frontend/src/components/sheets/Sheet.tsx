@@ -28,7 +28,12 @@ export function Sheet({ open, onClose, title, actions, children, variant = 'moda
     document.addEventListener('keydown', onKey);
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    panelRef.current?.focus();
+    // Only grab focus if a child (e.g. an autoFocus input) hasn't already taken
+    // it — otherwise we blur that field, which makes the wall's VirtualKeyboard
+    // flash open then closed as focus lands on the non-input panel.
+    if (!panelRef.current?.contains(document.activeElement)) {
+      panelRef.current?.focus();
+    }
     return () => {
       document.removeEventListener('keydown', onKey);
       document.body.style.overflow = prevOverflow;

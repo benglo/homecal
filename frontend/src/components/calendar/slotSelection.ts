@@ -50,6 +50,20 @@ export function mapSlotSelection(sel: FcSelectLike, now: DateTime): SlotSelectio
   };
 }
 
+/** A single tap/click on a slot (FC `dateClick`). On touch a plain tap fires
+ *  `dateClick`, NOT `select` (which needs a long-press drag) — so without this
+ *  a tap creates nothing on the kiosk. timeGrid taps give a timed point →
+ *  widened to a 1h draft; dayGrid taps give an all-day point → a timed draft at
+ *  the next half-hour (synthesised as a single-day range so the month branch of
+ *  mapSlotSelection fires, not the multi-day one). */
+export function mapDateClick(arg: { date: Date; allDay: boolean }, now: DateTime): SlotSelection {
+  const start = arg.date;
+  // dayGrid all-day end is exclusive; +1 day makes mapSlotSelection treat it as
+  // a single-day tap rather than an inverted multi-day range.
+  const end = arg.allDay ? new Date(start.getTime() + 86_400_000) : start;
+  return mapSlotSelection({ start, end, allDay: arg.allDay }, now);
+}
+
 /** Prefill for slot-less entry points (ControlBar +, phone FAB). */
 export function defaultSlot(now: DateTime): SlotSelection {
   const t = nextHalfHour(now.setZone(ZONE));
