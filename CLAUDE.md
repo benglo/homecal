@@ -99,7 +99,7 @@ curl localhost:8787/api/voice/status    # mic_online + mute state
   optimistic updates, SSE sync. Phone managers for family + chores. 3 new tables
   (`family_members`, `chores`, `chore_completions`). 38 backend + 4 frontend tests added.
 - **Voice (v1)** — Pi-side service `homecal-voice` (under `kiosk/voice/`). Wake = openWakeWord
-  `hey_mycroft` (feasibility-validated: 0.998 confidence at 1m on the USB PCM2902 mic). STT = local
+  `hey_luna` (custom-trained ONNX at `kiosk/voice/homecal_voice/wake_models/hey_luna.onnx`). STT = local
   whisper.cpp `base.en-q5_1` via `whisper-server`. Intent = Haiku 4.5 + TTS = Gemini 3.1 Flash
   TTS Preview, both via OpenRouter. v1 intents: dinner_set, chore_complete, query_dinner,
   query_agenda. Confirmation card on the wall via existing SSE (mid-confidence intents listen

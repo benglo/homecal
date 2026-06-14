@@ -79,7 +79,7 @@ cat <<'ENV'
 OPENROUTER_API_KEY=sk-or-...
 HOMECAL_API_BASE=http://192.168.1.94:8787
 PI_API_TOKEN=...
-WAKE_WORD=hey_mycroft
+WAKE_WORD=hey_luna
 WHISPER_MODEL=small.en-q5_1
 WHISPER_SERVER_URL=http://127.0.0.1:8080/inference
 STT_MODEL=google/gemini-3-flash-preview
@@ -89,6 +89,13 @@ VAD_GAIN=5.0
 ENERGY_RMS_THRESHOLD=5500.0
 TTS_MODEL=hexgrad/kokoro-82m
 TTS_VOICE=af_bella
+# TTS dispatch — `cloud` ships safe; flip to `lan` after manual validation
+# against the kokoro-tts sidecar (see specs/2026-06-08-local-tts-sidecar-design.md).
+TTS_BACKEND=cloud
+TTS_SERVER_URL=http://192.168.1.94:8789
+# Long ask_question/joke answers (40+ words) need ~6-7s sidecar synth on
+# the i5-7400; 10s leaves margin so they don't false-timeout into cloud.
+TTS_SERVER_TIMEOUT_S=10
 DAILY_REQUEST_CAP=200
 AUDIO_DEVICE=default
 ENV

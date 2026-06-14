@@ -62,3 +62,14 @@ def test_refractory_low_score_after_drain_does_not_fire(silence_frame):
     assert d.step(silence_frame) is True
 
 
+def test_load_default_model_finds_custom_wake_model(tmp_path, monkeypatch):
+    """Custom homecal-managed wake models in wake_models/ take priority over
+    the openWakeWord bundle. This is how 'hey_luna' (a trained model not in
+    the upstream bundle) gets loaded by name."""
+    # The new hey_luna model ships with the package; verify the loader finds it.
+    from homecal_voice.wake import load_default_model
+    model, key = load_default_model("hey_luna")
+    assert key == "hey_luna"
+    assert model is not None
+
+

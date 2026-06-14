@@ -1,11 +1,14 @@
-import { useMemo } from 'react';
+// frontend/src/components/calendar/GridCalendar.tsx
+import { useEffect, useMemo, useRef } from 'react';
 import FullCalendar from '@fullcalendar/react';
 import type { EventInput } from '@fullcalendar/core';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin from '@fullcalendar/interaction';
 import type { Category, EventOccurrence } from '../../core/model/types';
+import { nowBne } from '../../core/util/time';
 import { makeRenderChip } from './renderChip';
+import { mapSlotSelection, type SlotSelection } from './slotSelection';
 
 interface Props {
   view: 'week' | 'month';
@@ -13,11 +16,18 @@ interface Props {
   occurrences: EventOccurrence[];
   categories: Map<string, Category>;
   onEventClick?: (occ: EventOccurrence) => void;
+  /** Enables tap/drag-to-create. Absent → grid is read-only as before. */
+  onSlotSelect?: (sel: SlotSelection) => void;
+  /** Keep FC's selection highlight while the create form is open; flipping
+   *  back to false clears the ghost. */
+  selectionOpen?: boolean;
 }
 
 /** FullCalendar week (timeGrid) / month (dayGrid). MIT plugins only.
  *  Built-in toolbar disabled — nav is driven by our ControlBar. */
-export function GridCalendar({ view, date, occurrences, categories, onEventClick }: Props) {
+export function GridCalendar({ view, date, occurrences, categories, onEventClick, onSlotSelect, selectionOpen }: Props) {
+  const calRef = useRef<FullCalendar>(null);
+
   const events: EventInput[] = useMemo(
     () =>
       occurrences.map((o) => ({
@@ -32,9 +42,16 @@ export function GridCalendar({ view, date, occurrences, categories, onEventClick
   );
   const renderChip = useMemo(() => makeRenderChip(categories), [categories]);
 
+  // unselectAuto is off so the ghost survives the sheet opening; we clear it
+  // ourselves when the form closes.
+  useEffect(() => {
+    if (!selectionOpen) calRef.current?.getApi().unselect();
+  }, [selectionOpen]);
+
   return (
     <div className="flex-1 overflow-hidden" style={{ padding: '12px 16px' }}>
       <FullCalendar
+        ref={calRef}
         key={`${view}-${date}`}
         plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
         initialView={view === 'week' ? 'timeGridWeek' : 'dayGridMonth'}
@@ -50,9 +67,14 @@ export function GridCalendar({ view, date, occurrences, categories, onEventClick
         slotMaxTime="22:00:00"
         dayMaxEvents={3}
         fixedWeekCount={false}
+        selectable={!!onSlotSelect}
+        selectMirror
+        unselectAuto={false}
+        selectLongPressDelay={250}
         events={events}
         eventContent={renderChip}
         eventClick={(arg) => onEventClick?.(arg.event.extendedProps.occ as EventOccurrence)}
+        select={(arg) => onSlotSelect?.(mapSlotSelection(arg, nowBne()))}
       />
     </div>
   );

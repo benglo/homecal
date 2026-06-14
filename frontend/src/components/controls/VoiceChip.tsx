@@ -4,9 +4,10 @@ import { Mic, MicOff, Loader2, Check, AlertCircle } from 'lucide-react';
 import type { ComponentType, SVGProps } from 'react';
 import { useVoiceStatus } from '../../core/hooks/useData';
 import { useMuteVoice } from '../../core/hooks/useMutations';
+import { useIsWall } from '../../core/hooks/useIsWall';
 import { ZONE } from '../../core/util/time';
 import type { OverlayState } from '../voice/voiceState';
-import type { ParsedIntent } from '../../core/model/types';
+import type { ParsedIntent, VoiceStatus } from '../../core/model/types';
 
 type LucideIcon = ComponentType<SVGProps<SVGSVGElement> & { size?: number | string }>;
 type Kind = OverlayState['kind'];
@@ -44,10 +45,20 @@ const PRESETS: Preset[] = [
   },
 ];
 
+/** Returns the CSS colour for the ambient TTS-health dot on the wall chip.
+ *  Uses actual repo tokens: --ok (green), --stale (amber), --text-muted (grey). */
+export function ttsDotColor(status: Pick<VoiceStatus, 'mic_online' | 'muted' | 'last_tts_provider'>): string {
+  if (!status.mic_online || status.muted) return 'var(--text-muted)';
+  if (status.last_tts_provider === 'clip' || status.last_tts_provider === 'none') {
+    return 'var(--stale)';
+  }
+  return 'var(--ok)';
+}
+
 /** What the chip shows for a given overlay state when voice is NOT muted. */
 export function labelFor(state: OverlayState): string {
   switch (state.kind) {
-    case 'idle': return 'say "hey mycroft"';
+    case 'idle': return 'say "hey luna"';
     case 'listening': return 'listening…';
     case 'thinking': return 'thinking…';
     case 'confirming': return 'confirm?';
@@ -68,6 +79,9 @@ function appliedLabel(intent: ParsedIntent): string {
     case 'timer_extend': return 'timer extended';
     case 'timer_cancel': return 'timer cancelled';
     case 'timer_query': return 'done';
+    case 'ask_question': return 'answered';
+    case 'joke_tell': return '😄 joke';
+    case 'noise_play': return '';  // no chip flash; the noise IS the feedback
     case 'unknown': return "didn't catch that";
   }
 }
@@ -102,6 +116,7 @@ interface Props {
 export function VoiceChip({ state }: Props) {
   const { data: status } = useVoiceStatus();
   const mute = useMuteVoice();
+  const isWall = useIsWall();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -127,6 +142,11 @@ export function VoiceChip({ state }: Props) {
 
   const Icon = muted ? MicOff : ICON_BY_KIND[state.kind];
   const label = muted ? muteLabel(status?.mute_until ?? null) : labelFor(state);
+
+  // noise_play returns empty applied label — render nothing so the chip doesn't
+  // momentarily flash blank during the noise. Spec §8.
+  if (label === '' && state.kind === 'applied') return null;
+
   const accent =
     muted ? 'var(--text-muted)' :
     WARN_KINDS.has(state.kind) ? 'var(--warn, #d97706)' :
@@ -149,8 +169,24 @@ export function VoiceChip({ state }: Props) {
     setOpen((o) => !o);
   };
 
+  const dot = isWall && status ? (
+    <span
+      style={{
+        position: 'absolute',
+        top: 4,
+        right: 4,
+        width: 6,
+        height: 6,
+        borderRadius: '50%',
+        background: ttsDotColor(status),
+      }}
+      aria-hidden="true"
+    />
+  ) : null;
+
   return (
     <div ref={rootRef} style={{ position: 'relative' }}>
+      {dot}
       <button
         type="button"
         onClick={handleClick}

@@ -563,3 +563,498 @@ def test_remaining_seconds_handles_missing_expires_at():
 def test_remaining_seconds_handles_malformed_expires_at():
     from datetime import datetime, timezone
     assert _remaining_seconds("not-a-date", datetime.now(timezone.utc)) == 0
+
+
+# --- noise_play ------------------------------------------------------------
+
+from unittest.mock import MagicMock
+from pathlib import Path
+from homecal_voice import catalog as kid_catalog
+
+
+def test_noise_play_catalog_hit_plays_clip():
+    play = MagicMock()
+    ex = Executor(base="http://api", token="t", play_clip=play)
+    intent = IntentResult("noise_play", {"catalog_key": "chicken"}, 1.0, "make a chicken noise", source="matcher")
+    out = ex.apply(intent)
+    assert out["ok"] is True
+    assert out["spoken"] == ""  # no chip flash; noise IS the feedback
+    play.assert_called_once()
+    # The played path must resolve under the catalog's clips dir.
+    played = play.call_args.args[0]
+    assert Path(played).name == "chicken.mp3"
+
+
+def test_noise_play_haiku_fallback_returns_fallback_text_for_main_to_speak():
+    play = MagicMock()
+    ex = Executor(base="http://api", token="t", play_clip=play)
+    intent = IntentResult(
+        "noise_play",
+        {"play_catalog": "chicken", "fallback_text": "I don't know dolphin yet, but here's a chicken!"},
+        0.9, "make a dolphin noise", source="llm",
+    )
+    out = ex.apply(intent)
+    assert out["ok"] is True
+    assert "chicken" in out["spoken"]
+    play.assert_called_once()
+
+
+def test_noise_play_unknown_catalog_key_returns_soft_failure():
+    play = MagicMock()
+    ex = Executor(base="http://api", token="t", play_clip=play)
+    intent = IntentResult("noise_play", {"play_catalog": "nonexistent"}, 0.9, "x", source="llm")
+    out = ex.apply(intent)
+    assert out["ok"] is False
+    assert "unknown_catalog_key" in out.get("error", "")
+    play.assert_not_called()
+
+
+def test_noise_play_missing_both_keys_returns_missing_key_error():
+    play = MagicMock()
+    ex = Executor(base="http://api", token="t", play_clip=play)
+    intent = IntentResult("noise_play", {}, 0.9, "x", source="llm")
+    out = ex.apply(intent)
+    assert out["ok"] is False
+    assert "missing_key" in out.get("error", "")
+    play.assert_not_called()
+
+
+def test_noise_play_works_without_play_clip_dep_returns_failure():
+    """Backwards compat: if play_clip wasn't injected (older wiring), fail
+    softly rather than crash mid-utterance."""
+    ex = Executor(base="http://api", token="t")  # no play_clip
+    intent = IntentResult("noise_play", {"catalog_key": "chicken"}, 1.0, "x", source="matcher")
+    out = ex.apply(intent)
+    assert out["ok"] is False
+    assert out.get("error", "").startswith("noise_play_no_player") or "no_player" in out.get("error", "")
+
+
+# --- joke_tell ----------------------------------------------------------------
+
+
+def test_joke_tell_speaks_setup_then_pause_then_punchline():
+    spoken_calls = []
+    sleep_calls = []
+    speak = MagicMock(side_effect=lambda text: spoken_calls.append(text))
+    sleep = MagicMock(side_effect=lambda s: sleep_calls.append(s))
+    ex = Executor(base="http://api", token="t", speak=speak, sleep=sleep)
+    intent = IntentResult(
+        "joke_tell",
+        {"joke_id": "j001", "setup": "Why?", "punchline": "Because!"},
+        1.0, "tell me a joke", source="matcher",
+    )
+    out = ex.apply(intent)
+    assert out["ok"] is True
+    assert out.get("spoken_inline") is True
+    assert spoken_calls == ["Why?", "Because!"]
+    assert sleep_calls == [1.5]
+
+
+def test_joke_tell_returns_combined_answer_for_audit():
+    """`spoken` is for the audit log — joke_tell uses it to preserve the full
+    setup+punchline string so voice_utterances.answer captures the whole joke.
+    `spoken_inline=True` signals main.py NOT to TTS this again."""
+    ex = Executor(base="http://api", token="t", speak=MagicMock(), sleep=MagicMock())
+    intent = IntentResult(
+        "joke_tell",
+        {"setup": "Why?", "punchline": "Because!"},
+        1.0, "tell me a joke", source="matcher",
+    )
+    out = ex.apply(intent)
+    assert out["spoken"] == "Why? ... Because!"
+    assert out.get("spoken_inline") is True
+
+
+def test_joke_tell_missing_setup_returns_failure():
+    ex = Executor(base="http://api", token="t", speak=MagicMock(), sleep=MagicMock())
+    intent = IntentResult("joke_tell", {"punchline": "x"}, 0.9, "x", source="llm")
+    out = ex.apply(intent)
+    assert out["ok"] is False
+    assert "missing_fields" in out.get("error", "")
+
+
+def test_joke_tell_missing_punchline_returns_failure():
+    ex = Executor(base="http://api", token="t", speak=MagicMock(), sleep=MagicMock())
+    intent = IntentResult("joke_tell", {"setup": "Why?"}, 0.9, "x", source="llm")
+    out = ex.apply(intent)
+    assert out["ok"] is False
+    assert "missing_fields" in out.get("error", "")
+
+
+def test_joke_tell_without_deps_returns_failure():
+    ex = Executor(base="http://api", token="t")  # no speak/sleep deps
+    intent = IntentResult(
+        "joke_tell",
+        {"setup": "Why?", "punchline": "Because!"},
+        1.0, "x", source="matcher",
+    )
+    out = ex.apply(intent)
+    assert out["ok"] is False
+    assert "joke_tell_no_speaker" in out.get("error", "") or "no_speaker" in out.get("error", "")
+
+
+# --- ask_question -------------------------------------------------------------
+
+
+def test_ask_question_speaks_answer():
+    ex = Executor(base="http://api", token="t")
+    intent = IntentResult(
+        "ask_question",
+        {"answer": "Because of light scattering!", "concern": False},
+        0.95, "why is the sky blue", source="llm",
+    )
+    out = ex.apply(intent)
+    assert out["ok"] is True
+    assert out["spoken"] == "Because of light scattering!"
+    assert out.get("concern") is False
+
+
+def test_ask_question_redirects_on_banned_term():
+    """Defence-in-depth: if Haiku slips and emits a banned term, the safety
+    regex overrides the answer to the redirect line."""
+    from homecal_voice.safety import REDIRECT_LINE
+    ex = Executor(base="http://api", token="t")
+    intent = IntentResult(
+        "ask_question",
+        {"answer": "That word fuck is not allowed.", "concern": False},
+        0.95, "x", source="llm",
+    )
+    out = ex.apply(intent)
+    assert out["ok"] is True
+    assert out["spoken"] == REDIRECT_LINE
+
+
+def test_ask_question_concern_path_uses_disclosure_text():
+    """concern=true → speak the LLM-provided answer verbatim (which the
+    prompt constrains to the fixed disclosure line) and flag the audit row."""
+    ex = Executor(base="http://api", token="t")
+    intent = IntentResult(
+        "ask_question",
+        {
+            "answer": "That sounds important. Please tell your mum or dad right now — they want to help.",
+            "concern": True,
+        },
+        0.95, "my tummy hurts and bleeds", source="llm",
+    )
+    out = ex.apply(intent)
+    assert out["ok"] is True
+    assert out.get("concern") is True
+    assert "mum or dad" in out["spoken"]
+
+
+def test_ask_question_concern_bypasses_safety_regex():
+    """Even if the concern answer somehow contained a banned word (it shouldn't,
+    per the prompt), the concern path must not get rewritten to the redirect —
+    a child reporting distress should hear the disclosure, not a deflection."""
+    from homecal_voice.safety import REDIRECT_LINE
+    ex = Executor(base="http://api", token="t")
+    # Construct an answer that DOES contain a banned term to assert the bypass.
+    intent = IntentResult(
+        "ask_question",
+        {"answer": "Please tell your mum or dad now — even if it's about fuck.", "concern": True},
+        0.95, "x", source="llm",
+    )
+    out = ex.apply(intent)
+    assert out["ok"] is True
+    assert out.get("concern") is True
+    assert out["spoken"] != REDIRECT_LINE
+    assert "mum or dad" in out["spoken"]
+
+
+def test_ask_question_truncates_long_answer_to_40_words():
+    long_answer = " ".join(["word"] * 60)
+    ex = Executor(base="http://api", token="t")
+    intent = IntentResult("ask_question", {"answer": long_answer, "concern": False}, 0.95, "x", source="llm")
+    out = ex.apply(intent)
+    assert out["ok"] is True
+    word_count = len(out["spoken"].split())
+    assert word_count <= 40
+
+
+def test_ask_question_missing_answer_returns_failure():
+    ex = Executor(base="http://api", token="t")
+    intent = IntentResult("ask_question", {"confidence": 0.9}, 0.9, "x", source="llm")
+    out = ex.apply(intent)
+    assert out["ok"] is False
+    assert "missing" in out.get("error", "").lower()
+
+
+def test_ask_question_concern_defaults_to_false_when_absent():
+    """When Haiku omits the concern flag, treat as false (normal path)."""
+    ex = Executor(base="http://api", token="t")
+    intent = IntentResult("ask_question", {"answer": "It's blue!"}, 0.95, "x", source="llm")
+    out = ex.apply(intent)
+    assert out["ok"] is True
+    assert out.get("concern") is False
+
+
+def test_noise_play_clip_exception_audits_soft_failure():
+    """Spec: clip playback failures must not bubble into the wrong-error speak path."""
+    play = MagicMock(side_effect=RuntimeError("mpg123 crashed"))
+    ex = Executor(base="http://api", token="t", play_clip=play)
+    intent = IntentResult("noise_play", {"catalog_key": "chicken"}, 1.0, "make a chicken noise", source="matcher")
+    out = ex.apply(intent)
+    assert out["ok"] is False
+    assert out["spoken"] == ""
+    assert "clip_play" in out["error"]
+    play.assert_called_once()  # the failure was actually attempted
+
+
+def test_joke_tell_setup_exception_records_no_partial():
+    """If setup TTS raises, the audit answer is empty (nothing was heard)."""
+    speak = MagicMock(side_effect=[RuntimeError("tts down"), None])
+    ex = Executor(base="http://api", token="t", speak=speak, sleep=MagicMock())
+    intent = IntentResult("joke_tell", {"setup": "Why?", "punchline": "Because!"}, 1.0, "x", source="matcher")
+    out = ex.apply(intent)
+    assert out["ok"] is False
+    assert out["spoken"] == ""
+    assert "joke_setup_tts" in out["error"]
+
+
+def test_joke_tell_punchline_exception_records_partial_setup():
+    """If setup spoke but punchline TTS raised, audit `spoken` records what the kid heard."""
+    speak = MagicMock(side_effect=[None, RuntimeError("tts down")])
+    ex = Executor(base="http://api", token="t", speak=speak, sleep=MagicMock())
+    intent = IntentResult("joke_tell", {"setup": "Why?", "punchline": "Because!"}, 1.0, "x", source="matcher")
+    out = ex.apply(intent)
+    assert out["ok"] is False
+    assert out["spoken"] == "Why?"
+    assert "joke_punchline_tts" in out["error"]
+
+
+def test_ask_question_regex_override_flag_set_when_safety_fires():
+    """Audit must record the regex trip so it's observable."""
+    ex = Executor(base="http://api", token="t")
+    intent = IntentResult("ask_question", {"answer": "fuck the science", "concern": False}, 0.95, "x", source="llm")
+    out = ex.apply(intent)
+    assert out["ok"] is True
+    assert out.get("regex_override") is True
+
+
+def test_ask_question_no_regex_override_on_clean_answer():
+    ex = Executor(base="http://api", token="t")
+    intent = IntentResult("ask_question", {"answer": "It's blue!", "concern": False}, 0.95, "x", source="llm")
+    out = ex.apply(intent)
+    assert out["ok"] is True
+    assert out.get("regex_override") is False
+
+
+# ---------------------------------------------------------------------------
+# Fix B — quiet-hours suppression honesty (noise_play)
+# ---------------------------------------------------------------------------
+from unittest.mock import MagicMock
+
+
+def test_noise_play_quiet_hours_suppression_returns_ok_false():
+    """When the play_clip wrapper returns False (quiet hours), the executor
+    audits the truth: the kid heard nothing. Spec §3.11."""
+    play_returning_false = MagicMock(return_value=False)
+    ex = Executor(base="http://api", token="t", play_clip=play_returning_false)
+    intent = IntentResult("noise_play", {"catalog_key": "chicken"}, 1.0, "make a chicken noise", source="matcher")
+    out = ex.apply(intent)
+    assert out["ok"] is False
+    assert out["error"] == "quiet_hours_suppressed"
+    assert out.get("quiet_suppressed") is True
+    play_returning_false.assert_called_once()
+
+
+def test_noise_play_clip_callable_returning_none_still_treated_as_success():
+    """Backwards compat: a play_clip that returns None (raw tts_play_file)
+    is still a successful play — only explicit False means suppression."""
+    play_returning_none = MagicMock(return_value=None)
+    ex = Executor(base="http://api", token="t", play_clip=play_returning_none)
+    intent = IntentResult("noise_play", {"catalog_key": "chicken"}, 1.0, "x", source="matcher")
+    out = ex.apply(intent)
+    assert out["ok"] is True
+
+
+# ---------------------------------------------------------------------------
+# Fix E — Group 3a: _truncate_words at exactly 40 words
+# ---------------------------------------------------------------------------
+
+
+def test_ask_question_truncation_at_exactly_40_words_preserves_full_answer():
+    """Lock the inclusive boundary: <= max_words → unchanged.
+    A future change from <= to < would silently drop the 40th word."""
+    answer_40 = " ".join([f"word{i}" for i in range(40)])
+    assert len(answer_40.split()) == 40
+    ex = Executor(base="http://api", token="t")
+    intent = IntentResult("ask_question", {"answer": answer_40, "concern": False}, 0.95, "x", source="llm")
+    out = ex.apply(intent)
+    assert out["spoken"] == answer_40  # not truncated
+
+
+# ---------------------------------------------------------------------------
+# Fix E — Group 3b: noise_play payload with BOTH catalog_key and play_catalog
+# ---------------------------------------------------------------------------
+
+
+def test_noise_play_prefers_catalog_key_over_play_catalog_when_both_present():
+    """Documents the key-selection precedence: `catalog_key` wins over
+    `play_catalog` (first truthy value via `or`), so the played clip is
+    always `chicken` when both are present.
+
+    NOTE: the current implementation returns `fallback_text` regardless of
+    which key resolved — this test pins that observable behaviour so any
+    future change to suppress `fallback_text` on the catalog_key path is
+    a deliberate, visible diff rather than a silent regression."""
+    play = MagicMock()
+    ex = Executor(base="http://api", token="t", play_clip=play)
+    intent = IntentResult(
+        "noise_play",
+        {"catalog_key": "chicken", "play_catalog": "dog", "fallback_text": "fallback"},
+        1.0, "x", source="matcher",
+    )
+    out = ex.apply(intent)
+    assert out["ok"] is True
+    # The played path must be chicken (catalog_key wins in the `or` expression).
+    played = play.call_args.args[0]
+    from pathlib import Path
+    assert Path(played).name == "chicken.mp3"
+    # Current behaviour: fallback_text is returned regardless of which key
+    # resolved. A future fix that suppresses it on catalog_key paths would
+    # change this assertion to `== ""`.
+    assert out["spoken"] == "fallback"
+
+
+# ---------------------------------------------------------------------------
+# Task 22 — _noise_play hits sidecar catalog endpoint
+# ---------------------------------------------------------------------------
+
+
+def test_noise_play_uses_catalog_fetch_when_provided(monkeypatch):
+    """When fetch_catalog returns bytes, _noise_play plays those bytes and
+    returns spoken="" (no TTS dance for matcher hits)."""
+    from homecal_voice.executor import Executor
+    from homecal_voice.intent import IntentResult
+
+    play_bytes = MagicMock()
+    fetch_catalog = MagicMock(return_value=b"RIFFfake")
+
+    ex = Executor(
+        base="http://api", token="t",
+        play_clip=MagicMock(), speak=MagicMock(),
+        play_bytes=play_bytes, fetch_catalog=fetch_catalog,
+    )
+    out = ex.apply(IntentResult("noise_play", {"catalog_key": "fart"}, 1.0, "raw"))
+    assert out["ok"] is True
+    assert out["spoken"] == ""
+    fetch_catalog.assert_called_once_with("noise", "fart")
+    play_bytes.assert_called_once_with(b"RIFFfake", format="wav")
+
+
+def test_noise_play_falls_through_to_old_path_on_catalog_miss():
+    """If fetch_catalog returns None (404), fall through to today's
+    play_clip-from-disk behaviour."""
+    from homecal_voice.executor import Executor
+    from homecal_voice.intent import IntentResult
+
+    play_clip = MagicMock()
+    fetch_catalog = MagicMock(return_value=None)
+    ex = Executor(
+        base="http://api", token="t",
+        play_clip=play_clip, speak=MagicMock(),
+        play_bytes=MagicMock(), fetch_catalog=fetch_catalog,
+    )
+    out = ex.apply(IntentResult("noise_play", {"catalog_key": "fart"}, 1.0, "raw"))
+    # On a miss, today's behaviour: load the clip file from disk + play_clip it.
+    play_clip.assert_called_once()
+    assert out["ok"] is True
+
+
+# ---------------------------------------------------------------------------
+# Task 23 — _joke_tell hits sidecar joke catalog endpoint
+# ---------------------------------------------------------------------------
+
+
+def test_joke_tell_uses_catalog_fetch_when_provided():
+    from homecal_voice.executor import Executor
+    from homecal_voice.intent import IntentResult
+
+    play_bytes = MagicMock()
+    fetch_catalog = MagicMock(return_value=b"RIFFjokeaudio")
+
+    ex = Executor(
+        base="http://api", token="t",
+        play_clip=MagicMock(), speak=MagicMock(), sleep=MagicMock(),
+        play_bytes=play_bytes, fetch_catalog=fetch_catalog,
+    )
+    out = ex.apply(IntentResult(
+        "joke_tell",
+        {"joke_id": "j001", "setup": "Why X?", "punchline": "Because Y"},
+        1.0, "raw",
+    ))
+    assert out["ok"] is True
+    assert out.get("spoken_inline") is True
+    fetch_catalog.assert_called_once_with("joke", "j001")
+    play_bytes.assert_called_once_with(b"RIFFjokeaudio", format="wav")
+
+
+def test_joke_tell_falls_through_to_tts_setup_pause_punchline_on_miss():
+    """If fetch_catalog returns None (joke not pre-rendered), fall back to
+    today's setup → 1.5s pause → punchline via TTS."""
+    from homecal_voice.executor import Executor
+    from homecal_voice.intent import IntentResult
+
+    speak = MagicMock()
+    sleep = MagicMock()
+    fetch_catalog = MagicMock(return_value=None)
+    ex = Executor(
+        base="http://api", token="t",
+        play_clip=MagicMock(), speak=speak, sleep=sleep,
+        play_bytes=MagicMock(), fetch_catalog=fetch_catalog,
+    )
+    out = ex.apply(IntentResult(
+        "joke_tell",
+        {"joke_id": "j999", "setup": "Knock knock", "punchline": "Who's there"},
+        1.0, "raw",
+    ))
+    assert out["ok"] is True
+    speak.assert_any_call("Knock knock")
+    sleep.assert_called_once_with(1.5)
+
+
+# ---------------------------------------------------------------------------
+# Bug 2 fix — catalog-hit returns include tts_provider="kokoro_lan"
+# ---------------------------------------------------------------------------
+
+
+def test_noise_play_catalog_hit_includes_tts_provider():
+    """Catalog-hit path must tag tts_provider='kokoro_lan' so the audit row
+    is not NULL — the sidecar played the WAV directly, bypassing _speak."""
+    from homecal_voice.executor import Executor
+    from homecal_voice.intent import IntentResult
+
+    play_bytes = MagicMock()
+    fetch_catalog = MagicMock(return_value=b"RIFFfake")
+
+    ex = Executor(
+        base="http://api", token="t",
+        play_clip=MagicMock(), speak=MagicMock(),
+        play_bytes=play_bytes, fetch_catalog=fetch_catalog,
+    )
+    out = ex.apply(IntentResult("noise_play", {"catalog_key": "fart"}, 1.0, "raw"))
+    assert out["ok"] is True
+    assert out.get("tts_provider") == "kokoro_lan"
+
+
+def test_joke_tell_catalog_hit_includes_tts_provider():
+    """Same guarantee for joke_tell: catalog-hit must tag tts_provider='kokoro_lan'."""
+    from homecal_voice.executor import Executor
+    from homecal_voice.intent import IntentResult
+
+    play_bytes = MagicMock()
+    fetch_catalog = MagicMock(return_value=b"RIFFjokeaudio")
+
+    ex = Executor(
+        base="http://api", token="t",
+        play_clip=MagicMock(), speak=MagicMock(), sleep=MagicMock(),
+        play_bytes=play_bytes, fetch_catalog=fetch_catalog,
+    )
+    out = ex.apply(IntentResult(
+        "joke_tell",
+        {"joke_id": "j001", "setup": "Why X?", "punchline": "Because Y"},
+        1.0, "raw",
+    ))
+    assert out["ok"] is True
+    assert out.get("tts_provider") == "kokoro_lan"

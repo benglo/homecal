@@ -1,0 +1,6 @@
+fastapi==0.118.0
+uvicorn[standard]==0.32.0
+kokoro-onnx==0.5.0
+onnxruntime==1.26.0
+numpy==2.4.6
+requests==2.32.3

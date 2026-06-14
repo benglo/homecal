@@ -1,0 +1,28 @@
+{
+  "synonyms": {
+    "doggy": "dog",
+    "puppy": "dog",
+    "kitty": "cat",
+    "kitten": "cat",
+    "piggy": "pig",
+    "chook": "chicken",
+    "rooster": "chicken",
+    "bull": "cow",
+    "moo": "cow",
+    "trumpet": "fanfare"
+  },
+  "entries": {
+    "fart": "fart.mp3",
+    "burp": "burp.mp3",
+    "chicken": "chicken.mp3",
+    "cow": "cow.mp3",
+    "pig": "pig.mp3",
+    "dog": "dog.mp3",
+    "cat": "cat.mp3",
+    "lion": "lion.mp3",
+    "sneeze": "sneeze.mp3",
+    "raspberry": "raspberry.mp3",
+    "drum": "drum.mp3",
+    "fanfare": "fanfare.mp3"
+  }
+}

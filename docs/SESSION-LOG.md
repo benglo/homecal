@@ -4,6 +4,408 @@ Running log of work per session. Newest first. Pair with `git log` for exact dif
 
 ---
 
+## 2026-06-11 — P1 slot-tap creation shipped (calendar UI v2, phase 1 of 3)
+
+New branch `feat/calendar-ui-v2` (cut from `feat/voice-kid-intents` — P2's voice work depends on that code). Brainstormed with the visual companion (mockups for slot-create, voice band, desktop shell), spec at `docs/superpowers/specs/2026-06-11-ui-slot-create-voice-desktop-design.md`, P1 plan at `docs/superpowers/plans/2026-06-11-p1-slot-tap-create.md`. P2 (voice band + tap-to-talk + event_add intent) and P3 (`?mode=desktop` Outlook-style shell) are specced but not planned yet — plans get written against the code as it exists when their turn comes.
+
+### What shipped (6 commits, 9070859..1cf16c0)
+
+Outlook-style creation on the wall: tap an empty week slot → 1-hour draft; drag → exact range; month day tap → timed draft at next half-hour; month multi-day drag → all-day range. `selectMirror` ghost shows the landing zone while the form is open and clears on close (`unselectAuto={false}` + parent-driven `unselect()`).
+
+- `slotSelection.ts` — pure FC-selection → prefill mapper + `defaultSlot()` (7 tests)
+- `quickAddPayload.ts` — pure draft → `POST /api/events` body builder, midnight-roll handling (6 tests)
+- `GridCalendar` — `selectable`/`selectMirror`/`selectLongPressDelay={250}` + `onSlotSelect`/`selectionOpen` props
+- `EventQuickAddForm` (shell-agnostic; P3's popover will reuse it) + `QuickAddSheet` rewritten as a thin Sheet shell. Inline category chip row via the existing `CategoryPicker`; Dinner chip routes to `DinnerEditorSheet` (conscious spec deviation, documented in the plan — reuse beats duplicating the meal form)
+- `WallLayout` — slot wiring; **AddChooser deleted** (two-step add flow retired; ControlBar `+` now opens the unified form via `defaultSlot`)
+- `PhoneLayout` — FAB opens the unified form (manage-tab FAB still creates categories; phone week grid intentionally stays non-selectable)
+
+### Verification
+
+- frontend: tsc clean, 101/101 vitest (88 existing + 13 new)
+- Final whole-diff code review: approved, 0 critical. Its "stale draft via key collision" finding was disproved (QuickAddSheet returns null when closed → form unmounts → state can't survive a reopen). `autoFocus`-pops-virtual-keyboard flagged but is the pre-existing M3 wall behaviour, unchanged.
+- Kiosk hardware check (250 ms long-press select vs scroll feel) still pending — do on next deploy.
+
+### Process note
+
+The Bash safety-classifier had rolling outages all session (plain `git` allowlisted, `npm`/`npx` blocked). Subagents wrote files verbatim from the plan; commits + test runs were batched into the recovery windows, with the user running two verification commands via `!` passthrough.
+
+Two stacked features landed on `feat/voice-kid-intents` on top of the existing kid-intents work, both deployed live: a Python Kokoro sidecar on the home server (replaces OpenRouter for TTS) and a swap from "Hey Mycroft" to a custom-trained "Hey Luna" wake word. 30 commits total since the plan landed.
+
+### Brainstorm → spec → plan (TTS sidecar)
+
+Started from yesterday's TTS read-timeout fix (single retry + bool return + WARNING log). The retry was a band-aid; this session was about the cure. Empirical bench-first:
+
+- Pi 5 (Cortex-A76, 2GB): Kokoro fp16 = 2.8× RT (5.6 s synth for 2 s audio). int8 was actually slower (5.5× RT) — ARM int8 GEMM kernels aren't well-optimized in onnxruntime for this CPU. Local-on-Pi ruled out — would replace occasional cloud bad days with consistently mediocre ones.
+- Home server (i5-7400 x86, 16GB): Kokoro fp16 = 0.6× RT (1.2 s synth for 2 s audio). Beats typical cloud in the happy path. **This is where the sidecar lives.**
+
+4-persona pre-write review (senior backend, SRE, audio specialist, family-UX) converged on:
+- Separate container in compose, `mem_limit: 1500m`, `platform: linux/amd64`, model + voices baked in
+- WAV (24 kHz int16 mono) over LAN; no MP3/Opus re-encoding
+- Pre-rendered noise + joke catalogs at image build time (kills the empty-string TTS bug + the 1.2s pause before a fart sound)
+- Pi-side ladder: `lan → cloud (capped/day) → didnt_catch.mp3 → silent + WARNING`
+- 30 s health cache mirroring `is_muted_locally`
+- One voice, vary prosody not identity (UX persona was emphatic — Mycroft is a character, multiple voices = multiple characters = confusing for kids)
+
+Spec at `docs/superpowers/specs/2026-06-08-local-tts-sidecar-design.md`. Plan at `docs/superpowers/plans/2026-06-08-local-tts-sidecar.md` — 28 numbered TDD tasks across 5 layers.
+
+### Subagent-driven implementation (28 tasks)
+
+Per-task workflow: implementer subagent → spec-compliance reviewer → code-quality reviewer → mark complete. Started all on Haiku 4.5; bumped to Sonnet 4.6 after T11 (Docker work) for the integration-heavy tasks (T12 compose, T14 backend schema+repo+route, T17 LAN helpers, T21 the big `_speak` ladder, T22 noise_play catalog, T23 joke_tell catalog, T25 VoiceChip dot). Haiku stayed on the mechanical tasks. Reviewers stayed Haiku throughout — caught every issue.
+
+Haiku misses across the session: two minor dead-import amends (T2 dropped `import os` after review caught; T10 redefined `SAMPLE_RATE` locally instead of just removing it). Both fixed with one-line amends. Otherwise verbatim spec → code.
+
+### Final cross-cutting review caught two real integration bugs
+
+After all 27 implementation tasks landed (T28 = manual e2e), a final Sonnet code-reviewer pass surfaced bugs that per-task reviews missed:
+
+1. **`TTS_BACKEND=cloud` env was parsed but never gated `_speak`'s LAN attempt.** The spec's rollout strategy ("ship cloud, validate, flip to lan") wouldn't work — `_speak` always tried LAN first regardless. Fix: `if d.cfg.tts_backend == "lan" and lan_reachable():` — one-line gate.
+2. **Catalog hits audited `tts_provider=NULL`.** `_noise_play` and `_joke_tell` returned `{"ok": True, "spoken": ""}` for matcher hits; `_try_execute` called `_speak("")` (no-op) so `_last_tts` was never populated. The wall dot would have been blind to TTS health on the most common kid intents. Fix: executor catalog branches return `"tts_provider": "kokoro_lan"` in the result dict; `_try_execute` prefers that hint over `_last_tts` when present.
+
+Both fixes in commit `01e31e7` with new tests. Total: 451/451 pi-voice + 200/200 backend + 88/88 frontend + 37/37 sidecar.
+
+### Live deploy hiccups
+
+Real-world things the plan didn't anticipate:
+
+- **Docker BuildKit version**: dev server has Docker v20.10 + BuildKit v0.8, which predates `additional_contexts` (needed v0.9+). Worked around by spinning up a `docker-container` buildx builder (`bk-new`, BuildKit v0.30). Worth a one-line note in `docs/deploy.md` — added to follow-up list.
+- **Rsync wiped `silero_vad.onnx`**: that file is install-script-seeded (not in the repo) at `~/homecal-voice/silero_vad.onnx`. My initial rsync command dropped `--exclude='models/'` to ship the new `wake_models/` dir; `--delete` wiped Silero. Service crashed on the missing VAD. Restored via `curl` from the snakers4 repo. Added `--exclude='silero_vad.onnx'` for future deploys; properly fixing it (moving Silero into the package proper) is a follow-up PR.
+- **`TTS_SERVER_TIMEOUT_S=3` too tight for `ask_question`**: live test of "Hey Luna, what's the time?" timed out at 3 s and fell to cloud. Bench confirmed: a 30-word Haiku answer synthesizes in ~6.7 s on the dev server (the answer is ~9.5 s of audio at 0.6× RT). Bumped to 10 s in `voice-install.sh` + `config.py` defaults (commit `49e0400`). Spec §9 had actually anticipated this ("long answers up the timeout to 8s") — should have read more carefully when picking the default.
+
+### Hey Luna wake word swap
+
+Custom-trained openWakeWord ONNX dropped at repo root. Set up `kiosk/voice/homecal_voice/wake_models/` as the homecal-managed model dir; renamed the ONNX to `hey_luna.onnx` so the scoring key derives cleanly. Extended `wake.py` `load_default_model()` to search `wake_models/` first then fall back to the openWakeWord bundle — `hey_mycroft` and friends still load by name. `WAKE_WORD=hey_mycroft` → `hey_luna` defaults flipped in `config.py` + `voice-install.sh`. Frontend chip's idle hint updated from `say "hey mycroft"` to `say "hey luna"`.
+
+The initial Luna model fired at 0.543–0.761 confidence (threshold is 0.5). User dropped a +20k-steps retrained version (`hey_luna(1).onnx`); after the swap, confidence jumped to 0.825 on the next "Hey Luna" — meaningful improvement.
+
+### State at end of session
+
+- 30 commits ahead of `master` on `feat/voice-kid-intents` (kid-intents + sidecar + wake word + timeout bump + retrained model + chip text)
+- PR #5 updated to cover both features. Live wall checklist in the PR body
+- Sidecar live at `192.168.1.94:8789`, healthy, serving `/healthz`, `/tts`, `/catalog/{noise,joke}/{key}`
+- Backend rebuilt with migration v7 (`tts_provider`, `tts_latency_ms` columns + `/api/voice/status.last_tts_provider`)
+- Pi running with `TTS_BACKEND=lan`, `TTS_SERVER_TIMEOUT_S=10`, `WAKE_WORD=hey_luna`
+- First successful LAN utterance: "Hey, what's the time?" → ask_question applied, `tts_provider=kokoro_lan`, `tts_latency_ms=15770` (includes synth + 9.5 s playback + 2 s post-decay sleep — perceived first-audio latency ~7 s vs cloud's ~14 s)
+
+### Verify the live build
+
+```bash
+# Sidecar
+curl -fsS http://192.168.1.94:8789/healthz   # {"ok":true,"model_loaded":true,"warm":true}
+
+# Backend (new columns)
+curl -fsS http://192.168.1.94:8787/api/voice/status   # last_tts_provider key present
+
+# Pi service
+ssh hbadmin@192.168.1.135 'systemctl is-active homecal-voice && grep -E "TTS_BACKEND|WAKE_WORD|TTS_SERVER_TIMEOUT" /etc/homecal-voice.env'
+
+# Migration
+node -e 'const d=require("better-sqlite3")("./data/calendar.db",{readonly:true});console.log(d.pragma("user_version",{simple:true}))'   # 7
+```
+
+### Open follow-ups (separate PRs)
+
+- **Move `silero_vad.onnx` into the package** (`vad_models/` mirroring `wake_models/`). User has consented; small PR after this one merges.
+- **`tts_latency_ms` for cloud path**: T21's ladder only times the LAN branch. Wrap `d.speak_cloud(text)` in a `time.time()` bracket so the audit captures it for cloud too.
+- **Graceful SIGTERM in `_run_after_wake`**: every restart logs a `StopIteration` traceback from `main.py:620` (frame iterator dies on signal). systemd recovers cleanly but the `FAILURE` log is noise. Catch it in `run_once`.
+- **`docs/deploy.md` BuildKit note**: hosts with BuildKit < v0.9 need a `docker-container` buildx builder for the `additional_contexts` feature.
+- **Live wall checklist** still pending: noise catalog hit, joke catalog playback, sidecar-down failover, wall dot stays green throughout.
+
+### Watch-outs carried forward
+
+- Rsync to Pi MUST `--exclude='silero_vad.onnx'` until the file moves into the package.
+- The 3-second TTS timeout was a footgun for `ask_question` — keep the 10s default unless we move to chunked/streaming synth (deferred per spec §4).
+- The retrained Luna model is in `wake_models/hey_luna.onnx`. The original `Hey_Luna_20260205_012007.onnx` staging file at repo root is no longer needed but harmless; user may want to delete.
+- Wake threshold is 0.5; observed retrained Luna scores 0.825 on clean utterances — there's headroom for tightening if false fires become an issue.
+
+---
+
+## 2026-06-07 (afternoon) — PR #5 review pass + 6 fix-up commits + noise-import tool
+
+5-persona PR review (code, tests, comments, silent-failure, types) on PR
+#5's 22-commit kid-intents work. Surfaced 4 criticals and 11 importants;
+addressed all of them in 6 focused fix-up commits. Then built an
+interactive shell tool to import the real CC0 noise clips into the
+catalog, since that was the last outstanding pre-merge gap.
+
+### The criticals (review converged on one theme)
+All four criticals came from the silent-failure hunt and were about the
+bot lying to the kid:
+
+- **`_noise_play` clip exception bubbled up to `_try_execute`'s catch-
+  all** which spoke *"Sorry, I couldn't reach the calendar."* Kid asks
+  for a fart, gets an API-error message. Fix: try/except around
+  `self._play_clip(...)`, audit as `failed` with `error="clip_play:<msg>"`.
+
+- **`_joke_tell` per-speak failure recorded the wrong audit + spoke the
+  wrong error.** Setup-then-punchline-TTS-raises landed in the outer
+  error branch with empty `spoken`; the kid heard the setup, then
+  silence, then "Sorry, I couldn't reach the calendar". Fix: each
+  `_speak` is now independently wrapped; on punchline failure the
+  audit's `spoken` field records what the kid actually heard ("Why?").
+
+- **Quiet-hours suppression flashed green ✓ "applied".** Wall lied —
+  executor returned `ok=True` even though `_quiet_safe_play_clip` had
+  silently swallowed the call. Fix: wrapper now returns `bool`; executor
+  returns `ok=False, error="quiet_hours_suppressed"`. None-returning
+  callables (backwards compat) still treated as success.
+
+- **`_extract_with_matcher_first` over-coupled.** Fetched family +
+  chores + dinners + events in parallel BEFORE attempting any matcher
+  pass. An outage on `/api/events` killed `noise_play` and `joke_tell`
+  too — even though those matchers need zero backend context. Fix:
+  three-stage routing. Stage 1 tries `kid_matcher` (zero API). Stage 2
+  fetches family + chores, tries `core_matcher` (v1 + timer). Stage 3
+  fetches dinners + events for the Haiku prompt. Required splitting the
+  single `default_matcher` into named matchers in `matcher.py`.
+
+### The importants worth pulling out
+- **Safety-regex trip was invisible in the audit log.** Spec §7.2
+  mandated `error="regex_override"` so the rate could be measured;
+  shipped without it. Fix: `_ask_question` now returns
+  `regex_override: True` when `safety.check_answer` overrode; `_audit`
+  threads that into the audit row's `error` column. Now greppable.
+- **`RecentConcernsSection` silently rendered "No recent concerns" on
+  query error.** Safety-surface UX disaster — parent reasonably
+  concludes "all clear" when system has no idea. Fix: destructure
+  `isError`, render "Couldn't load — check your connection" in warn
+  colour.
+- **`Noises.entries` was a mutable dict.** `@dataclass(frozen=True)`
+  freezes the binding, not the dicts; `noises.entries["fart"] = "evil.mp3"`
+  would silently corrupt the in-process catalog. Switched to
+  `MappingProxyType` mirroring `AUTO_APPLY_THRESHOLDS`. Pinned with a
+  test that asserts `TypeError` on write attempt.
+- **`voiceAuditBody.intent_name` was an unconstrained string.** Typo at
+  the wire (`"ask_quetion"`) would land in the DB column (which has no
+  CHECK by design). Tightened to `z.enum([...VOICE_INTENT_NAMES])`.
+  Exported the array as `VOICE_INTENT_NAMES` so frontend + tests share
+  the source of truth.
+- **End-to-end integration tests missing.** Spec §10 listed them;
+  shipped without. Added `integration_test.py` with 3 round-trip tests
+  (matcher → executor → audit) per new intent. A `catalog_key` vs
+  `catalog_id` rename drift between layers would now fail in CI, not
+  production.
+- **Comment hygiene drift.** Three CLAUDE.md violations: `Spec §3.9` /
+  `Spec §3.11` cited subsection refs that don't exist (spec §3 is flat),
+  `"Saves ~15ms vs serial fetches"` was the exact "measured numbers that
+  rot" the rule bans, `PR #4` references in test comments would rot.
+  All rewritten as structural reasoning.
+
+### Test count delta
+- Pi: 389 → 413 (+24 tests across the 6 fix-up commits)
+- Backend: 193 → 194 (+1 — Zod enum rejection)
+- Frontend: 81 (unchanged — the error-state change isn't unit-testable
+  without `@testing-library/react`)
+
+### Unexpected finding
+Fix E's edge-case test for `noise_play` precedence (both `catalog_key`
+AND `play_catalog` present) revealed that the executor returns
+`fallback_text` unconditionally — even on the catalog_key path where
+`fallback_text` shouldn't logically be spoken. Pinned as a regression
+test with a NOTE so a future fix produces a deliberate diff. Not a real
+bug in practice (matcher emits only `catalog_key`, Haiku emits only
+`play_catalog`+`fallback_text`; the contrived both-present case is
+LLM-merge speculation). Documented for follow-up.
+
+### Noise-clip import tool
+The 12 catalog entries are still zero-byte placeholders — real CC0
+clips are the last pre-merge gap. Built
+`kiosk/voice/scripts/import-noises.sh`: interactive bash tool that
+walks the 12 entries in order, prompts for source-file path + URL +
+creator + notes, runs `ffmpeg -ar 16000 -ac 1 -t 2 -b:a 64k` to
+normalise to the spec (mono, 16kHz, 2s hard cap, 64kbps MP3), and
+updates the right row in `SOURCES.md` automatically. Handles drag-drop
+quoted paths, `~` expansion, skip/replace/quit. Recommended source:
+Pixabay sound effects (no account, blanket permissive license).
+Freesound CC0 filter as backup with per-file license verification.
+
+Tool committed; the actual clip import is a follow-up since it needs
+the user to do the per-clip search/download interactively.
+
+### Files
+**New:** `kiosk/voice/scripts/import-noises.sh`,
+`kiosk/voice/homecal_voice/integration_test.py`.
+
+**Modified (fix-up):** `kiosk/voice/homecal_voice/{executor,main,matcher,
+catalog}.py` + tests, `kiosk/voice/homecal_voice/catalogs/noises.json`
+(deduped kitten synonym), `backend/src/schemas.ts`,
+`backend/src/repos/voiceUtterances.test.ts`,
+`frontend/src/components/manage/RecentConcernsSection.tsx`,
+`frontend/src/components/voice/voiceState.test.ts`.
+
+---
+
+## 2026-06-07 — Kid-friendly voice intents (PR #5)
+
+Built three new voice intents aimed at the kids (Imogen and Penelope):
+open-ended Q&A, silly sound effects, and jokes. Plus expanded audit
+logging — `voice_utterances` now records `intent_name`, `answer`, and
+`concern` so we can see what the bot actually says. PR #5 open.
+
+### Process
+Followed the full spec → plan → subagent-driven implementation cycle
+end-to-end (the first time on this project). Brainstormed the design via
+the `superpowers:brainstorming` skill, ran a 5-persona review (factual,
+senior engineer, security, consistency, redundancy) before locking the
+spec, generated a 21-task plan via `writing-plans`, then executed via
+`subagent-driven-development` — fresh subagent per task with spec +
+quality review checkpoints between tasks. Two CRITICAL findings were
+caught mid-execution (a misleading `concern` return type in the repo;
+deleted chore-complete fallback instructions in the prompt) and fixed
+inline before the next task.
+
+### Locked design decisions (from the review pass)
+- **Single Haiku call** for `ask_question` — intent + answer in one call.
+  Idempotency cost is real (a retry re-bills the answer tokens) but at
+  home scale it's ~$0.0001 per retry; the ~1s latency win on the only
+  latency-sensitive new path is worth more.
+- **No CHECK constraint** on `intent_name` in SQLite. SQLite can't ALTER
+  a CHECK; adding the 12th intent later would force a table rebuild on
+  the live DB. Zod at the API boundary is the gatekeeper.
+- **No composite `/api/voice/context` endpoint** — Pi uses a
+  `ThreadPoolExecutor` to hit the existing 4 endpoints in parallel.
+  Saves the new API surface for no meaningful latency cost at LAN.
+- **No dedicated safety judge** (second LLM call) in v1. Four-layer
+  defence (system prompt + regex tripwire + concern detection + audit
+  log review) ships first. Once the audit log shows real Haiku misses,
+  adding a Gemini-Flash safety judge becomes a justified v2 addition
+  with a real failure profile to tune against. Building it now means
+  tuning blind.
+- **Per-intent confidence thresholds.** `noise_play` and `joke_tell`
+  auto-apply at ANY confidence — a confirm-card ("did you want a joke?")
+  disrupts the gag. `ask_question` keeps the 0.85 threshold because a
+  wrong answer is worse than a confirm.
+- **Tiered redirect** for hard topics. Bot answers "why do people die"
+  with a gentle factual answer; redirects only on genuine parental-
+  judgment topics (Santa-truth, specific medical advice, etc).
+  Avoids training the kids that the wall is useless.
+- **Concerning-disclosure handler.** Haiku flags `concern: true` on
+  utterances suggesting medical emergency / abuse / self-harm. Bot
+  speaks a fixed disclosure line ("That sounds important. Please tell
+  your mum or dad right now — they want to help.") and the audit row
+  is flagged with `concern=1`. New phone Manage tab section ("Recent
+  voice concerns") surfaces last-7-days flagged rows for parental
+  review.
+
+### What landed
+**Backend (3 PRs of work):**
+- Migration v6: 3 nullable columns on `voice_utterances`
+  (`intent_name`, `answer`, `concern`). No CHECK, no new index — defer
+  until there's a slow query.
+- `voiceAuditBody` Zod + `voiceUtterances` repo accept the new fields.
+  `concern` normalised to `boolean | null` at the repo boundary
+  (SQLite returns `0 | 1 | null`; type lying would've bitten the
+  consumer).
+- `GET /api/voice/concerns?since=` returns rows where `concern=1` for
+  the phone review tray.
+
+**Frontend:**
+- `ParsedIntent` grows 3 variants; `isParsedIntent` validates each;
+  parametrised `pokeToAction` round-trip pin across all 11 variants
+  (4 timer from PR #4 + 3 new kid + 4 existing = canonical regression
+  set).
+- `VoiceChip.appliedLabel`: `ask_question` → "answered", `joke_tell` →
+  "😄 joke", `noise_play` → empty + suppress render. Same exhaustiveness
+  add in `ConfirmCard.describe`.
+- `useRecentConcerns` hook + `api.voiceConcerns` method. New
+  `RecentConcernsSection` mounted on phone Manage tab between Voice and
+  KioskShutdown sections.
+
+**Pi voice service:**
+- `catalog.py` — load + integrity check at startup. SystemExit on
+  malformed JSON or missing referenced clip so a typo fails at boot,
+  not at 6pm in the kitchen.
+- `safety.py` — word-boundary regex tripwire (5 unambiguous terms:
+  fuck/shit/cunt/rape/suicide). Test pins explicitly rule out false
+  positives: "grape" not matching "rape", "the dinosaur died out" not
+  matching, "I scraped my knee" not matching.
+- `patterns_kid.py` — matcher patterns for `noise_play` (verb + name +
+  optional "noise|sound"; synonym lookup with prefix fallback) and
+  `joke_tell` (`tell (me)? a joke|riddle` → random catalog pick).
+  Registered in default_matcher alongside v1 and timer patterns.
+- `intent.py` — `VALID_INTENTS` grows 3; `REQUIRED_FIELDS` covers the
+  3 new shapes; `SYSTEM_TEMPLATE` rewritten with kid persona, tiered
+  safety, jailbreak resistance (5 manoeuvres), false-attribution
+  defence, concerning-disclosure detection. `build_system_prompt`
+  accepts `today_dinner`, `today_agenda`, `noise_keys` kwargs.
+- `main.py` — per-intent `AUTO_APPLY_THRESHOLDS` map (MappingProxyType
+  frozen); `_gather_context_for_intent` uses ThreadPoolExecutor on the
+  4 endpoints; `_is_quiet_hours` + `_quiet_safe_play_clip` wrapper
+  mirrors the frontend chore-chime quiet window (20:00–07:00 Brisbane).
+- `executor.py` — three new handlers. `_noise_play` resolves
+  catalog_key OR play_catalog → clip path. `_joke_tell` speaks setup
+  → sleep(1.5) → punchline inline, returns `spoken_inline=True` so
+  main.py doesn't double-speak. `_ask_question` runs answer through
+  `safety.check_answer` (concern path BYPASSES it — distressed child
+  should hear the disclosure, not a deflection), truncates to 40 words.
+- `server_state.post_audit` + `main._audit` carry the three new
+  fields through to the backend.
+- `pyproject.toml` package-data glob: `clips/*.mp3` → `clips/**/*.mp3`,
+  added `catalogs/*.json` so the new bundled files actually ship.
+
+### Catalog content (v1)
+- **30 jokes** hand-curated per §7.4 rubric (no your-mum / appearance /
+  race / disability / scary / sarcasm; AU spelling). Setup+punchline
+  split so the executor can insert the 1.5s pause. Topic tagging
+  deferred to v2.
+- **12 noises**: fart, burp, chicken, cow, pig, dog, cat, lion, sneeze,
+  raspberry, drum, fanfare. Synonym table for kid forms ("doggy" →
+  "dog", "piggy" → "pig", "chook" → "chicken"). Bedtime-adjacent
+  entries (evil-laugh, monster, ghost, alarm) deliberately dropped per
+  the spec-review pass.
+- **The MP3s are zero-byte placeholders** — they satisfy the catalog
+  integrity check so the service boots and tests pass, but they're
+  silent. `clips/noises/SOURCES.md` documents the TODO: real CC0
+  clips need sourcing from Freesound (or recorded ourselves) and
+  re-encoded to mono 16kHz before kids hear this for real. This does
+  NOT block the rest of the implementation.
+
+### Test counts (start → end)
+- Backend: 183 → 196 (+13)
+- Frontend: 73 → 81 (+8)
+- Pi: 313 → 389 (+76)
+- All green, no regressions.
+
+### Deploy + verification
+- Docker container rebuilt — backend at `schemaVersion: 6`.
+  `/api/voice/concerns` returns `[]` (no flagged rows yet).
+- Kiosk reloaded — wall picks up the new `ParsedIntent` types +
+  Recent Concerns section.
+- Pi voice code rsync'd; `homecal-voice` service restarted; catalog
+  integrity check passed at startup; service active with mic_online
+  and fresh heartbeat.
+
+### Acceptance gates outstanding
+- 20-utterance kid smoke test (the user runs it; only they can speak
+  to the wall). Test plan in PR #5 description.
+- Real CC0 noise clips before the kids use it.
+- Eyeball pass on the joke catalog by the user (the §7.4 user-gate).
+
+### Files
+**New:** `backend/src/routes/voiceConcerns.{ts,test.ts}`,
+`frontend/src/components/manage/RecentConcernsSection.{tsx,test.tsx}`,
+`frontend/src/core/hooks/useData.test.ts`,
+`kiosk/voice/homecal_voice/{catalog,safety,patterns_kid}.py` + tests,
+`kiosk/voice/homecal_voice/catalogs/{noises,jokes,safety_terms}.json`,
+`kiosk/voice/homecal_voice/catalogs/jokes.README.md`,
+`kiosk/voice/homecal_voice/clips/noises/{fart,burp,chicken,cow,pig,dog,cat,lion,sneeze,raspberry,drum,fanfare}.mp3` (placeholder)
++ `SOURCES.md`,
+`docs/superpowers/specs/2026-06-06-kid-intents-design.md`,
+`docs/superpowers/plans/2026-06-06-kid-intents.md`.
+
+**Modified:** `backend/src/db/migrate.ts` (v6),
+`backend/src/repos/voiceUtterances.ts`, `backend/src/schemas.ts`,
+`backend/src/routes/voice.ts`, `backend/src/server.ts`,
+`frontend/src/core/model/types.ts`, `frontend/src/core/api/client.ts`,
+`frontend/src/core/hooks/useData.ts`,
+`frontend/src/components/voice/voiceState.{ts,test.ts}`,
+`frontend/src/components/voice/ConfirmCard.tsx`,
+`frontend/src/components/controls/VoiceChip.{tsx,test.ts}`,
+`frontend/src/layouts/PhoneLayout.tsx`,
+`kiosk/voice/homecal_voice/{intent,main,executor,server_state}.py`
+(+ tests), `kiosk/voice/pyproject.toml`.
+
+---
+
 ## 2026-06-06 (evening) — Pi voice deploy + timer intent type-guard fix
 
 Deployed the matcher + timer code to the Pi (it had been sitting on master

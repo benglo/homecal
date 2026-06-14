@@ -152,6 +152,33 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX idx_timers_expires_at ON timers(expires_at);
     `);
   },
+  // v6 — kid intents audit columns. intent_name denormalised from intent_json
+  // (set explicitly by the audit path, not parsed) so review queries skip
+  // JSON parsing. answer is what we spoke to the kid — the primary self-
+  // improvement input. concern flags rows where Haiku detected a medical /
+  // abuse / self-harm disclosure (1=flagged, NULL=normal). No CHECK on
+  // intent_name: Zod is the gatekeeper, and a SQLite CHECK would force a
+  // table rebuild every time we add an intent. No index in v1 (~150 rows).
+  (db) => {
+    db.exec(`
+      ALTER TABLE voice_utterances ADD COLUMN intent_name TEXT;
+      ALTER TABLE voice_utterances ADD COLUMN answer TEXT;
+      ALTER TABLE voice_utterances ADD COLUMN concern INTEGER;
+    `);
+  },
+  // v7 — TTS provenance. Records WHERE the spoken reply came from so a
+  // sustained kokoro_lan → openrouter drift in the audit log is visible.
+  // tts_latency_ms is end-to-end wall-clock from the Pi's perspective
+  // (includes LAN/cloud round-trip), distinct from the sidecar's X-Synth-Ms
+  // which is server-side synth only. No CHECK on tts_provider: Zod is the
+  // gatekeeper, and a SQLite CHECK forces a table rebuild every time we add
+  // a provider.
+  (db) => {
+    db.exec(`
+      ALTER TABLE voice_utterances ADD COLUMN tts_provider TEXT;
+      ALTER TABLE voice_utterances ADD COLUMN tts_latency_ms INTEGER;
+    `);
+  },
 ];
 
 /** Seed categories — idempotent, Okabe–Ito palette from the design system. */

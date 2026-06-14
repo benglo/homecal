@@ -5,6 +5,7 @@ branch (auto-apply, silent low-conf, mid-conf confirm yes/no/timeout/edit,
 STT exception) is exercised here against mock collaborators.
 """
 
+import requests as _requests
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -24,7 +25,11 @@ def _make_deps(
     extract_intent=None,
     execute=None,
     speak=None,
+    speak_lan=None,
+    speak_cloud=None,
+    play_bytes=None,
     feed_results=(False, False, True),
+    cfg=None,
 ):
     mic_frames = iter([_speech()] * 1000)
     wake = MagicMock()
@@ -35,6 +40,22 @@ def _make_deps(
     ep.had_speech = True
     state = MagicMock()
     audit = MagicMock()
+    # Resolve speak_cloud: explicit speak_cloud wins, then speak (backward compat),
+    # then a fresh mock.  speak_lan defaults to raising ConnectionError so all
+    # existing tests skip LAN and fall straight through to cloud.
+    _speak_cloud = speak_cloud or speak or MagicMock()
+    _speak_lan = speak_lan or MagicMock(
+        side_effect=_requests.exceptions.ConnectionError("no sidecar in tests")
+    )
+    _play_bytes = play_bytes or MagicMock()
+    # cfg mock: tts_backend="lan" + daily_request_cap=200 so existing tests keep
+    # their current behaviour (LAN path tried, falls back to cloud via ConnectionError).
+    if cfg is None:
+        cfg_mock = MagicMock()
+        cfg_mock.tts_backend = "lan"
+        cfg_mock.daily_request_cap = 200
+    else:
+        cfg_mock = cfg
     deps = OneShotDeps(
         next_frame=lambda: next(mic_frames),
         wake=wake,
@@ -43,7 +64,10 @@ def _make_deps(
         transcribe=transcribe or MagicMock(return_value="default"),
         extract_intent=extract_intent or MagicMock(),
         execute=execute or MagicMock(return_value={"ok": True, "spoken": "ok."}),
-        speak=speak or MagicMock(),
+        # `speak` kept as the same object as `speak_cloud` for backward compat —
+        # tests that do `deps.speak.assert_called_once()` still work because
+        # _speak calls d.speak_cloud, which IS deps.speak.
+        speak=_speak_cloud,
         post_state=state,
         post_audit=audit,
         utterance_id=lambda: "u1",
@@ -51,6 +75,10 @@ def _make_deps(
         mic_off=MagicMock(),
         mic_on=MagicMock(),
         play_clip=MagicMock(),
+        speak_lan=_speak_lan,
+        speak_cloud=_speak_cloud,
+        play_bytes=_play_bytes,
+        cfg=cfg_mock,
     )
     return deps, state, audit
 
@@ -381,6 +409,60 @@ def test_speak_exception_still_calls_mic_on():
     deps.mic_on.assert_called()
 
 
+def test_speak_skipped_when_spoken_text_is_empty():
+    """noise_play matcher hits return spoken="" — the executor played the clip
+    already, no TTS is needed. Previously _speak called d.speak("") which 400s
+    on OpenRouter and pollutes the journal with phantom TTS failures."""
+    intent = IntentResult("noise_play", {"catalog_key": "fart"}, 1.0, "raw")
+    speak = MagicMock()
+    deps, _state, _audit = _make_deps(
+        extract_intent=MagicMock(return_value=intent),
+        execute=MagicMock(return_value={"ok": True, "spoken": ""}),
+        speak=speak,
+    )
+    run_once(deps)
+    speak.assert_not_called()
+    # Mic still untouched — no mic_off/mic_on dance for an empty utterance.
+    deps.mic_off.assert_not_called()
+    deps.mic_on.assert_not_called()
+
+
+def test_speak_skipped_when_spoken_text_is_whitespace():
+    """Defensive: whitespace-only text would also 400 OpenRouter."""
+    intent = IntentResult("dinner_set", {"date": "2026-06-04", "meal": "tacos"}, 0.95, "raw")
+    speak = MagicMock()
+    deps, _state, _audit = _make_deps(
+        extract_intent=MagicMock(return_value=intent),
+        execute=MagicMock(return_value={"ok": True, "spoken": "   \n  "}),
+        speak=speak,
+    )
+    run_once(deps)
+    speak.assert_not_called()
+
+
+def test_tts_returns_false_logs_warning_without_crashing(caplog):
+    """A cloud TTS read-timeout used to look identical to 'wake word broken'
+    from the user's side — they spoke, the action applied silently, no audio
+    came back. The bool return + WARNING is the signal that lets ops grep
+    `journalctl` for swallowed TTS hiccups instead of debugging from scratch."""
+    import logging
+    intent = IntentResult("timer_set", {"duration_sec": 60, "label": "pasta"}, 1.0, "raw")
+    speak = MagicMock(return_value=False)
+    deps, _state, _audit = _make_deps(
+        extract_intent=MagicMock(return_value=intent),
+        execute=MagicMock(return_value={"ok": True, "spoken": "Pasta timer set for 1 minute."}),
+        speak=speak,
+    )
+    with caplog.at_level(logging.WARNING, logger="homecal_voice.main"):
+        run_once(deps)
+    speak.assert_called_once()
+    # Mic recovery still happens — bool failure must not strand the mic closed.
+    deps.mic_off.assert_called()
+    deps.mic_on.assert_called()
+    assert any("TTS produced no audio" in r.message for r in caplog.records), \
+        f"expected WARNING log; got {[r.message for r in caplog.records]}"
+
+
 def test_play_clip_exception_still_calls_mic_on():
     """Same guarantee for the didn't-catch fallback path: if the MP3 player
     chokes, the mic still reopens."""
@@ -637,57 +719,106 @@ def _fresh_matcher_with_v1():
     return m
 
 
-def test_extract_with_matcher_first_returns_matcher_hit_without_calling_llm(monkeypatch):
-    """When the regex matches, the LLM must not be called — that's the whole
-    point of the matcher (saves the OpenRouter round-trip)."""
-    from homecal_voice import main
-    cfg = MagicMock(homecal_api_base="http://api", intent_model="x", openrouter_api_key="k")
-    monkeypatch.setattr(main, "_list_bare", lambda url: [])
-    monkeypatch.setattr("homecal_voice.matcher.default_matcher", _fresh_matcher_with_v1())
-    llm_called = MagicMock()
-    monkeypatch.setattr(main, "call_openrouter", llm_called)
+def test_extract_with_matcher_first_returns_matcher_hit_without_calling_llm():
+    """When the core regex matches (dinner_set), the LLM must not be called —
+    that's the whole point of the matcher (saves the OpenRouter round-trip)."""
+    from unittest.mock import patch, MagicMock
+    import homecal_voice.main as main_mod
+    from homecal_voice.matcher import Matcher
+    from homecal_voice.patterns_v1 import register_v1
 
-    out = main._extract_with_matcher_first(text="tonight's dinner is curry", cfg=cfg)
+    cfg = MagicMock(homecal_api_base="http://api", intent_model="x", openrouter_api_key="k")
+
+    # Stub out HTTP calls: family-members + chores return empty lists.
+    def _get(url, **kw):
+        r = MagicMock()
+        r.json.return_value = []
+        r.raise_for_status = MagicMock()
+        return r
+
+    # Replace staged matchers: empty kid_matcher, isolated core_matcher with v1.
+    empty_kid = Matcher()
+    isolated_core = Matcher()
+    register_v1(isolated_core)
+    llm_called = MagicMock()
+
+    with patch.object(main_mod, "kid_matcher", empty_kid):
+        with patch.object(main_mod, "core_matcher", isolated_core):
+            with patch("homecal_voice.main._requests.get", side_effect=_get):
+                with patch.object(main_mod, "call_openrouter", llm_called):
+                    out = main_mod._extract_with_matcher_first(
+                        text="tonight's dinner is curry", cfg=cfg
+                    )
+
     assert out.intent == "dinner_set"
     assert out.source == "matcher"
     llm_called.assert_not_called()
 
 
-def test_extract_with_matcher_first_falls_through_to_llm(monkeypatch):
+def test_extract_with_matcher_first_falls_through_to_llm():
     """Unrecognised text must reach Haiku unchanged."""
-    from homecal_voice import main
-    cfg = MagicMock(homecal_api_base="http://api", intent_model="x", openrouter_api_key="k")
-    monkeypatch.setattr(main, "_list_bare", lambda url: [])
-    monkeypatch.setattr("homecal_voice.matcher.default_matcher", _fresh_matcher_with_v1())
-    monkeypatch.setattr(main, "call_openrouter",
-                        lambda **_: '{"intent":"unknown","reason":"no_match","confidence":0.0}')
+    from unittest.mock import patch, MagicMock
+    import homecal_voice.main as main_mod
+    from homecal_voice.matcher import Matcher
 
-    out = main._extract_with_matcher_first(text="please play some music", cfg=cfg)
+    cfg = MagicMock(homecal_api_base="http://api", intent_model="x", openrouter_api_key="k")
+
+    def _get(url, **kw):
+        r = MagicMock()
+        r.json.return_value = []
+        r.raise_for_status = MagicMock()
+        return r
+
+    noises_mock = MagicMock()
+    noises_mock.entries = {}
+
+    # Empty staged matchers so everything falls through to Haiku.
+    with patch.object(main_mod, "kid_matcher", Matcher()):
+        with patch.object(main_mod, "core_matcher", Matcher()):
+            with patch("homecal_voice.main._requests.get", side_effect=_get):
+                with patch.object(main_mod, "call_openrouter",
+                                  return_value='{"intent":"unknown","reason":"no_match","confidence":0.0}'):
+                    with patch("homecal_voice.catalog.load_noises", return_value=noises_mock):
+                        out = main_mod._extract_with_matcher_first(
+                            text="please play some music", cfg=cfg
+                        )
+
     assert out.intent == "unknown"
     assert out.source == "llm"
 
 
-def test_extract_with_matcher_first_propagates_backend_fetch_failure(monkeypatch):
+def test_extract_with_matcher_first_propagates_backend_fetch_failure():
     """A 5xx from /api/family-members must propagate out of the matcher path —
     NOT silently fall through to the LLM with empty lists. That's the same
     silent-failure mode the orchestration layer was hardened against; the
     matcher inherits the invariant."""
-    from homecal_voice import main
+    from unittest.mock import patch, MagicMock
+    import homecal_voice.main as main_mod
+    from homecal_voice.matcher import Matcher
+
     cfg = MagicMock(homecal_api_base="http://api", intent_model="x", openrouter_api_key="k")
-    monkeypatch.setattr("homecal_voice.matcher.default_matcher", _fresh_matcher_with_v1())
+
+    # Empty kid_matcher so we reach stage 2 where the HTTP call happens.
     llm = MagicMock()
-    monkeypatch.setattr(main, "call_openrouter", llm)
 
-    def boom(url):
-        raise RuntimeError("backend 503")
-    monkeypatch.setattr(main, "_list_bare", boom)
+    def boom(url, **kw):
+        if "/api/family-members" in url:
+            raise RuntimeError("backend 503")
+        r = MagicMock()
+        r.json.return_value = []
+        r.raise_for_status = MagicMock()
+        return r
 
-    try:
-        main._extract_with_matcher_first(text="anything", cfg=cfg)
-    except RuntimeError as e:
-        assert "503" in str(e)
-    else:
-        assert False, "expected RuntimeError to propagate"
+    with patch.object(main_mod, "kid_matcher", Matcher()):
+        with patch.object(main_mod, "core_matcher", Matcher()):
+            with patch("homecal_voice.main._requests.get", side_effect=boom):
+                with patch.object(main_mod, "call_openrouter", llm):
+                    try:
+                        main_mod._extract_with_matcher_first(text="anything", cfg=cfg)
+                    except RuntimeError as e:
+                        assert "503" in str(e)
+                    else:
+                        assert False, "expected RuntimeError to propagate"
     llm.assert_not_called()
 
 
@@ -706,3 +837,584 @@ def test_mid_confidence_ambiguous_leaves_audit_pending_and_speaks_hint():
     speak.assert_called_once()
     statuses = [c.kwargs["status"] for c in audit.call_args_list]
     assert statuses == ["pending"]
+
+
+# ---------------------------------------------------------------------------
+# Task 12 — per-intent auto-apply confidence threshold map
+# ---------------------------------------------------------------------------
+import math
+from homecal_voice.main import (
+    AUTO_APPLY_THRESHOLDS,
+    AUTO_APPLY_DEFAULT,
+    auto_apply_threshold,
+)
+
+
+def test_default_threshold_is_0_85():
+    assert AUTO_APPLY_DEFAULT == 0.85
+    assert auto_apply_threshold("dinner_set") == 0.85
+    assert auto_apply_threshold("chore_complete") == 0.85
+    assert auto_apply_threshold("query_dinner") == 0.85
+    assert auto_apply_threshold("query_agenda") == 0.85
+    assert auto_apply_threshold("timer_set") == 0.85
+
+
+def test_ask_question_uses_default_0_85():
+    """Wrong-answer-vs-confirm tradeoff: confirm is better than wrong answer."""
+    assert auto_apply_threshold("ask_question") == 0.85
+
+
+def test_noise_play_auto_applies_at_any_confidence():
+    """A confirm-card disrupts the gag. Spec §3.9."""
+    assert auto_apply_threshold("noise_play") == -math.inf
+
+
+def test_joke_tell_auto_applies_at_any_confidence():
+    assert auto_apply_threshold("joke_tell") == -math.inf
+
+
+def test_thresholds_map_only_lists_non_defaults():
+    """Map should only carry intents that override the default — keeps it tight."""
+    assert "ask_question" not in AUTO_APPLY_THRESHOLDS
+    assert "dinner_set" not in AUTO_APPLY_THRESHOLDS
+    assert AUTO_APPLY_THRESHOLDS["noise_play"] == -math.inf
+    assert AUTO_APPLY_THRESHOLDS["joke_tell"] == -math.inf
+
+
+def test_threshold_map_is_frozen():
+    """MappingProxyType prevents runtime tampering via test mocks leaking."""
+    from types import MappingProxyType
+    assert isinstance(AUTO_APPLY_THRESHOLDS, MappingProxyType)
+
+
+def test_unknown_intent_uses_default():
+    """A future intent that doesn't appear in the map should fall back to 0.85."""
+    assert auto_apply_threshold("some_future_intent") == 0.85
+
+
+# ---------------------------------------------------------------------------
+# Task 17 — quiet-hours gate for play_clip
+# ---------------------------------------------------------------------------
+from datetime import datetime, timezone
+from unittest.mock import patch, MagicMock
+from homecal_voice.main import _is_quiet_hours, _quiet_safe_play_clip
+
+
+def test_is_quiet_hours_at_11pm_brisbane_returns_true():
+    # 13:00 UTC = 23:00 Brisbane (UTC+10) → quiet
+    t = datetime(2026, 6, 6, 13, 0, 0, tzinfo=timezone.utc)
+    assert _is_quiet_hours(t) is True
+
+
+def test_is_quiet_hours_at_8pm_brisbane_returns_true():
+    # 10:00 UTC = 20:00 Brisbane → quiet starts inclusive
+    t = datetime(2026, 6, 6, 10, 0, 0, tzinfo=timezone.utc)
+    assert _is_quiet_hours(t) is True
+
+
+def test_is_quiet_hours_at_6am_brisbane_returns_true():
+    # 20:00 UTC = 06:00 next-day Brisbane → still quiet
+    t = datetime(2026, 6, 6, 20, 0, 0, tzinfo=timezone.utc)
+    assert _is_quiet_hours(t) is True
+
+
+def test_is_quiet_hours_at_7am_brisbane_returns_false():
+    # 21:00 UTC = 07:00 Brisbane → quiet ENDS exclusive (hour < 7 is the rule)
+    t = datetime(2026, 6, 6, 21, 0, 0, tzinfo=timezone.utc)
+    assert _is_quiet_hours(t) is False
+
+
+def test_is_quiet_hours_at_noon_brisbane_returns_false():
+    # 02:00 UTC = 12:00 Brisbane → not quiet
+    t = datetime(2026, 6, 6, 2, 0, 0, tzinfo=timezone.utc)
+    assert _is_quiet_hours(t) is False
+
+
+def test_is_quiet_hours_at_7pm_brisbane_returns_false():
+    # 09:00 UTC = 19:00 Brisbane → not yet quiet
+    t = datetime(2026, 6, 6, 9, 0, 0, tzinfo=timezone.utc)
+    assert _is_quiet_hours(t) is False
+
+
+def test_quiet_safe_play_clip_blocks_during_quiet():
+    """Quiet hours → wrapper swallows the call entirely. No clip plays."""
+    play = MagicMock()
+    with patch("homecal_voice.main._is_quiet_hours", return_value=True):
+        _quiet_safe_play_clip(play, "/tmp/x.mp3")
+    play.assert_not_called()
+
+
+def test_quiet_safe_play_clip_allows_during_day():
+    play = MagicMock()
+    with patch("homecal_voice.main._is_quiet_hours", return_value=False):
+        _quiet_safe_play_clip(play, "/tmp/x.mp3")
+    play.assert_called_once_with("/tmp/x.mp3")
+
+
+def test_quiet_safe_play_clip_returns_True_when_played():
+    play = MagicMock()
+    with patch("homecal_voice.main._is_quiet_hours", return_value=False):
+        result = _quiet_safe_play_clip(play, "/tmp/x.mp3")
+    assert result is True
+    play.assert_called_once()
+
+
+def test_quiet_safe_play_clip_returns_False_when_suppressed():
+    play = MagicMock()
+    with patch("homecal_voice.main._is_quiet_hours", return_value=True):
+        result = _quiet_safe_play_clip(play, "/tmp/x.mp3")
+    assert result is False
+    play.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _gather_dinner_and_agenda
+# ---------------------------------------------------------------------------
+
+from homecal_voice.main import _gather_dinner_and_agenda
+
+
+def test_gather_dinner_and_agenda_returns_meal_and_agenda():
+    """Mocks dinners + events GETs; helper composes the prompt-ready dict."""
+    def _get_side_effect(url, **_):
+        r = MagicMock()
+        if "/api/dinners" in url:
+            r.json.return_value = [{"date": "2026-06-07", "meal": "Tacos"}]
+        elif "/api/events" in url:
+            r.json.return_value = [
+                {"title": "Swimming", "start": "2026-06-07T07:00:00Z"},
+                {"title": "Birthday party", "start": "2026-06-07T05:00:00Z"},
+            ]
+        else:
+            raise AssertionError(f"unexpected fetch: {url}")
+        r.raise_for_status = MagicMock()
+        return r
+
+    with patch("homecal_voice.main._requests.get", side_effect=_get_side_effect):
+        ctx = _gather_dinner_and_agenda(api_base="http://x", today="2026-06-07")
+
+    assert ctx["today_dinner"] == "Tacos"
+    assert any("Swimming" in line for line in ctx["today_agenda"])
+
+
+def test_gather_dinner_and_agenda_no_dinner_today_returns_none_string():
+    def _get_side_effect(url, **_):
+        r = MagicMock()
+        r.json.return_value = []
+        r.raise_for_status = MagicMock()
+        return r
+    with patch("homecal_voice.main._requests.get", side_effect=_get_side_effect):
+        ctx = _gather_dinner_and_agenda(api_base="http://x", today="2026-06-07")
+    assert ctx["today_dinner"] == "(none)"
+    assert ctx["today_agenda"] == []
+
+
+def test_gather_dinner_and_agenda_propagates_http_error_on_events():
+    """An outage on /api/events must NOT silently fall back to [] — same
+    reasoning as _list_bare: an empty agenda vs a real outage need distinct
+    audit signals."""
+    def _get_side_effect(url, **_):
+        if "/api/events" in url:
+            raise RuntimeError("backend unreachable")
+        r = MagicMock()
+        r.json.return_value = []
+        r.raise_for_status = MagicMock()
+        return r
+
+    import pytest
+    with patch("homecal_voice.main._requests.get", side_effect=_get_side_effect):
+        with pytest.raises(Exception):
+            _gather_dinner_and_agenda(api_base="http://x", today="2026-06-07")
+
+
+# ---------------------------------------------------------------------------
+# Three-stage matcher routing
+# ---------------------------------------------------------------------------
+
+def test_matcher_first_routing_kid_hit_does_not_fetch_anything():
+    """A noise_play matcher hit must not hit the backend at all —
+    /api/family-members, /api/chores, /api/dinners, /api/events all
+    untouched. Backend outage doesn't kill noise."""
+    from unittest.mock import patch, MagicMock
+    import homecal_voice.main as main_mod
+    from homecal_voice.matcher import Matcher
+    from homecal_voice.patterns_kid import register_kid
+    from homecal_voice.main import _extract_with_matcher_first
+
+    cfg = MagicMock()
+    cfg.homecal_api_base = "http://api"
+    cfg.intent_model = "claude-haiku-4.5"
+    cfg.openrouter_api_key = "k"
+
+    # Build an isolated kid_matcher with patterns registered.
+    isolated_kid = Matcher()
+    register_kid(isolated_kid)
+
+    with patch.object(main_mod, "kid_matcher", isolated_kid):
+        with patch("homecal_voice.main._requests.get") as get_call:
+            result = _extract_with_matcher_first(text="make a chicken noise", cfg=cfg)
+
+    assert result.intent == "noise_play"
+    assert result.source == "matcher"
+    get_call.assert_not_called()
+
+
+def test_matcher_first_routing_core_hit_fetches_only_family_and_chores():
+    """A query_dinner matcher hit fetches family + chores (needed for the
+    matcher) but NOT dinners + events (those are LLM-only)."""
+    from unittest.mock import patch, MagicMock
+    import homecal_voice.main as main_mod
+    from homecal_voice.matcher import Matcher
+    from homecal_voice.patterns_v1 import register_v1
+    from homecal_voice.main import _extract_with_matcher_first
+
+    cfg = MagicMock()
+    cfg.homecal_api_base = "http://api"
+    cfg.intent_model = "claude-haiku-4.5"
+    cfg.openrouter_api_key = "k"
+
+    # Empty kid_matcher so stage 1 always misses; isolated core_matcher with v1.
+    isolated_core = Matcher()
+    register_v1(isolated_core)
+
+    def _get(url, **kw):
+        r = MagicMock()
+        if "/api/family-members" in url:
+            r.json.return_value = [{"id": "fm1", "name": "Imogen"}]
+        elif "/api/chores" in url:
+            r.json.return_value = []
+        else:
+            raise AssertionError(f"unexpected fetch on core-matcher path: {url}")
+        r.raise_for_status = MagicMock()
+        return r
+
+    with patch.object(main_mod, "kid_matcher", Matcher()):
+        with patch.object(main_mod, "core_matcher", isolated_core):
+            with patch("homecal_voice.main._requests.get", side_effect=_get):
+                result = _extract_with_matcher_first(text="what's for dinner tonight", cfg=cfg)
+    assert result.intent == "query_dinner"
+
+
+def test_matcher_first_routing_llm_path_fetches_everything():
+    """An ask_question (matcher miss on both stages) goes through the LLM
+    and fetches family+chores AND dinners+events. The pre-existing tests
+    cover the Haiku call; this test just confirms the fetch happens."""
+    from unittest.mock import patch, MagicMock
+    import homecal_voice.main as main_mod
+    from homecal_voice.matcher import Matcher
+    from homecal_voice.main import _extract_with_matcher_first
+
+    cfg = MagicMock()
+    cfg.homecal_api_base = "http://api"
+    cfg.intent_model = "claude-haiku-4.5"
+    cfg.openrouter_api_key = "k"
+
+    calls = []
+
+    def _get(url, **kw):
+        calls.append(url)
+        r = MagicMock()
+        r.json.return_value = []
+        r.raise_for_status = MagicMock()
+        return r
+
+    # Empty both matchers so everything falls through to Haiku.
+    with patch.object(main_mod, "kid_matcher", Matcher()):
+        with patch.object(main_mod, "core_matcher", Matcher()):
+            with patch("homecal_voice.main._requests.get", side_effect=_get):
+                with patch("homecal_voice.main.call_openrouter", return_value='{"intent":"unknown","reason":"x","confidence":0.5}'):
+                    _extract_with_matcher_first(text="why is the sky so blue today", cfg=cfg)
+
+    fetched = " ".join(calls)
+    assert "/api/family-members" in fetched
+    assert "/api/chores" in fetched
+    assert "/api/dinners" in fetched
+    assert "/api/events" in fetched
+
+
+# ---------------------------------------------------------------------------
+# Fix E — Group 2: audit row shape on ok=False
+# ---------------------------------------------------------------------------
+
+
+def test_audit_on_ok_false_populates_intent_name_but_not_answer_concern():
+    """When the executor soft-fails, the audit row must record intent_name
+    (so 'which kind of intent failed' is queryable) but leave answer and
+    concern as None — those represent the spoken response and concern flag,
+    which don't exist on a failure."""
+    from unittest.mock import MagicMock
+    from homecal_voice.server_state import post_audit
+
+    with patch("homecal_voice.server_state.requests") as r:
+        post_audit(
+            base="http://x", token="t", id="u1",
+            transcript="make a dolphin noise", status="failed",
+            intent_json='{"intent":"noise_play"}', confidence=0.9,
+            duration_ms=200, error="unknown_catalog_key:dolphin",
+            source="llm",
+            intent_name="noise_play",   # explicitly set on failure
+            answer=None,                # NOT populated — kid heard nothing
+            concern=None,               # NOT applicable to noise_play
+        )
+    body = r.post.call_args.kwargs.get("json")
+    assert body["intent_name"] == "noise_play"
+    assert body["status"] == "failed"
+    assert "answer" not in body  # post_audit omits None kwargs
+    assert "concern" not in body
+
+
+def test_audit_on_quiet_hours_suppression_records_truth():
+    """The quiet-hours soft-failure must be greppable in the audit log so a
+    parent reviewing 'why did the chicken not play at 11pm' can find it.
+    intent_name=noise_play, status=failed, error=quiet_hours_suppressed."""
+    from unittest.mock import MagicMock
+    from homecal_voice.server_state import post_audit
+
+    with patch("homecal_voice.server_state.requests") as r:
+        post_audit(
+            base="http://x", token="t", id="u2",
+            transcript="make a chicken noise", status="failed",
+            intent_json='{"intent":"noise_play"}', confidence=1.0,
+            duration_ms=100, error="quiet_hours_suppressed",
+            source="matcher",
+            intent_name="noise_play",
+            answer=None, concern=None,
+        )
+    body = r.post.call_args.kwargs.get("json")
+    assert body["error"] == "quiet_hours_suppressed"
+    assert body["intent_name"] == "noise_play"
+
+
+# ---------------------------------------------------------------------------
+# Fix E — Group 3d: _gather_dinner_and_agenda partial failure
+# ---------------------------------------------------------------------------
+
+
+def test_gather_dinner_and_agenda_propagates_partial_failure_on_dinners():
+    """One endpoint failing must propagate — silent fall-back to (none)
+    makes a real outage look like 'no dinner today'."""
+    from unittest.mock import MagicMock
+    from homecal_voice.main import _gather_dinner_and_agenda
+    import pytest
+
+    def _get(url, **kw):
+        if "/api/dinners" in url:
+            r = MagicMock()
+            r.raise_for_status.side_effect = RuntimeError("dinners 500")
+            return r
+        r = MagicMock()
+        r.json.return_value = []
+        r.raise_for_status = MagicMock()
+        return r
+
+    with patch("homecal_voice.main._requests.get", side_effect=_get):
+        with pytest.raises(RuntimeError, match="dinners 500"):
+            _gather_dinner_and_agenda(api_base="http://x", today="2026-06-07")
+
+
+def test_gather_dinner_and_agenda_propagates_partial_failure_on_events():
+    from unittest.mock import MagicMock
+    from homecal_voice.main import _gather_dinner_and_agenda
+    import pytest
+
+    def _get(url, **kw):
+        if "/api/events" in url:
+            r = MagicMock()
+            r.raise_for_status.side_effect = RuntimeError("events 500")
+            return r
+        r = MagicMock()
+        r.json.return_value = []
+        r.raise_for_status = MagicMock()
+        return r
+
+    with patch("homecal_voice.main._requests.get", side_effect=_get):
+        with pytest.raises(RuntimeError, match="events 500"):
+            _gather_dinner_and_agenda(api_base="http://x", today="2026-06-07")
+
+
+# ---------------------------------------------------------------------------
+# Task 20 — LAN sidecar health cache + TTS daily cap
+# ---------------------------------------------------------------------------
+
+
+def test_lan_state_starts_reachable_with_stale_cache():
+    """Cold start: cache is stale → next call treats sidecar as reachable
+    until proven otherwise."""
+    from homecal_voice.main import _lan_state, mark_lan_attempt, lan_reachable
+    _lan_state["checked_at"] = 0.0
+    _lan_state["reachable"] = False  # previous run was bad
+    # Cold cache: even with stored False, an expired TTL means try-again
+    assert lan_reachable() is True
+
+
+def test_lan_state_stays_unreachable_for_ttl_after_failure(monkeypatch):
+    from homecal_voice.main import _lan_state, mark_lan_attempt, lan_reachable
+    import homecal_voice.main as main_mod
+    fake_now = [1000.0]
+    monkeypatch.setattr(main_mod.time, "time", lambda: fake_now[0])
+    mark_lan_attempt(success=False)
+    assert lan_reachable() is False
+    # Within 30s TTL — still unreachable, no probe
+    fake_now[0] += 20
+    assert lan_reachable() is False
+    # After 30s — try again
+    fake_now[0] += 15
+    assert lan_reachable() is True
+
+
+def test_under_tts_cap_resets_per_day(monkeypatch):
+    from homecal_voice.main import _under_tts_cap, _tts_cap_state
+    _tts_cap_state.update(day="", count=0)
+    # Today's date
+    import homecal_voice.main as main_mod
+    monkeypatch.setattr(main_mod, "today_brisbane", lambda: "2026-06-08")
+
+    class FakeCfg:
+        daily_request_cap = 3
+
+    for _ in range(3):
+        assert _under_tts_cap(FakeCfg()) is True
+    assert _under_tts_cap(FakeCfg()) is False  # 4th call over cap
+
+    # Day rolls over → counter resets
+    monkeypatch.setattr(main_mod, "today_brisbane", lambda: "2026-06-09")
+    assert _under_tts_cap(FakeCfg()) is True
+
+
+# ---------------------------------------------------------------------------
+# Task 21 — _speak() fallback ladder: LAN → cloud (capped) → clip → silent
+# ---------------------------------------------------------------------------
+
+
+def test_speak_lan_happy_path(monkeypatch):
+    """LAN reachable + sidecar returns audio → played, audit tagged kokoro_lan."""
+    from homecal_voice.main import run_once, _lan_state, _tts_cap_state
+    intent = IntentResult("dinner_set", {"date": "2026-06-04", "meal": "tacos"}, 0.95, "raw")
+    speak_lan = MagicMock(return_value=(b"RIFFfake", 234))   # (audio, latency_ms)
+    speak_cloud = MagicMock()
+    play_bytes = MagicMock()
+    deps, _state, audit = _make_deps(
+        extract_intent=MagicMock(return_value=intent),
+        execute=MagicMock(return_value={"ok": True, "spoken": "Saved tacos for today."}),
+        speak_lan=speak_lan, speak_cloud=speak_cloud, play_bytes=play_bytes,
+    )
+    _lan_state["reachable"] = True
+    _lan_state["checked_at"] = 9e9    # cache fresh
+    _tts_cap_state.update(day="", count=0)
+    run_once(deps)
+    speak_lan.assert_called_once()
+    speak_cloud.assert_not_called()
+    assert audit.call_args.kwargs["tts_provider"] == "kokoro_lan"
+    assert audit.call_args.kwargs["tts_latency_ms"] >= 0
+
+
+def test_speak_falls_back_to_cloud_when_lan_fails(monkeypatch):
+    """LAN raises ConnectionError → falls back to cloud; audit tagged openrouter."""
+    from homecal_voice.main import _lan_state, _tts_cap_state
+    intent = IntentResult("dinner_set", {"date": "2026-06-04", "meal": "tacos"}, 0.95, "raw")
+    speak_lan = MagicMock(side_effect=_requests.exceptions.ConnectionError("nope"))
+    speak_cloud = MagicMock(return_value=True)
+    deps, _state, audit = _make_deps(
+        extract_intent=MagicMock(return_value=intent),
+        execute=MagicMock(return_value={"ok": True, "spoken": "Saved."}),
+        speak_lan=speak_lan, speak_cloud=speak_cloud,
+    )
+    _lan_state["checked_at"] = 0   # cold cache → tries LAN, fails, falls to cloud
+    _tts_cap_state.update(day="", count=0)
+    run_once(deps)
+    speak_lan.assert_called_once()
+    speak_cloud.assert_called_once()
+    assert audit.call_args.kwargs["tts_provider"] == "openrouter"
+
+
+def test_speak_falls_back_to_clip_when_lan_and_cloud_both_fail(monkeypatch):
+    """Both LAN and cloud fail → clip fallback; audit tagged clip."""
+    from homecal_voice.main import _lan_state, _tts_cap_state
+    intent = IntentResult("dinner_set", {"date": "2026-06-04", "meal": "tacos"}, 0.95, "raw")
+    speak_lan = MagicMock(side_effect=_requests.exceptions.ConnectionError("nope"))
+    speak_cloud = MagicMock(return_value=False)   # cloud returned False
+    deps, _state, audit = _make_deps(
+        extract_intent=MagicMock(return_value=intent),
+        execute=MagicMock(return_value={"ok": True, "spoken": "Saved."}),
+        speak_lan=speak_lan, speak_cloud=speak_cloud,
+    )
+    _lan_state["checked_at"] = 0
+    _tts_cap_state.update(day="", count=0)
+    run_once(deps)
+    deps.play_clip.assert_called_once()  # didnt_catch.mp3
+    assert audit.call_args.kwargs["tts_provider"] == "clip"
+
+
+def test_speak_skips_cloud_when_tts_cap_hit(monkeypatch):
+    """LAN fails + daily TTS cap exhausted → clip fallback, cloud never called."""
+    import homecal_voice.main as main_mod
+    from homecal_voice.main import _lan_state, _tts_cap_state
+    monkeypatch.setattr(main_mod, "today_brisbane", lambda: "2026-06-08")
+    intent = IntentResult("dinner_set", {"date": "2026-06-04", "meal": "tacos"}, 0.95, "raw")
+    speak_lan = MagicMock(side_effect=_requests.exceptions.ConnectionError("nope"))
+    speak_cloud = MagicMock()
+    deps, _state, audit = _make_deps(
+        extract_intent=MagicMock(return_value=intent),
+        execute=MagicMock(return_value={"ok": True, "spoken": "Saved."}),
+        speak_lan=speak_lan, speak_cloud=speak_cloud,
+    )
+    _lan_state["checked_at"] = 0
+    # Exhaust cap before this call (cap is 200 per mock cfg, so set count high)
+    _tts_cap_state.update(day="2026-06-08", count=999_999)
+    run_once(deps)
+    speak_cloud.assert_not_called()
+    deps.play_clip.assert_called_once()
+    assert audit.call_args.kwargs["tts_provider"] == "clip"
+
+
+# ---------------------------------------------------------------------------
+# Bug 1 fix — TTS_BACKEND=cloud must bypass LAN entirely
+# ---------------------------------------------------------------------------
+
+
+def test_speak_skips_lan_when_backend_is_cloud(monkeypatch):
+    """TTS_BACKEND=cloud must bypass the LAN attempt entirely so deploys
+    can ship with cloud-only behaviour while the sidecar is validated."""
+    from homecal_voice.main import _lan_state, _tts_cap_state
+    intent = IntentResult("dinner_set", {"date": "2026-06-04", "meal": "tacos"}, 0.95, "raw")
+    speak_lan = MagicMock(return_value=(b"RIFFfake", 234))
+    speak_cloud = MagicMock(return_value=True)
+    cfg_cloud_only = MagicMock()
+    cfg_cloud_only.tts_backend = "cloud"
+    cfg_cloud_only.daily_request_cap = 200
+    cfg_cloud_only.tts_voice = "af_bella"
+    cfg_cloud_only.tts_server_url = "http://test:8789"
+    cfg_cloud_only.pi_api_token = "t"
+    cfg_cloud_only.tts_server_timeout_s = 3
+    deps, _state, audit = _make_deps(
+        extract_intent=MagicMock(return_value=intent),
+        execute=MagicMock(return_value={"ok": True, "spoken": "Saved."}),
+        speak_lan=speak_lan, speak_cloud=speak_cloud,
+        cfg=cfg_cloud_only,
+    )
+    _lan_state["checked_at"] = 9e9   # cache fresh + reachable=True
+    _lan_state["reachable"] = True
+    _tts_cap_state.update(day="", count=0)
+    run_once(deps)
+    speak_lan.assert_not_called()    # LAN skipped because backend=cloud
+    speak_cloud.assert_called_once()
+    assert audit.call_args.kwargs["tts_provider"] == "openrouter"
+
+
+# ---------------------------------------------------------------------------
+# Bug 2 fix — catalog hits should audit tts_provider='kokoro_lan' in main
+# ---------------------------------------------------------------------------
+
+
+def test_catalog_hit_audits_kokoro_lan(monkeypatch):
+    """noise_play catalog hit should write tts_provider='kokoro_lan' to the
+    audit row even though _speak is never called (executor played the
+    pre-rendered WAV directly)."""
+    intent = IntentResult("noise_play", {"catalog_key": "fart"}, 1.0, "raw")
+    execute = MagicMock(return_value={"ok": True, "spoken": "", "tts_provider": "kokoro_lan"})
+    deps, _state, audit = _make_deps(
+        extract_intent=MagicMock(return_value=intent),
+        execute=execute,
+    )
+    run_once(deps)
+    assert audit.call_args.kwargs["tts_provider"] == "kokoro_lan"

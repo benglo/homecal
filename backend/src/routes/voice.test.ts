@@ -172,3 +172,29 @@ test('PUT /api/voice/mute: null clears mute', async () => {
   assert.equal(body.mute_until, null);
   assert.equal(body.muted, false);
 });
+
+test('GET /api/voice/status returns last_tts_provider=null when no utterances', async () => {
+  const r = await app.inject({ method: 'GET', url: '/api/voice/status' });
+  assert.equal(r.statusCode, 200);
+  const body = r.json() as { last_tts_provider: string | null };
+  assert.equal(body.last_tts_provider, null);
+});
+
+test('GET /api/voice/status includes last_tts_provider from most recent utterance', async () => {
+  const { insertUtterance } = await import('../repos/voiceUtterances');
+  insertUtterance({
+    id: 'u1',
+    transcript: 'x',
+    status: 'applied',
+    intentJson: null,
+    confidence: null,
+    durationMs: null,
+    error: null,
+    source: null,
+    ttsProvider: 'kokoro_lan',
+  });
+  const r = await app.inject({ method: 'GET', url: '/api/voice/status' });
+  assert.equal(r.statusCode, 200);
+  const body = r.json() as { last_tts_provider: string | null };
+  assert.equal(body.last_tts_provider, 'kokoro_lan');
+});

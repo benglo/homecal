@@ -5,7 +5,7 @@ import { ZONE } from '../../core/util/time';
 
 describe('labelFor', () => {
   it('idle invites the wake word', () => {
-    expect(labelFor({ kind: 'idle' })).toBe('say "hey mycroft"');
+    expect(labelFor({ kind: 'idle' })).toBe('say "hey luna"');
   });
 
   it('listening and thinking show progress', () => {
@@ -91,5 +91,83 @@ describe('muteLabel', () => {
   it('Forever preset (≥30 days) collapses to plain "muted"', () => {
     const until = now.plus({ days: 365 }).toUTC().toISO();
     expect(muteLabel(until, now)).toBe('muted');
+  });
+});
+
+describe('labelFor — applied with kid intents', () => {
+  it('ask_question shows "answered"', () => {
+    const label = labelFor({
+      kind: 'applied',
+      utterance_id: 'u1',
+      intent: { intent: 'ask_question', answer: 'because!', confidence: 0.95 },
+    });
+    expect(label).toBe('answered');
+  });
+
+  it('joke_tell shows "😄 joke"', () => {
+    const label = labelFor({
+      kind: 'applied',
+      utterance_id: 'u1',
+      intent: { intent: 'joke_tell', setup: 'why?', punchline: 'because!', confidence: 1.0 },
+    });
+    expect(label).toBe('😄 joke');
+  });
+
+  it('noise_play (catalog hit) returns empty string — no chip flash', () => {
+    const label = labelFor({
+      kind: 'applied',
+      utterance_id: 'u1',
+      intent: { intent: 'noise_play', catalog_key: 'chicken', confidence: 1.0 },
+    });
+    expect(label).toBe('');
+  });
+
+  it('noise_play (Haiku fallback) also returns empty string', () => {
+    const label = labelFor({
+      kind: 'applied',
+      utterance_id: 'u1',
+      intent: { intent: 'noise_play', play_catalog: 'chicken', fallback_text: 'try a chicken', confidence: 0.9 },
+    });
+    expect(label).toBe('');
+  });
+});
+
+import { ttsDotColor } from './VoiceChip';
+
+describe('ttsDotColor', () => {
+  it('green when mic online and last_tts_provider is local', () => {
+    expect(ttsDotColor({ mic_online: true, muted: false, last_tts_provider: 'kokoro_lan' } as any))
+      .toBe('var(--ok)');
+  });
+
+  it('green when mic online and last_tts_provider is cloud (still working)', () => {
+    expect(ttsDotColor({ mic_online: true, muted: false, last_tts_provider: 'openrouter' } as any))
+      .toBe('var(--ok)');
+  });
+
+  it('amber when last_tts_provider is clip (degraded)', () => {
+    expect(ttsDotColor({ mic_online: true, muted: false, last_tts_provider: 'clip' } as any))
+      .toBe('var(--stale)');
+  });
+
+  it('amber when last_tts_provider is none (degraded)', () => {
+    expect(ttsDotColor({ mic_online: true, muted: false, last_tts_provider: 'none' } as any))
+      .toBe('var(--stale)');
+  });
+
+  it('grey when muted', () => {
+    expect(ttsDotColor({ mic_online: true, muted: true, last_tts_provider: 'kokoro_lan' } as any))
+      .toBe('var(--text-muted)');
+  });
+
+  it('grey when mic offline', () => {
+    expect(ttsDotColor({ mic_online: false, muted: false, last_tts_provider: 'kokoro_lan' } as any))
+      .toBe('var(--text-muted)');
+  });
+
+  it('green when no history yet (last_tts_provider null) and mic online', () => {
+    // Optimistic — no failures recorded means assume things are fine.
+    expect(ttsDotColor({ mic_online: true, muted: false, last_tts_provider: null } as any))
+      .toBe('var(--ok)');
   });
 });

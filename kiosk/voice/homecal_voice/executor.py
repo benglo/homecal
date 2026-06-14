@@ -8,13 +8,15 @@ user, did not change state".
 """
 
 from datetime import date as Date, datetime, timezone
-from typing import Literal, Optional
+from typing import Callable, Literal, Optional
 import logging
 
 import requests
 
 from homecal_voice.intent import IntentResult
-from homecal_voice.timezone import today_brisbane
+from homecal_voice.timezone import today_brisbane, is_quiet_hours
+from homecal_voice import catalog as kid_catalog
+from homecal_voice import safety
 
 # Tags for _resolve_target's error channel. Typed so a typo at a call site
 # becomes a type error instead of an opaque "didn't catch that" branch.
@@ -24,6 +26,7 @@ log = logging.getLogger("homecal_voice.executor")
 
 API_TIMEOUT_SEC = 10
 AGENDA_MAX_ITEMS = 3
+_MAX_ANSWER_WORDS = 40
 
 
 def _canon_meal(s: str) -> str:
@@ -94,6 +97,13 @@ def _remaining_seconds(expires_at_iso, now: datetime) -> int:
     return max(0, int(delta))
 
 
+def _truncate_words(text: str, max_words: int) -> str:
+    words = text.split()
+    if len(words) <= max_words:
+        return text
+    return " ".join(words[:max_words])
+
+
 def _unwrap(json_body):
     """Accept bare arrays AND `{data:[...]}` envelopes — backend currently
     returns the former but a future envelope migration shouldn't break us."""
@@ -105,9 +115,24 @@ def _unwrap(json_body):
 
 
 class Executor:
-    def __init__(self, *, base: str, token: str):
+    def __init__(
+        self,
+        *,
+        base: str,
+        token: str,
+        play_clip: Optional[Callable[[str], None]] = None,
+        speak: Optional[Callable[[str], None]] = None,
+        sleep: Optional[Callable[[float], None]] = None,
+        play_bytes: Optional[Callable[[bytes, str], None]] = None,
+        fetch_catalog: Optional[Callable[[str, str], "bytes | None"]] = None,
+    ):
         self.base = base.rstrip("/")
         self.headers = {"X-Pi-Token": token, "Content-Type": "application/json"}
+        self._play_clip = play_clip
+        self._speak = speak
+        self._sleep = sleep
+        self._play_bytes = play_bytes
+        self._fetch_catalog = fetch_catalog
         self._handlers = {
             "dinner_set": self._dinner_set,
             "chore_complete": self._chore_complete,
@@ -117,6 +142,9 @@ class Executor:
             "timer_query": self._timer_query,
             "timer_cancel": self._timer_cancel,
             "timer_extend": self._timer_extend,
+            "noise_play": self._noise_play,
+            "joke_tell": self._joke_tell,
+            "ask_question": self._ask_question,
         }
 
     def apply(self, r: IntentResult) -> dict:
@@ -315,6 +343,169 @@ class Executor:
         return {
             "ok": True,
             "spoken": f"Added {humanise_duration(add_sec)} — {prefix.lower()} has {humanise_duration(remaining)} left.",
+        }
+
+    def _noise_play(self, f: dict) -> dict:
+        """Play a noise from the bundled catalog.
+
+        Two valid shapes:
+          - matcher hit:    {"catalog_key": "<name>"} → play, no spoken response
+          - Haiku fallback: {"play_catalog": "<name>", "fallback_text": "..."} →
+                            play, return fallback_text for main.py to TTS
+
+        Soft failures (returns ok=False rather than raising):
+          - no play_clip dep wired (older runtime configuration)
+          - key not in catalog
+          - both keys missing from payload
+
+        New path (when fetch_catalog + play_bytes are both wired):
+          Pulls pre-rendered WAV bytes from the sidecar catalog endpoint and
+          plays them directly, bypassing the on-disk clip file. Falls through
+          to the existing clip-file path on a catalog miss (None return).
+        """
+        key = f.get("catalog_key") or f.get("play_catalog")
+        if not key:
+            return {"ok": False, "spoken": "", "error": "noise_play_missing_key"}
+
+        # 1. New path: pull pre-rendered WAV from sidecar catalog endpoint.
+        if self._fetch_catalog is not None and self._play_bytes is not None:
+            try:
+                audio = self._fetch_catalog("noise", key)
+            except Exception as e:
+                log.warning("catalog fetch failed (%s); falling back to clip path", e)
+                audio = None
+            if audio is not None:
+                # Quiet-hours gate: same window as the clip path.
+                if is_quiet_hours():
+                    log.info("quiet hours: suppressed catalog noise_play(%s)", key)
+                    return {
+                        "ok": False,
+                        "spoken": "",
+                        "error": "quiet_hours_suppressed",
+                        "quiet_suppressed": True,
+                    }
+                try:
+                    self._play_bytes(audio, format="wav")
+                except Exception as e:
+                    return {"ok": False, "spoken": "", "error": f"clip_play:{e}"}
+                return {"ok": True, "spoken": "", "tts_provider": "kokoro_lan"}
+
+        # 2. Existing fallback path: on-disk clip file via play_clip.
+        if self._play_clip is None:
+            return {"ok": False, "spoken": "", "error": "noise_play_no_player"}
+
+        noises = kid_catalog.load_noises()
+        filename = noises.entries.get(key)
+        if not filename:
+            return {"ok": False, "spoken": "", "error": f"unknown_catalog_key:{key}"}
+
+        clip_path = kid_catalog._CLIPS_DIR / filename
+        try:
+            played = self._play_clip(str(clip_path))
+        except Exception as e:
+            # If clip playback raises (mpg123 crash, ALSA busy, BT dropout), the
+            # outer _try_execute would catch it and speak "Sorry, I couldn't reach
+            # the calendar" — a lie. Audit truthfully and stay quiet instead.
+            return {"ok": False, "spoken": "", "error": f"clip_play:{e}"}
+
+        # The play_clip callable may return None (older callable signature) or a
+        # bool (quiet-hours wrapper). Treat None as True for backwards compat;
+        # only explicit False means the wrapper actively suppressed playback.
+        if played is False:
+            # Quiet-hours suppressed the clip. The kid heard nothing — be honest
+            # in the audit so a parent reviewing logs sees what really happened,
+            # and don't flash the green ✓ on the wall by returning ok=True.
+            return {
+                "ok": False,
+                "spoken": "",
+                "error": "quiet_hours_suppressed",
+                "quiet_suppressed": True,
+            }
+
+        # Catalog hit returns "" (no speech); Haiku-fallback returns fallback_text.
+        return {"ok": True, "spoken": f.get("fallback_text", "")}
+
+    def _joke_tell(self, f: dict) -> dict:
+        """Speak setup → 1.5s pause → punchline. The pause is the joke.
+
+        Returns spoken_inline=True so main.py doesn't TTS `spoken` again.
+        `spoken` carries the combined string for the audit log only — it lets
+        voice_utterances.answer capture the full joke without re-speaking it.
+        """
+        missing = [k for k in ("setup", "punchline") if not f.get(k)]
+        if missing:
+            return {"ok": False, "spoken": "", "error": f"missing_fields:{','.join(missing)}"}
+
+        joke_id = f.get("joke_id")
+        if joke_id and self._fetch_catalog and self._play_bytes:
+            try:
+                audio = self._fetch_catalog("joke", joke_id)
+            except Exception as e:
+                log.warning("joke catalog fetch failed (%s); falling back to TTS", e)
+                audio = None
+            if audio is not None:
+                try:
+                    self._play_bytes(audio, format="wav")
+                except Exception as e:
+                    return {"ok": False, "spoken": "", "error": f"joke_play:{e}",
+                            "spoken_inline": True}
+                return {"ok": True, "spoken_inline": True,
+                        "spoken": f"{f.get('setup','')} ... {f.get('punchline','')}",
+                        "tts_provider": "kokoro_lan"}
+
+        if self._speak is None or self._sleep is None:
+            return {"ok": False, "spoken": "", "error": "joke_tell_no_speaker"}
+
+        setup = f["setup"]
+        punchline = f["punchline"]
+        # Each half wrapped independently so a partial play is recorded honestly
+        # in the audit. Without this, a setup-then-TTS-exception case would land
+        # in the outer error path and speak "Sorry, I couldn't reach the calendar"
+        # AFTER the kid already heard the setup — a confusing UX lie.
+        try:
+            self._speak(setup)
+        except Exception as e:
+            return {"ok": False, "spoken": "", "error": f"joke_setup_tts:{e}", "spoken_inline": True}
+        self._sleep(1.5)
+        try:
+            self._speak(punchline)
+        except Exception as e:
+            # Setup played but punchline failed. Record the partial answer so the
+            # audit row reflects what the kid actually heard.
+            return {"ok": False, "spoken": setup, "error": f"joke_punchline_tts:{e}", "spoken_inline": True}
+        return {"ok": True, "spoken_inline": True, "spoken": f"{setup} ... {punchline}"}
+
+    def _ask_question(self, f: dict) -> dict:
+        """Answer a kid's question via Haiku-provided text.
+
+        Three branches:
+          - missing answer: soft failure.
+          - concern=true: speak the answer verbatim (prompt constrains it to the
+            fixed disclosure line); flag concern=true for audit; BYPASS the safety
+            regex — a child in distress should hear the disclosure, not a deflection.
+          - normal: run answer through safety.check_answer (regex tripwire on
+            banned terms), then truncate to 40 words.
+        """
+        answer = f.get("answer", "")
+        if not answer:
+            return {"ok": False, "spoken": "", "error": "ask_question_missing_answer"}
+
+        concern = bool(f.get("concern", False))
+
+        if concern:
+            spoken = _truncate_words(answer, _MAX_ANSWER_WORDS)
+            return {"ok": True, "spoken": spoken, "concern": True}
+
+        checked = safety.check_answer(answer)
+        # Spec §7.2 mandates this audit signal — without it the safety regex
+        # becomes silent and we can't measure how often Haiku slips a banned term.
+        regex_overrode = checked != answer
+        spoken = _truncate_words(checked, _MAX_ANSWER_WORDS)
+        return {
+            "ok": True,
+            "spoken": spoken,
+            "concern": False,
+            "regex_override": regex_overrode,
         }
 
     def _humanise(self, iso_date: str) -> str:
