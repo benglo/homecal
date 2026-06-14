@@ -273,3 +273,9 @@ export function useMuteVoice() {
     onSettled: () => void qc.invalidateQueries({ queryKey: ['voice-status'] }),
   });
 }
+
+/** Tap-to-talk: ask the Pi (via the backend poke) to start a listen cycle.
+ *  Fire-and-forget; the resulting state changes arrive over the voice SSE. */
+export function useTriggerListen() {
+  return useMutation({ mutationFn: () => api.triggerListen() });
+}
