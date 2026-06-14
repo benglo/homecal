@@ -9,6 +9,7 @@ import { useScreensaver } from '../components/screensaver/useScreensaver';
 import { Screensaver } from '../components/screensaver/Screensaver';
 import { useSsePoke } from '../core/hooks/useRealtime';
 import { VoiceOverlay } from '../components/voice/VoiceOverlay';
+import { VoiceBand } from '../components/voice/VoiceBand';
 import { reduceOverlay, initialOverlay, pokeToAction } from '../components/voice/voiceState';
 import { eventWindow, weekDates, nowBne } from '../core/util/time';
 import { HeroBand } from '../components/hero/HeroBand';
@@ -111,7 +112,7 @@ export function WallLayout() {
   const detailDinner = detailDate ? dinners.find((d) => d.date === detailDate)?.meal : undefined;
 
   return (
-    <div className="flex flex-col h-full overflow-hidden" style={{ filter: 'brightness(var(--kiosk-brightness))' }}>
+    <div className="relative flex flex-col h-full overflow-hidden" style={{ filter: 'brightness(var(--kiosk-brightness))' }}>
       <HeroBand
         now={now}
         weekDays={week.days}
@@ -185,6 +186,8 @@ export function WallLayout() {
       <TimerStack />
 
       <VoiceOverlay state={overlay} dispatch={dispatch} onActiveChange={setVoiceActive} />
+
+      <VoiceBand state={overlay} />
 
       {screensaver.active && screensaver.queue.length > 0 && (
         <Screensaver
