@@ -217,3 +217,24 @@ describe('pokeToAction', () => {
     }
   });
 });
+
+describe('event_add intent + applied reply', () => {
+  const intent = { intent: 'event_add', title: 'Soccer', date: '2026-06-15', time: '16:00', confidence: 0.7 };
+
+  it('pokeToAction accepts a confirming event_add', () => {
+    const a = pokeToAction({ kind: 'confirming', utterance_id: 'u', payload: { intent, transcript: 'add soccer thursday 4pm' } });
+    expect(a).not.toBeNull();
+    if (a && a.type === 'sse') {
+      expect(a.intent?.intent).toBe('event_add');
+    }
+  });
+
+  it('applied carries the reply text', () => {
+    const a = pokeToAction({ kind: 'applied', utterance_id: 'u', payload: { intent, reply: 'Added Soccer on Monday at 4pm.' } });
+    expect(a).not.toBeNull();
+    if (a && a.type === 'sse') {
+      const s = reduceOverlay({ kind: 'idle' }, a);
+      expect(s).toEqual({ kind: 'applied', utterance_id: 'u', intent, reply: 'Added Soccer on Monday at 4pm.' });
+    }
+  });
+});
