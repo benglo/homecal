@@ -10,13 +10,13 @@ import { Screensaver } from '../components/screensaver/Screensaver';
 import { useSsePoke } from '../core/hooks/useRealtime';
 import { VoiceOverlay } from '../components/voice/VoiceOverlay';
 import { reduceOverlay, initialOverlay, pokeToAction } from '../components/voice/voiceState';
-import { eventWindow, weekDates, nowBne, toInputDate } from '../core/util/time';
+import { eventWindow, weekDates, nowBne } from '../core/util/time';
 import { HeroBand } from '../components/hero/HeroBand';
 import { AgendaView } from '../components/calendar/AgendaView';
 import { GridCalendar } from '../components/calendar/GridCalendar';
 import { ChoresBoard } from '../components/chores/ChoresBoard';
 import { ControlBar } from '../components/controls/ControlBar';
-import { AddChooser } from '../components/controls/AddChooser';
+import { defaultSlot, type SlotSelection } from '../components/calendar/slotSelection';
 import { DayDetailSheet } from '../components/sheets/DayDetailSheet';
 import { QuickAddSheet } from '../components/sheets/QuickAddSheet';
 import { DinnerEditorSheet } from '../components/sheets/DinnerEditorSheet';
@@ -64,8 +64,7 @@ export function WallLayout() {
   const dinners = dinnersQ.data ?? [];
 
   const [detailDate, setDetailDate] = useState<string | null>(null);
-  const [chooserOpen, setChooserOpen] = useState(false);
-  const [quickAddCategoryId, setQuickAddCategoryId] = useState<string | null>(null);
+  const [slotTarget, setSlotTarget] = useState<SlotSelection | null>(null);
   const [dinnerDate, setDinnerDate] = useState<string | null>(null);
 
   // Wall staleness = the worse of events + dinners (events is the primary data).
@@ -83,8 +82,7 @@ export function WallLayout() {
   const isToday = anchor.hasSame(now, 'day') && (view !== 'month' || anchor.hasSame(now, 'month'));
 
   const dismissAll = () => {
-    setChooserOpen(false);
-    setQuickAddCategoryId(null);
+    setSlotTarget(null);
     setDinnerDate(null);
     setDetailDate(null);
   };
@@ -104,15 +102,13 @@ export function WallLayout() {
     dismissAll();
     setDetailDate(date);
   };
-  const openChooser = () => {
+  const openQuickAdd = (slot: SlotSelection) => {
     dismissAll();
-    setChooserOpen(true);
+    setSlotTarget(slot);
   };
 
   const onTap = (occ: EventOccurrence) => openDetail(dayKey(occ.start));
   const detailDinner = detailDate ? dinners.find((d) => d.date === detailDate)?.meal : undefined;
-
-  const todayStr = toInputDate(nowBne().toUTC().toISO()!);
 
   return (
     <div className="flex flex-col h-full overflow-hidden" style={{ filter: 'brightness(var(--kiosk-brightness))' }}>
@@ -140,6 +136,8 @@ export function WallLayout() {
           occurrences={occurrences}
           categories={cats}
           onEventClick={onTap}
+          onSlotSelect={openQuickAdd}
+          selectionOpen={slotTarget !== null}
         />
       )}
 
@@ -151,22 +149,8 @@ export function WallLayout() {
         onNext={() => step(1)}
         onToday={goToday}
         isToday={isToday}
-        onQuickAdd={openChooser}
+        onQuickAdd={() => openQuickAdd(defaultSlot(nowBne()))}
         voiceState={overlay}
-      />
-
-      <AddChooser
-        open={chooserOpen}
-        onClose={() => setChooserOpen(false)}
-        categories={categoriesQ.data ?? []}
-        onCategory={(id) => {
-          dismissAll();
-          setQuickAddCategoryId(id);
-        }}
-        onDinner={() => {
-          dismissAll();
-          setDinnerDate(todayStr);
-        }}
       />
 
       <DayDetailSheet
@@ -179,10 +163,14 @@ export function WallLayout() {
       />
 
       <QuickAddSheet
-        open={quickAddCategoryId !== null}
-        onClose={() => setQuickAddCategoryId(null)}
+        open={slotTarget !== null}
+        onClose={() => setSlotTarget(null)}
         categories={categoriesQ.data ?? []}
-        defaultCategoryId={quickAddCategoryId ?? undefined}
+        slot={slotTarget}
+        onDinner={(date) => {
+          dismissAll();
+          setDinnerDate(date);
+        }}
       />
 
       <DinnerEditorSheet

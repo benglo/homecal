@@ -4,7 +4,30 @@ Running log of work per session. Newest first. Pair with `git log` for exact dif
 
 ---
 
-## 2026-06-08 — Local TTS sidecar shipped + Hey Luna wake word (PR #5 extension)
+## 2026-06-11 — P1 slot-tap creation shipped (calendar UI v2, phase 1 of 3)
+
+New branch `feat/calendar-ui-v2` (cut from `feat/voice-kid-intents` — P2's voice work depends on that code). Brainstormed with the visual companion (mockups for slot-create, voice band, desktop shell), spec at `docs/superpowers/specs/2026-06-11-ui-slot-create-voice-desktop-design.md`, P1 plan at `docs/superpowers/plans/2026-06-11-p1-slot-tap-create.md`. P2 (voice band + tap-to-talk + event_add intent) and P3 (`?mode=desktop` Outlook-style shell) are specced but not planned yet — plans get written against the code as it exists when their turn comes.
+
+### What shipped (6 commits, 9070859..1cf16c0)
+
+Outlook-style creation on the wall: tap an empty week slot → 1-hour draft; drag → exact range; month day tap → timed draft at next half-hour; month multi-day drag → all-day range. `selectMirror` ghost shows the landing zone while the form is open and clears on close (`unselectAuto={false}` + parent-driven `unselect()`).
+
+- `slotSelection.ts` — pure FC-selection → prefill mapper + `defaultSlot()` (7 tests)
+- `quickAddPayload.ts` — pure draft → `POST /api/events` body builder, midnight-roll handling (6 tests)
+- `GridCalendar` — `selectable`/`selectMirror`/`selectLongPressDelay={250}` + `onSlotSelect`/`selectionOpen` props
+- `EventQuickAddForm` (shell-agnostic; P3's popover will reuse it) + `QuickAddSheet` rewritten as a thin Sheet shell. Inline category chip row via the existing `CategoryPicker`; Dinner chip routes to `DinnerEditorSheet` (conscious spec deviation, documented in the plan — reuse beats duplicating the meal form)
+- `WallLayout` — slot wiring; **AddChooser deleted** (two-step add flow retired; ControlBar `+` now opens the unified form via `defaultSlot`)
+- `PhoneLayout` — FAB opens the unified form (manage-tab FAB still creates categories; phone week grid intentionally stays non-selectable)
+
+### Verification
+
+- frontend: tsc clean, 101/101 vitest (88 existing + 13 new)
+- Final whole-diff code review: approved, 0 critical. Its "stale draft via key collision" finding was disproved (QuickAddSheet returns null when closed → form unmounts → state can't survive a reopen). `autoFocus`-pops-virtual-keyboard flagged but is the pre-existing M3 wall behaviour, unchanged.
+- Kiosk hardware check (250 ms long-press select vs scroll feel) still pending — do on next deploy.
+
+### Process note
+
+The Bash safety-classifier had rolling outages all session (plain `git` allowlisted, `npm`/`npx` blocked). Subagents wrote files verbatim from the plan; commits + test runs were batched into the recovery windows, with the user running two verification commands via `!` passthrough.
 
 Two stacked features landed on `feat/voice-kid-intents` on top of the existing kid-intents work, both deployed live: a Python Kokoro sidecar on the home server (replaces OpenRouter for TTS) and a swap from "Hey Mycroft" to a custom-trained "Hey Luna" wake word. 30 commits total since the plan landed.
 
