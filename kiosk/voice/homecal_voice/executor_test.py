@@ -839,6 +839,54 @@ def test_ask_question_no_regex_override_on_clean_answer():
     assert out.get("regex_override") is False
 
 
+# --- event_add -----
+
+def test_event_add_posts_event_with_resolved_category(requests_mock):
+    posted = {}
+    requests_mock.get("http://api/api/categories", json=[
+        {"id": "cat-family", "name": "Family"},
+        {"id": "cat-sport", "name": "Sport"},
+    ])
+    def cb(request, _ctx):
+        posted.update(request.json()); return {"id": "ev1"}
+    requests_mock.post("http://api/api/events", json=cb, status_code=201)
+    ex = Executor(base="http://api", token="t")
+    res = IntentResult("event_add", {"title": "soccer", "date": "2026-06-15", "time": "16:00", "category": "sport"}, 0.7, "")
+    out = ex.apply(res)
+    assert out["ok"] is True
+    assert posted["categoryId"] == "cat-sport"
+    assert posted["title"] == "Soccer"
+    assert posted["start"] == "2026-06-15T06:00:00Z"
+    assert posted["end"] == "2026-06-15T07:00:00Z"
+    assert posted["allDay"] is False
+
+
+def test_event_add_all_day_when_no_time(requests_mock):
+    requests_mock.get("http://api/api/categories", json=[{"id": "cat-family", "name": "Family"}])
+    posted = {}
+    def cb(request, _ctx):
+        posted.update(request.json()); return {"id": "ev2"}
+    requests_mock.post("http://api/api/events", json=cb, status_code=201)
+    ex = Executor(base="http://api", token="t")
+    out = ex.apply(IntentResult("event_add", {"title": "nan's birthday", "date": "2026-06-20"}, 0.7, ""))
+    assert out["ok"] is True
+    assert posted["allDay"] is True
+    assert posted["start"] == "2026-06-20" and posted["end"] == "2026-06-20"
+
+
+def test_event_add_unknown_category_falls_back_to_family(requests_mock):
+    requests_mock.get("http://api/api/categories", json=[
+        {"id": "cat-family", "name": "Family"}, {"id": "cat-x", "name": "Sport"},
+    ])
+    posted = {}
+    def cb(request, _ctx):
+        posted.update(request.json()); return {"id": "ev3"}
+    requests_mock.post("http://api/api/events", json=cb, status_code=201)
+    ex = Executor(base="http://api", token="t")
+    ex.apply(IntentResult("event_add", {"title": "thing", "date": "2026-06-20", "time": "09:00", "category": "nope"}, 0.7, ""))
+    assert posted["categoryId"] == "cat-family"
+
+
 # ---------------------------------------------------------------------------
 # Fix B — quiet-hours suppression honesty (noise_play)
 # ---------------------------------------------------------------------------
