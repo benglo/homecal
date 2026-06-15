@@ -893,6 +893,14 @@ def test_unknown_intent_uses_default():
     assert auto_apply_threshold("some_future_intent") == 0.85
 
 
+def test_event_add_never_auto_applies():
+    import math
+    from homecal_voice.main import auto_apply_threshold
+    assert auto_apply_threshold("event_add") == math.inf
+    # sanity: a normal intent keeps the default
+    assert auto_apply_threshold("dinner_set") == 0.85
+
+
 # ---------------------------------------------------------------------------
 # Task 17 — quiet-hours gate for play_clip
 # ---------------------------------------------------------------------------

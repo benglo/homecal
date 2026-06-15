@@ -49,6 +49,10 @@ AUTO_APPLY_DEFAULT = 0.85
 AUTO_APPLY_THRESHOLDS = MappingProxyType({
     "noise_play": -math.inf,
     "joke_tell": -math.inf,
+    # Calendar writes are higher-stakes than dinner/chores — always show the
+    # confirm card. +inf means it never clears the auto-apply bar, so it always
+    # falls into the confirm branch (still silent-fails below 0.6 confidence).
+    "event_add": math.inf,
 })
 SILENT_FAIL_CONFIDENCE = 0.6
 
