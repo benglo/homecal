@@ -361,6 +361,10 @@ def _run_after_wake(d: OneShotDeps) -> None:
         _play_didnt_catch()
         return
 
+    # Surface what we heard on the wall band now that STT is done (the earlier
+    # thinking post had no transcript yet).
+    d.post_state(utterance_id=uid, kind="thinking", payload={"transcript_partial": transcript})
+
     # extract_intent fetches family/chores from the backend to build the
     # prompt. A backend outage here used to silently return empty lists
     # → Haiku said "I don't know that person" indistinguishably from a
@@ -419,7 +423,7 @@ def _run_after_wake(d: OneShotDeps) -> None:
             return
         # ✓ flash fires immediately; TTS plays while the wall is already green.
         d.post_state(utterance_id=uid, kind="applied",
-                     payload={"intent": _intent_payload(intent)})
+                     payload={"intent": _intent_payload(intent), "reply": out.get("spoken", "")})
         if not out.get("spoken_inline"):
             _speak(out.get("spoken", ""))
         # Prefer the executor's tts_provider hint (set when the catalog played

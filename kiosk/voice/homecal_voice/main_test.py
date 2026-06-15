@@ -102,13 +102,14 @@ def test_high_confidence_auto_applies():
     execute.assert_called_once()
     speak.assert_called_once_with("Saved tacos for today.")
     kinds = [c.kwargs.get("kind") for c in state.call_args_list]
-    assert kinds == ["listening", "thinking", "applied"]
+    assert kinds == ["listening", "thinking", "thinking", "applied"]
     audit_kwargs = audit.call_args.kwargs
     assert audit_kwargs["status"] == "applied"
     assert audit_kwargs["confidence"] == 0.92
     # applied payload must include the intent fields the wall renders.
     applied_payload = state.call_args_list[-1].kwargs["payload"]
     assert applied_payload["intent"]["meal"] == "tacos"
+    assert applied_payload["reply"] == "Saved tacos for today."
     # Mic must be closed for the entire TTS window so the pw-record pipe can't
     # accumulate the BOOM 3 echo and cascade into post-reply false wakes.
     mic_off.assert_called_once()
