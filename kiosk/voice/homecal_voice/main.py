@@ -200,6 +200,10 @@ def run_once(d: OneShotDeps) -> None:
     try:
         _run_after_wake(d)
     finally:
+        # Drop any tap that landed DURING the cycle (recording/STT/confirm/TTS
+        # run 10s+) — clearing only at cycle start can't catch those, and a
+        # queued tap would auto-fire an unwanted listen on the next loop.
+        _listen_trigger.clear()
         # Reset on EVERY exit (not just TTS) — otherwise paths that skip
         # _speak (blank, unknown, hallucination, error) leave the wake LSTM
         # primed by the user's "Hey Mycroft" and ambient frames cascade.

@@ -1106,3 +1106,61 @@ def test_joke_tell_catalog_hit_includes_tts_provider():
     ))
     assert out["ok"] is True
     assert out.get("tts_provider") == "kokoro_lan"
+
+
+# --- event_add edge cases (PR #8 review follow-up) -------------------------
+
+
+def test_event_add_malformed_time_fails_soft_without_posting(requests_mock):
+    cats = requests_mock.get("http://api/api/categories", json=[{"id": "cat-family", "name": "Family"}])
+    post = requests_mock.post("http://api/api/events", json={"id": "x"}, status_code=201)
+    ex = Executor(base="http://api", token="t")
+    out = ex.apply(IntentResult("event_add", {"title": "soccer", "date": "2026-06-15", "time": "4pm"}, 0.7, ""))
+    assert out["ok"] is False
+    assert "date and time" in out["spoken"]
+    assert post.call_count == 0  # guard short-circuits before the POST
+    assert cats.call_count == 0  # and before category resolution
+
+
+def test_event_add_clamps_duration_to_24h(requests_mock):
+    requests_mock.get("http://api/api/categories", json=[{"id": "cat-family", "name": "Family"}])
+    posted = {}
+    def cb(request, _ctx):
+        posted.update(request.json()); return {"id": "ev"}
+    requests_mock.post("http://api/api/events", json=cb, status_code=201)
+    ex = Executor(base="http://api", token="t")
+    ex.apply(IntentResult("event_add", {"title": "x", "date": "2026-06-15", "time": "10:00", "duration_min": 100000}, 0.7, ""))
+    # 10:00 BNE = 00:00:00Z; +1440min cap = next day 00:00:00Z
+    assert posted["start"] == "2026-06-15T00:00:00Z"
+    assert posted["end"] == "2026-06-16T00:00:00Z"
+
+
+def test_event_add_floors_duration_at_5min(requests_mock):
+    requests_mock.get("http://api/api/categories", json=[{"id": "cat-family", "name": "Family"}])
+    posted = {}
+    def cb(request, _ctx):
+        posted.update(request.json()); return {"id": "ev"}
+    requests_mock.post("http://api/api/events", json=cb, status_code=201)
+    ex = Executor(base="http://api", token="t")
+    ex.apply(IntentResult("event_add", {"title": "x", "date": "2026-06-15", "time": "10:00", "duration_min": 1}, 0.7, ""))
+    assert posted["end"] == "2026-06-15T00:05:00Z"
+
+
+def test_event_add_no_categories_is_honest_not_outage(requests_mock):
+    requests_mock.get("http://api/api/categories", json=[])
+    post = requests_mock.post("http://api/api/events", json={"id": "x"}, status_code=201)
+    ex = Executor(base="http://api", token="t")
+    out = ex.apply(IntentResult("event_add", {"title": "x", "date": "2026-06-20", "time": "09:00"}, 0.7, ""))
+    assert out["ok"] is False
+    assert "calendar" in out["spoken"].lower()  # "no calendars set up yet"
+    assert out.get("error") == "no_categories"
+    assert post.call_count == 0
+
+
+def test_event_add_backend_reject_logs_status(requests_mock):
+    requests_mock.get("http://api/api/categories", json=[{"id": "cat-family", "name": "Family"}])
+    requests_mock.post("http://api/api/events", json={"error": "bad"}, status_code=400)
+    ex = Executor(base="http://api", token="t")
+    out = ex.apply(IntentResult("event_add", {"title": "x", "date": "2026-06-20", "time": "09:00"}, 0.7, ""))
+    assert out["ok"] is False
+    assert out.get("error") == "http_400"

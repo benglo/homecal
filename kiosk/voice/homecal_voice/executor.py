@@ -221,7 +221,13 @@ class Executor:
             # a false backend-outage; _try_execute renders this as `failed`.
             return {"ok": False, "spoken": "I didn't catch the date and time."}
 
-        category_id = self._resolve_category(f.get("category"))
+        try:
+            category_id = self._resolve_category(f.get("category"))
+        except RuntimeError:
+            # GET succeeded but there are no categories — the calendar IS
+            # reachable, so don't speak the generic outage copy.
+            log.warning("event_add: no categories configured")
+            return {"ok": False, "spoken": "There are no calendars set up yet.", "error": "no_categories"}
         try:
             r = requests.post(
                 f"{self.base}/api/events",
@@ -230,8 +236,12 @@ class Executor:
                 timeout=API_TIMEOUT_SEC,
             )
             r.raise_for_status()
-        except requests.HTTPError:
-            return {"ok": False, "spoken": "I couldn't add that event."}
+        except requests.HTTPError as e:
+            # Backend rejected the payload (validation/conflict) — log the status
+            # so a systematic contract bug isn't invisible behind calm copy.
+            status = e.response.status_code if e.response is not None else "unknown"
+            log.warning("event_add POST rejected: %s", status)
+            return {"ok": False, "spoken": "I couldn't add that event.", "error": f"http_{status}"}
         return {"ok": True, "spoken": f"Added {title} on {when_spoken}."}
 
     def _resolve_category(self, name: "str | None") -> str:
