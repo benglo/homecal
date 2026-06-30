@@ -12,6 +12,7 @@ log = logging.getLogger("homecal_voice.intent")
 
 VALID_INTENTS = {
     "dinner_set", "chore_complete", "query_dinner", "query_agenda",
+    "event_add",
     "ask_question", "noise_play", "joke_tell",
     "unknown",
 }
@@ -23,6 +24,7 @@ REQUIRED_FIELDS: dict[str, frozenset[str]] = {
     "chore_complete": frozenset({"person", "chore"}),
     "query_dinner": frozenset({"date"}),
     "query_agenda": frozenset({"date"}),
+    "event_add": frozenset({"title", "date"}),
     "ask_question": frozenset({"answer"}),
     # noise_play accepts either catalog_key (matcher hit, never reaches Haiku)
     # OR play_catalog (Haiku-fallback path). Required at the executor branch,
@@ -76,6 +78,7 @@ these schemas. Do not include any other text:
 {{"intent":"chore_complete", "person":"string",   "chore":"string", "confidence":0..1}}
 {{"intent":"query_dinner",   "date":"YYYY-MM-DD",                   "confidence":0..1}}
 {{"intent":"query_agenda",   "date":"YYYY-MM-DD",                   "confidence":0..1}}
+{{"intent":"event_add",     "title":"string", "date":"YYYY-MM-DD", "time":"HH:MM", "duration_min":60, "category":"name", "confidence":0..1}}
 {{"intent":"ask_question",   "answer":"string",   "confidence":0..1, "concern":false}}
 {{"intent":"noise_play",     "play_catalog":"name", "fallback_text":"string", "confidence":0..1}}
 {{"intent":"joke_tell",      "setup":"string", "punchline":"string", "confidence":0..1}}
@@ -96,6 +99,14 @@ age-4-8 joke with separate setup and punchline.
 Date rules: "tonight"/"tonight's dinner" → today; "tomorrow" → today + 1 day;
 day names → next occurrence at or after today. Output YYYY-MM-DD in Brisbane local.
 Confidence: 1.0 = unambiguous; 0.6 = two reasonable readings; <0.6 = doubt.
+
+Use event_add when the user wants to put something on the calendar ("add
+soccer practice Thursday at 4pm", "put dentist on the 20th at 9am"). Rules:
+- "title": short event name, no date/time words ("Soccer practice").
+- "date": YYYY-MM-DD in Brisbane local (same date rules as above).
+- "time": HH:MM 24h Brisbane local. OMIT time for an all-day event.
+- "duration_min": minutes; default 60 if the user didn't say. Omit for all-day.
+- "category": optionally the kind of event (sport, school, work); omit if unsure.
 
 For chore_complete:
 - "person" MUST be one of the family member names listed above.

@@ -198,3 +198,17 @@ test('GET /api/voice/status includes last_tts_provider from most recent utteranc
   const body = r.json() as { last_tts_provider: string | null };
   assert.equal(body.last_tts_provider, 'kokoro_lan');
 });
+
+// NO PI token header — the wall (browser, no token) calls this, mirroring the
+// unguarded PUT /api/voice/mute. The test must exercise the unauthenticated path.
+test('POST /api/voice/listen: pokes voice listen_request + 200 (no token)', async () => {
+  const seen: unknown[] = [];
+  const off = broker.subscribe((p: { kind: string; payload?: unknown }) => {
+    if (p.kind === 'voice') seen.push(p.payload);
+  });
+  const r = await app.inject({ method: 'POST', url: '/api/voice/listen' });
+  off();
+  assert.equal(r.statusCode, 200);
+  assert.deepEqual(r.json(), { ok: true });
+  assert.deepEqual(seen, [{ kind: 'listen_request' }]);
+});

@@ -49,6 +49,10 @@ AUTO_APPLY_DEFAULT = 0.85
 AUTO_APPLY_THRESHOLDS = MappingProxyType({
     "noise_play": -math.inf,
     "joke_tell": -math.inf,
+    # Calendar writes are higher-stakes than dinner/chores — always show the
+    # confirm card. +inf means it never clears the auto-apply bar, so it always
+    # falls into the confirm branch (still silent-fails below 0.6 confidence).
+    "event_add": math.inf,
 })
 SILENT_FAIL_CONFIDENCE = 0.6
 
@@ -183,13 +187,23 @@ def run_once(d: OneShotDeps) -> None:
     while True:
         f = d.next_frame()
         if d.muted():
+            # Drop any trigger that arrived while muted — tap-to-talk must not
+            # queue up and fire the instant the user unmutes.
+            _listen_trigger.clear()
             continue
+        if _listen_trigger.is_set():
+            _listen_trigger.clear()
+            break
         if d.wake.step(f):
             break
 
     try:
         _run_after_wake(d)
     finally:
+        # Drop any tap that landed DURING the cycle (recording/STT/confirm/TTS
+        # run 10s+) — clearing only at cycle start can't catch those, and a
+        # queued tap would auto-fire an unwanted listen on the next loop.
+        _listen_trigger.clear()
         # Reset on EVERY exit (not just TTS) — otherwise paths that skip
         # _speak (blank, unknown, hallucination, error) leave the wake LSTM
         # primed by the user's "Hey Mycroft" and ambient frames cascade.
@@ -199,6 +213,8 @@ def run_once(d: OneShotDeps) -> None:
 
 
 def _run_after_wake(d: OneShotDeps) -> None:
+    # A tap during this cycle must be dropped, not queued for the next loop.
+    _listen_trigger.clear()
     uid = d.utterance_id()
     d.post_state(utterance_id=uid, kind="listening", payload={"vu": 0.0})
 
@@ -353,6 +369,10 @@ def _run_after_wake(d: OneShotDeps) -> None:
         _play_didnt_catch()
         return
 
+    # Surface what we heard on the wall band now that STT is done (the earlier
+    # thinking post had no transcript yet).
+    d.post_state(utterance_id=uid, kind="thinking", payload={"transcript_partial": transcript})
+
     # extract_intent fetches family/chores from the backend to build the
     # prompt. A backend outage here used to silently return empty lists
     # → Haiku said "I don't know that person" indistinguishably from a
@@ -411,7 +431,7 @@ def _run_after_wake(d: OneShotDeps) -> None:
             return
         # ✓ flash fires immediately; TTS plays while the wall is already green.
         d.post_state(utterance_id=uid, kind="applied",
-                     payload={"intent": _intent_payload(intent)})
+                     payload={"intent": _intent_payload(intent), "reply": out.get("spoken", "")})
         if not out.get("spoken_inline"):
             _speak(out.get("spoken", ""))
         # Prefer the executor's tts_provider hint (set when the catalog played
@@ -476,6 +496,10 @@ def _run_after_wake(d: OneShotDeps) -> None:
 
 
 _shutdown = False
+
+# Set by the SSE thread when the wall taps tap-to-talk; consumed (and cleared)
+# by run_once to start a listen cycle without the wake word.
+_listen_trigger = threading.Event()
 
 
 def _on_sigterm(*_):
@@ -879,8 +903,11 @@ def _start_mute_sse(cfg) -> None:
                         if line and line.startswith(b"data: "):
                             try:
                                 import json as _json
-                                poke = _json.loads(line[6:].decode())
-                                if poke.get("kind") == "voice":
+                                from homecal_voice.poke_handlers import classify_poke
+                                action = classify_poke(_json.loads(line[6:].decode()))
+                                if action == "listen":
+                                    _listen_trigger.set()
+                                elif action == "mute":
                                     _mute_state["checked_at"] = 0.0
                             except Exception:
                                 pass

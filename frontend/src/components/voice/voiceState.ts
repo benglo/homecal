@@ -5,7 +5,7 @@ export type OverlayState =
   | { kind: 'listening'; utterance_id: string; vu: number }
   | { kind: 'thinking'; utterance_id: string; transcript_partial: string }
   | { kind: 'confirming'; utterance_id: string; intent: ParsedIntent; transcript: string }
-  | { kind: 'applied'; utterance_id: string; intent: ParsedIntent }
+  | { kind: 'applied'; utterance_id: string; intent: ParsedIntent; reply?: string }
   | { kind: 'failed'; utterance_id: string; reason: string }
   | { kind: 'mic_offline' }
   | { kind: 'voice_offline' };
@@ -21,6 +21,7 @@ export type OverlayAction =
       transcript?: string;
       intent?: ParsedIntent;
       reason?: string;
+      reply?: string;
     }
   | { type: 'auto-fade' }
   | { type: 'cancel' };
@@ -69,6 +70,7 @@ export function pokeToAction(raw: unknown): OverlayAction | null {
     transcript: typeof payload.transcript === 'string' ? payload.transcript : undefined,
     intent: isParsedIntent(payload.intent) ? payload.intent : undefined,
     reason: typeof payload.reason === 'string' ? payload.reason : undefined,
+    reply: typeof payload.reply === 'string' ? payload.reply : undefined,
   };
 
   // `confirming` and `applied` require an intent; reject the action if missing
@@ -107,6 +109,8 @@ function isParsedIntent(v: unknown): v is ParsedIntent {
         || (typeof o.play_catalog === 'string' && typeof o.fallback_text === 'string');
     case 'joke_tell':
       return typeof o.setup === 'string' && typeof o.punchline === 'string';
+    case 'event_add':
+      return typeof o.title === 'string' && typeof o.date === 'string';
     case 'unknown':
       return typeof o.reason === 'string';
     default:
@@ -148,7 +152,7 @@ export function reduceOverlay(state: OverlayState, action: OverlayAction): Overl
       };
     case 'applied':
       if (!action.intent) return state;
-      return { kind: 'applied', utterance_id: action.utterance_id ?? '?', intent: action.intent };
+      return { kind: 'applied', utterance_id: action.utterance_id ?? '?', intent: action.intent, reply: action.reply };
     case 'failed':
       return { kind: 'failed', utterance_id: action.utterance_id ?? '?', reason: action.reason ?? 'unknown' };
     default:

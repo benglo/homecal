@@ -282,3 +282,17 @@ def test_build_system_prompt_concerning_disclosure_template():
     prompt = build_system_prompt("2026-06-06", [], [])
     expected = "That sounds important. Please tell your mum or dad right now — they want to help."
     assert expected in prompt, f"verbatim disclosure line missing or paraphrased; full prompt:\n{prompt}"
+
+
+def test_event_add_parses_required_fields():
+    from homecal_voice.intent import parse_intent_response
+    r = parse_intent_response('{"intent":"event_add","title":"Soccer","date":"2026-06-15","time":"16:00","confidence":0.7}')
+    assert r.intent == "event_add"
+    assert r.fields["title"] == "Soccer"
+    assert r.fields["date"] == "2026-06-15"
+
+
+def test_event_add_missing_title_downgraded_to_unknown():
+    from homecal_voice.intent import parse_intent_response
+    r = parse_intent_response('{"intent":"event_add","date":"2026-06-15","confidence":0.7}')
+    assert r.intent == "unknown"

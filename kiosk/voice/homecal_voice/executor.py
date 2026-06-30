@@ -7,14 +7,14 @@ status — `True` for "applied", `False` for "couldn't resolve, told the
 user, did not change state".
 """
 
-from datetime import date as Date, datetime, timezone
+from datetime import date as Date, datetime, timezone, timedelta
 from typing import Callable, Literal, Optional
 import logging
 
 import requests
 
 from homecal_voice.intent import IntentResult
-from homecal_voice.timezone import today_brisbane, is_quiet_hours
+from homecal_voice.timezone import today_brisbane, is_quiet_hours, BRISBANE_OFFSET_SECONDS
 from homecal_voice import catalog as kid_catalog
 from homecal_voice import safety
 
@@ -25,6 +25,8 @@ ResolveError = Literal["no_timer", "ambiguous", "unknown_label"]
 log = logging.getLogger("homecal_voice.executor")
 
 API_TIMEOUT_SEC = 10
+# Brisbane is a fixed UTC+10 (no DST) — safe to model as a static offset.
+_BNE = timezone(timedelta(seconds=BRISBANE_OFFSET_SECONDS))
 AGENDA_MAX_ITEMS = 3
 _MAX_ANSWER_WORDS = 40
 
@@ -138,6 +140,7 @@ class Executor:
             "chore_complete": self._chore_complete,
             "query_dinner": self._query_dinner,
             "query_agenda": self._query_agenda,
+            "event_add": self._event_add,
             "timer_set": self._timer_set,
             "timer_query": self._timer_query,
             "timer_cancel": self._timer_cancel,
@@ -189,6 +192,70 @@ class Executor:
         )
         r.raise_for_status()
         return {"ok": True, "spoken": f"Nice work, {person['name']}."}
+
+    def _event_add(self, f: dict) -> dict:
+        # Title from STT; backend caps at 256 — clamp here so a rambling
+        # transcript fails-soft to a truthful reply instead of a backend 400
+        # surfaced as the misleading "couldn't reach the calendar".
+        title = _canon_meal(f["title"])[:256]
+        date = f["date"]
+        time = f.get("time")
+        try:
+            if time:
+                start_local = datetime.fromisoformat(f"{date}T{time}:00").replace(tzinfo=_BNE)
+                # Clamp Haiku-supplied duration to a sane window (5min..24h).
+                dur = max(5, min(int(f.get("duration_min") or 60), 1440))
+                end_local = start_local + timedelta(minutes=dur)
+                start = start_local.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                end = end_local.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                all_day = False
+                when_spoken = f"{self._humanise(date)} at {_speak_time(time)}"
+            else:
+                # All-day stores bare YYYY-MM-DD (spec; matches the wall's
+                # quickAddPayload all-day shape — do NOT expand to T00:00Z).
+                start = end = date
+                all_day = True
+                when_spoken = self._humanise(date)
+        except (ValueError, TypeError):
+            # Malformed date/time from Haiku (e.g. time:"4pm"). Honest copy, not
+            # a false backend-outage; _try_execute renders this as `failed`.
+            return {"ok": False, "spoken": "I didn't catch the date and time."}
+
+        try:
+            category_id = self._resolve_category(f.get("category"))
+        except RuntimeError:
+            # GET succeeded but there are no categories — the calendar IS
+            # reachable, so don't speak the generic outage copy.
+            log.warning("event_add: no categories configured")
+            return {"ok": False, "spoken": "There are no calendars set up yet.", "error": "no_categories"}
+        try:
+            r = requests.post(
+                f"{self.base}/api/events",
+                json={"categoryId": category_id, "title": title, "start": start, "end": end, "allDay": all_day},
+                headers=self.headers,
+                timeout=API_TIMEOUT_SEC,
+            )
+            r.raise_for_status()
+        except requests.HTTPError as e:
+            # Backend rejected the payload (validation/conflict) — log the status
+            # so a systematic contract bug isn't invisible behind calm copy.
+            status = e.response.status_code if e.response is not None else "unknown"
+            log.warning("event_add POST rejected: %s", status)
+            return {"ok": False, "spoken": "I couldn't add that event.", "error": f"http_{status}"}
+        return {"ok": True, "spoken": f"Added {title} on {when_spoken}."}
+
+    def _resolve_category(self, name: "str | None") -> str:
+        """Match a spoken category name (case-insensitive) to an id; fall back to
+        Family, then to the first category. Calendar create requires a categoryId."""
+        r = requests.get(f"{self.base}/api/categories", headers=self.headers, timeout=API_TIMEOUT_SEC)
+        r.raise_for_status()
+        cats = r.json()
+        if not cats:
+            raise RuntimeError("no categories configured")
+        by_name = {c["name"].strip().lower(): c["id"] for c in cats}
+        if name and name.strip().lower() in by_name:
+            return by_name[name.strip().lower()]
+        return by_name.get("family", cats[0]["id"])
 
     def _query_dinner(self, f: dict) -> dict:
         date = f["date"]

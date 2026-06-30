@@ -3,7 +3,7 @@ import { DateTime } from 'luxon';
 import { Mic, MicOff, Loader2, Check, AlertCircle } from 'lucide-react';
 import type { ComponentType, SVGProps } from 'react';
 import { useVoiceStatus } from '../../core/hooks/useData';
-import { useMuteVoice } from '../../core/hooks/useMutations';
+import { useMuteVoice, useTriggerListen } from '../../core/hooks/useMutations';
 import { useIsWall } from '../../core/hooks/useIsWall';
 import { ZONE } from '../../core/util/time';
 import type { OverlayState } from '../voice/voiceState';
@@ -82,6 +82,7 @@ function appliedLabel(intent: ParsedIntent): string {
     case 'ask_question': return 'answered';
     case 'joke_tell': return '😄 joke';
     case 'noise_play': return '';  // no chip flash; the noise IS the feedback
+    case 'event_add': return `added ${intent.title}`;
     case 'unknown': return "didn't catch that";
   }
 }
@@ -116,9 +117,12 @@ interface Props {
 export function VoiceChip({ state }: Props) {
   const { data: status } = useVoiceStatus();
   const mute = useMuteVoice();
+  const trigger = useTriggerListen();
   const isWall = useIsWall();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const longPress = useRef(false);
+  const pressTimer = useRef<number | null>(null);
 
   const muted = !!status?.muted;
   const offline = state.kind === 'mic_offline' || state.kind === 'voice_offline';
@@ -159,14 +163,28 @@ export function VoiceChip({ state }: Props) {
   // Faint when truly idle (the wake-word invitation); confident otherwise.
   const opacity = state.kind === 'idle' && !muted ? 0.7 : 1;
 
+  // Tap = start listening (tap-to-talk); long-press = open the mute menu. One
+  // chip, so the wall corner stays uncluttered.
+  const startPress = () => {
+    if (offline || muted) return; // muted/offline handled on release
+    longPress.current = false;
+    pressTimer.current = window.setTimeout(() => {
+      longPress.current = true;
+      setOpen(true);
+    }, 500);
+  };
+  const endPress = () => {
+    if (pressTimer.current !== null) { window.clearTimeout(pressTimer.current); pressTimer.current = null; }
+  };
   const handleClick = () => {
-    if (offline) return; // nothing to do; chip is a status indicator
-    if (muted) {
-      mute.mutate(null);
-      setOpen(false);
-      return;
-    }
-    setOpen((o) => !o);
+    if (offline) return;
+    if (muted) { mute.mutate(null); setOpen(false); return; }
+    if (longPress.current) { longPress.current = false; return; }
+    if (open) { setOpen(false); return; }
+    // Ignore taps while a cycle is already active (or a trigger is in flight) —
+    // prevents mic-thrash from impatient double-taps.
+    if (trigger.isPending || (state.kind !== 'idle')) return;
+    trigger.mutate();
   };
 
   const dot = isWall && status ? (
@@ -190,6 +208,9 @@ export function VoiceChip({ state }: Props) {
       <button
         type="button"
         onClick={handleClick}
+        onPointerDown={startPress}
+        onPointerUp={endPress}
+        onPointerLeave={endPress}
         aria-label={muted ? `Voice muted; tap to unmute` : `Voice: ${label}`}
         aria-pressed={muted}
         disabled={offline}

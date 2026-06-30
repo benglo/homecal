@@ -102,13 +102,14 @@ def test_high_confidence_auto_applies():
     execute.assert_called_once()
     speak.assert_called_once_with("Saved tacos for today.")
     kinds = [c.kwargs.get("kind") for c in state.call_args_list]
-    assert kinds == ["listening", "thinking", "applied"]
+    assert kinds == ["listening", "thinking", "thinking", "applied"]
     audit_kwargs = audit.call_args.kwargs
     assert audit_kwargs["status"] == "applied"
     assert audit_kwargs["confidence"] == 0.92
     # applied payload must include the intent fields the wall renders.
     applied_payload = state.call_args_list[-1].kwargs["payload"]
     assert applied_payload["intent"]["meal"] == "tacos"
+    assert applied_payload["reply"] == "Saved tacos for today."
     # Mic must be closed for the entire TTS window so the pw-record pipe can't
     # accumulate the BOOM 3 echo and cascade into post-reply false wakes.
     mic_off.assert_called_once()
@@ -892,6 +893,14 @@ def test_unknown_intent_uses_default():
     assert auto_apply_threshold("some_future_intent") == 0.85
 
 
+def test_event_add_never_auto_applies():
+    import math
+    from homecal_voice.main import auto_apply_threshold
+    assert auto_apply_threshold("event_add") == math.inf
+    # sanity: a normal intent keeps the default
+    assert auto_apply_threshold("dinner_set") == 0.85
+
+
 # ---------------------------------------------------------------------------
 # Task 17 — quiet-hours gate for play_clip
 # ---------------------------------------------------------------------------
@@ -1418,3 +1427,64 @@ def test_catalog_hit_audits_kokoro_lan(monkeypatch):
     )
     run_once(deps)
     assert audit.call_args.kwargs["tts_provider"] == "kokoro_lan"
+
+
+# ---------------------------------------------------------------------------
+# Tap-to-talk listen trigger (PR #8 review follow-up)
+# ---------------------------------------------------------------------------
+
+
+def test_listen_trigger_bypasses_wake_word():
+    """A set _listen_trigger starts a cycle even when the wake word never fires."""
+    from homecal_voice import main as _main
+    _main._listen_trigger.clear()
+    intent = IntentResult("dinner_set", {"date": "2026-06-04", "meal": "tacos"}, 0.92, "raw")
+    deps, _state, _audit = _make_deps(
+        transcribe=MagicMock(return_value="tacos"),
+        extract_intent=MagicMock(return_value=intent),
+        execute=MagicMock(return_value={"ok": True, "spoken": "ok."}),
+    )
+    deps.wake.step.side_effect = lambda f: False  # wake word NEVER fires
+    _main._listen_trigger.set()                   # ...but a tap did
+    try:
+        run_once(deps)
+        deps.transcribe.assert_called_once()      # cycle ran without a wake
+    finally:
+        _main._listen_trigger.clear()
+
+
+def test_trigger_cleared_after_cycle():
+    """A tap that lands mid-cycle must be dropped in the finally, not queued to
+    auto-fire the next loop."""
+    from homecal_voice import main as _main
+    deps, _state, _audit = _make_deps(
+        transcribe=MagicMock(return_value="tacos"),
+        extract_intent=MagicMock(return_value=IntentResult("dinner_set", {"date": "2026-06-04", "meal": "tacos"}, 0.92, "raw")),
+        execute=MagicMock(return_value={"ok": True, "spoken": "ok."}),
+    )
+    _main._listen_trigger.set()  # simulate a tap arriving during the cycle
+    run_once(deps)               # wake fires normally (default side_effect True)
+    assert not _main._listen_trigger.is_set()
+
+
+def test_tap_during_mute_is_dropped_not_queued():
+    """A tap queued while muted is cleared each muted frame, so on unmute the
+    loop reaches the wake check rather than short-circuiting on the stale tap."""
+    from homecal_voice import main as _main
+    deps, _state, _audit = _make_deps(
+        transcribe=MagicMock(return_value="tacos"),
+        extract_intent=MagicMock(return_value=IntentResult("dinner_set", {"date": "2026-06-04", "meal": "tacos"}, 0.92, "raw")),
+        execute=MagicMock(return_value={"ok": True, "spoken": "ok."}),
+    )
+    calls = {"n": 0}
+    deps.muted = lambda: (calls.__setitem__("n", calls["n"] + 1) or calls["n"] <= 3)
+    deps.wake.step.side_effect = lambda f: True  # fires once unmuted
+    _main._listen_trigger.set()
+    try:
+        run_once(deps)
+        # If the queued tap had survived the mute, run_once would have broken via
+        # the trigger BEFORE calling wake.step. wake.step being called proves the
+        # muted branch cleared it.
+        assert deps.wake.step.called
+    finally:
+        _main._listen_trigger.clear()

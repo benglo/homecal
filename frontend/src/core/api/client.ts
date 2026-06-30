@@ -139,6 +139,7 @@ export const api = {
     get<VoiceConcern[]>(`/api/voice/concerns${since ? '?since=' + encodeURIComponent(since) : ''}`),
   setVoiceMute: (until: string | null) =>
     send<{ ok: true; mute_until: string | null }>('PUT', '/api/voice/mute', { until }),
+  triggerListen: () => send<{ ok: true }>('POST', '/api/voice/listen'),
 
   // timers
   timers: () => get<Timer[]>('/api/timers'),

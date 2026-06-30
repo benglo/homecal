@@ -4,6 +4,38 @@ Running log of work per session. Newest first. Pair with `git log` for exact dif
 
 ---
 
+## 2026-06-15 — P2 voice band + tap-to-talk + event_add (calendar UI v2, phase 2 of 3)
+
+Branch `feat/voice-p2` (off `master` after P1 + the wall touchscreen fixes landed). Spec `docs/superpowers/specs/2026-06-11-ui-slot-create-voice-desktop-design.md` (P2 section); plan `docs/superpowers/plans/2026-06-14-p2-voice-band-event-add.md`. Plan was put through a 5-persona review (factual/senior/security/consistency/redundancy) before implementation — caught an auth bug, a layout-reflow bug, a mid-cycle-tap race, and missing input validation, all folded into the plan first.
+
+Implemented subagent-driven on **Haiku** (16 tasks), with controller-side verification after each (read + run the real suite, never trusting the agent's report — Haiku misattributed test counts twice, both caught).
+
+### What shipped
+- **VoiceBand** — wall-only active-voice band that **overlays** the ControlBar (absolute, not a flex sibling — avoids shrinking the calendar on every utterance). Driven by a pure, tested `bandView` view-model (8 tests): listening (waveform) / thinking (live transcript) / applied (Luna's reply) / failed; hidden for idle/confirming/offline.
+- **Tap-to-talk** — `POST /api/voice/listen` (unguarded, mirrors `/mute`) → `broker.poke('voice',{kind:'listen_request'})`. Pi's SSE thread classifies pokes via a pure `classify_poke` and sets a `threading.Event`; `run_once` honours it to bypass the wake word, drained at cycle start so mid-cycle taps don't queue, cleared while muted. VoiceChip: tap = talk, long-press (500ms) = mute menu, ignores taps while a cycle is active.
+- **event_add intent** — Haiku intent + `_event_add` executor handler → existing `POST /api/events`. Category resolved by name → Family fallback; Brisbane→UTC via the shared `BRISBANE_OFFSET_SECONDS`; title clamped 256, duration clamped 5–1440, date/time parse guarded → honest spoken errors. **Always confirms** via `AUTO_APPLY_THRESHOLDS["event_add"]=math.inf` (no new confirm machinery). Transcript rides the existing `thinking.transcript_partial`; reply is a new `applied.reply` field.
+
+### Verification
+build clean · backend 201/201 · frontend 113/113 (incl. bandView 8 + voiceState event_add/reply) · Pi 462 → **470** after the PR-review fixes (+8 tests).
+
+### Final multi-agent PR review (PR #8) → fixes folded in (`4512a73`)
+3 specialist reviewers (code-quality / silent-failure / test-coverage) on the full diff. Found one real logic bug + error-honesty/coverage gaps, all fixed:
+- **Bug:** clearing `_listen_trigger` only at the *start* of `_run_after_wake` didn't drop taps arriving *during* the 10s+ cycle → moved the clear into `run_once`'s `finally`.
+- **Error honesty:** empty-categories now says "no calendars set up yet" (not the false "couldn't reach the calendar"); backend rejects log the HTTP status + tag the audit `error`.
+- **+8 tests:** trigger-bypasses-wake, trigger-cleared-after-cycle, tap-dropped-while-muted; event_add malformed-time / duration-clamp×2 / no-categories / backend-reject.
+
+### Deployed to the Pi (2026-06-15)
+- **Wall + API:** container rebuilt from `feat/voice-p2` (bundle `index-C0ccCXAu.js`), `/api/voice/listen` live (200), kiosk reloaded.
+- **Pi voice service:** `kiosk/voice/` rsync'd to `/home/hbadmin/homecal-voice/` (editable `-e .` install, so .py updates take effect), `homecal-voice` restarted — `mic_online:true`, fresh heartbeat, `NRestarts:0`, stable on P2 code. (The one-off `StopIteration` in logs was the OLD process exiting on SIGTERM — a known mic-pipe shutdown quirk, not the new build.)
+- **Pi-side deploy recipe** (for next time, without re-running the full installer): `rsync -az --exclude .venv --exclude __pycache__ --exclude '*.egg-info' kiosk/voice/ hbadmin@192.168.1.135:/home/hbadmin/homecal-voice/ && ssh … 'sudo systemctl restart homecal-voice'`.
+
+### Still open
+- **Live spoken acceptance** (user to run): "Hey Luna, add soccer practice Thursday 4pm" → band → confirm card → "yes" → event on the Week grid; plus chip tap-to-talk + long-press-mute on the touchscreen. PR #8 not yet merged (deployed build matches it).
+
+### Notable
+- Deliberate spec divergences (documented in the plan): `duration_min` (not `duration_minutes`), no `all_day` intent field (derived from `time` presence), `transcript_partial` reuse, ConfirmCard owns the `confirming` view, deferred "tap to cancel".
+- P3 (`?mode=desktop` Outlook shell) remains specced-but-unplanned — next phase.
+
 ## 2026-06-11 — P1 slot-tap creation shipped (calendar UI v2, phase 1 of 3)
 
 New branch `feat/calendar-ui-v2` (cut from `feat/voice-kid-intents` — P2's voice work depends on that code). Brainstormed with the visual companion (mockups for slot-create, voice band, desktop shell), spec at `docs/superpowers/specs/2026-06-11-ui-slot-create-voice-desktop-design.md`, P1 plan at `docs/superpowers/plans/2026-06-11-p1-slot-tap-create.md`. P2 (voice band + tap-to-talk + event_add intent) and P3 (`?mode=desktop` Outlook-style shell) are specced but not planned yet — plans get written against the code as it exists when their turn comes.
