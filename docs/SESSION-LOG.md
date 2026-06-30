@@ -16,11 +16,25 @@ Implemented subagent-driven on **Haiku** (16 tasks), with controller-side verifi
 - **event_add intent** — Haiku intent + `_event_add` executor handler → existing `POST /api/events`. Category resolved by name → Family fallback; Brisbane→UTC via the shared `BRISBANE_OFFSET_SECONDS`; title clamped 256, duration clamped 5–1440, date/time parse guarded → honest spoken errors. **Always confirms** via `AUTO_APPLY_THRESHOLDS["event_add"]=math.inf` (no new confirm machinery). Transcript rides the existing `thinking.transcript_partial`; reply is a new `applied.reply` field.
 
 ### Verification
-build clean · backend 201/201 · frontend 113/113 (incl. bandView 8 + voiceState event_add/reply) · Pi 462 (baseline 452 + 10 new). Followed by a final multi-agent PR review.
+build clean · backend 201/201 · frontend 113/113 (incl. bandView 8 + voiceState event_add/reply) · Pi 462 → **470** after the PR-review fixes (+8 tests).
+
+### Final multi-agent PR review (PR #8) → fixes folded in (`4512a73`)
+3 specialist reviewers (code-quality / silent-failure / test-coverage) on the full diff. Found one real logic bug + error-honesty/coverage gaps, all fixed:
+- **Bug:** clearing `_listen_trigger` only at the *start* of `_run_after_wake` didn't drop taps arriving *during* the 10s+ cycle → moved the clear into `run_once`'s `finally`.
+- **Error honesty:** empty-categories now says "no calendars set up yet" (not the false "couldn't reach the calendar"); backend rejects log the HTTP status + tag the audit `error`.
+- **+8 tests:** trigger-bypasses-wake, trigger-cleared-after-cycle, tap-dropped-while-muted; event_add malformed-time / duration-clamp×2 / no-categories / backend-reject.
+
+### Deployed to the Pi (2026-06-15)
+- **Wall + API:** container rebuilt from `feat/voice-p2` (bundle `index-C0ccCXAu.js`), `/api/voice/listen` live (200), kiosk reloaded.
+- **Pi voice service:** `kiosk/voice/` rsync'd to `/home/hbadmin/homecal-voice/` (editable `-e .` install, so .py updates take effect), `homecal-voice` restarted — `mic_online:true`, fresh heartbeat, `NRestarts:0`, stable on P2 code. (The one-off `StopIteration` in logs was the OLD process exiting on SIGTERM — a known mic-pipe shutdown quirk, not the new build.)
+- **Pi-side deploy recipe** (for next time, without re-running the full installer): `rsync -az --exclude .venv --exclude __pycache__ --exclude '*.egg-info' kiosk/voice/ hbadmin@192.168.1.135:/home/hbadmin/homecal-voice/ && ssh … 'sudo systemctl restart homecal-voice'`.
+
+### Still open
+- **Live spoken acceptance** (user to run): "Hey Luna, add soccer practice Thursday 4pm" → band → confirm card → "yes" → event on the Week grid; plus chip tap-to-talk + long-press-mute on the touchscreen. PR #8 not yet merged (deployed build matches it).
 
 ### Notable
 - Deliberate spec divergences (documented in the plan): `duration_min` (not `duration_minutes`), no `all_day` intent field (derived from `time` presence), `transcript_partial` reuse, ConfirmCard owns the `confirming` view, deferred "tap to cancel".
-- Deploy to the Pi pending; live acceptance (utter "add soccer practice Thursday 4pm" → confirm → event on the grid) to be done on next deploy.
+- P3 (`?mode=desktop` Outlook shell) remains specced-but-unplanned — next phase.
 
 ## 2026-06-11 — P1 slot-tap creation shipped (calendar UI v2, phase 1 of 3)
 
