@@ -78,6 +78,29 @@ and port works fine — the container binds `0.0.0.0`.
 
 ## Pi Kiosk (Bookworm / labwc / Wayland)
 
+### As-deployed unit reference
+
+Concrete values for the installed wall unit (avoids re-discovery):
+
+| Thing | Value |
+|-------|-------|
+| SSH | `hbadmin@192.168.1.135` |
+| Homecal server (kiosk points here) | `http://192.168.1.94:8787/?mode=wall` |
+| OS | Debian 13 (trixie) — Pi OS, Wayland session |
+| Compositor | labwc (`/usr/bin/labwc -m`) |
+| Wayland socket | `WAYLAND_DISPLAY=wayland-0`, `XDG_RUNTIME_DIR=/run/user/1000` |
+| Screen | Waveshare 10.1" DSI touch (`10.1-dsi-touch-a`), 800×1280 IPS, Goodix GT9271 touch; overlay `vc4-kms-dsi-waveshare-panel-v2,10_1_inch_a`. No onboard audio |
+| Display output | `DSI-2` — native `800x1280` portrait, transform `270` = landscape |
+| Autostart | `~/.config/labwc/autostart` (launches Chromium kiosk + `socat 9223→9222` + `wvkbd-mobintl`) |
+| CDP debug | `9222` local, exposed on `9223` via socat |
+
+To run `wlr-randr`/CDP tools over SSH you must export the session env, e.g.:
+
+```bash
+ssh hbadmin@192.168.1.135 \
+  'XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0 wlr-randr'
+```
+
 ### Prerequisites
 
 - Raspberry Pi OS Bookworm (64-bit recommended for Pi 5)
@@ -109,6 +132,31 @@ Add to `~/.config/labwc/autostart`:
 ```bash
 ~/launch.sh &
 ```
+
+### Display rotation (as deployed)
+
+The wall Pi uses a **DSI touchscreen** whose native panel is portrait
+(`800x1280`). labwc rotates it to landscape via an output transform. The
+**correct** transform is `270` — `90` produces an upside-down image.
+
+```bash
+# Output name + current transform:
+wlr-randr            # output is DSI-2 on this unit
+
+# Apply live (takes effect immediately, no reboot):
+wlr-randr --output DSI-2 --transform 270
+```
+
+Persist it by prepending this line to `~/.config/labwc/autostart` (it must run
+before Chromium launches):
+
+```bash
+wlr-randr --output DSI-2 --transform 270
+```
+
+> Transforms: `normal`/`90`/`180`/`270` rotate; `flipped-*` mirror. If a future
+> panel boots portrait or mirrored, try the others — `270` is specific to this
+> unit's panel + ribbon orientation in its frame.
 
 ### Remote debugging (recommended)
 
