@@ -111,6 +111,9 @@ function isParsedIntent(v: unknown): v is ParsedIntent {
       return typeof o.setup === 'string' && typeof o.punchline === 'string';
     case 'event_add':
       return typeof o.title === 'string' && typeof o.date === 'string';
+    case 'volume_set':
+      // value is optional (relative up/down may omit it).
+      return typeof o.mode === 'string' && (o.value === undefined || typeof o.value === 'number');
     case 'unknown':
       return typeof o.reason === 'string';
     default:
