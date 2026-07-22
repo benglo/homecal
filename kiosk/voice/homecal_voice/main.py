@@ -65,6 +65,11 @@ MUTE_CACHE_TTL_SEC = 5
 SSE_RECONNECT_DELAY_SEC = 5
 LIST_FETCH_TIMEOUT_SEC = 5
 STATUS_FETCH_TIMEOUT_SEC = 3
+# Startup volume reconciliation: the server may still be booting when the Pi
+# service starts, so retry a few times before giving up (a live poke will apply
+# any later change regardless).
+STARTUP_AUDIO_RETRIES = 3
+STARTUP_AUDIO_RETRY_DELAY_SEC = 5
 HEARTBEAT_TS_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
 
@@ -613,6 +618,7 @@ def main() -> int:
     )
 
     _start_mute_sse(cfg)
+    _apply_audio_on_startup(cfg)
 
     def _hb():
         while not _shutdown:
@@ -886,6 +892,38 @@ def is_muted_locally(cfg) -> bool:
     return _mute_state["muted"]
 
 
+def _fetch_and_apply_audio(cfg) -> bool:
+    """Read desired volume/audio-mute from the server and apply to the local
+    PipeWire sink. Called on the volume poke and (with retries) at startup —
+    re-fetching is the single source of truth, so a missed poke self-heals."""
+    try:
+        r = _requests.get(
+            f"{cfg.homecal_api_base}/api/voice/status",
+            timeout=STATUS_FETCH_TIMEOUT_SEC,
+        ).json()
+    except Exception as e:
+        log.warning("audio status fetch failed (%s); leaving sink untouched", e)
+        return False
+    from homecal_voice.audio import apply_audio
+    return apply_audio(
+        int(r.get("volume", 60)),
+        bool(r.get("audio_muted", False)),
+        cfg.audio_sink,
+    )
+
+
+def _apply_audio_on_startup(cfg) -> None:
+    """Reconcile the sink to the persisted level once at boot, in a background
+    thread so a booting server can't delay service startup."""
+    def run():
+        for _ in range(STARTUP_AUDIO_RETRIES):
+            if _shutdown or _fetch_and_apply_audio(cfg):
+                return
+            time.sleep(STARTUP_AUDIO_RETRY_DELAY_SEC)
+
+    threading.Thread(target=run, daemon=True).start()
+
+
 def _start_mute_sse(cfg) -> None:
     """Subscribe to /api/stream so mute changes from wall/phone propagate
     to the Pi within one round-trip. Without this, the 5-second local
@@ -907,6 +945,8 @@ def _start_mute_sse(cfg) -> None:
                                 action = classify_poke(_json.loads(line[6:].decode()))
                                 if action == "listen":
                                     _listen_trigger.set()
+                                elif action == "volume":
+                                    _fetch_and_apply_audio(cfg)
                                 elif action == "mute":
                                     _mute_state["checked_at"] = 0.0
                             except Exception:

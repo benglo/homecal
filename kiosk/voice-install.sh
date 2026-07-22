@@ -4,7 +4,10 @@ set -euo pipefail
 sudo apt-get update -qq
 # Trixie ships python3.13 only; we use silero ONNX path so torch isn't pulled.
 # pipewire is already running on the kiosk Pi but install pipewire-pulse if needed.
-sudo apt-get install -y python3 python3-venv python3-dev pipewire-pulse sox curl \
+# wireplumber provides `wpctl`, used to set the master speaker volume/mute
+# (see homecal_voice/audio.py). Present on the current Pi, but not guaranteed on
+# a fresh reimage — install it so volume control works out of the box.
+sudo apt-get install -y python3 python3-venv python3-dev pipewire-pulse wireplumber sox curl \
                         build-essential cmake git rsync \
                         mpg123  # MP3 player for TTS playback; aplay is PCM-only and silently fails on MP3
 
@@ -98,4 +101,8 @@ TTS_SERVER_URL=http://192.168.1.94:8789
 TTS_SERVER_TIMEOUT_S=10
 DAILY_REQUEST_CAP=200
 AUDIO_DEVICE=default
+# PipeWire sink for master volume (wall/phone/voice volume control). Default is
+# the current default sink; if the USB speaker isn't default, run `wpctl status`
+# and set this to its sink name or numeric ID to pin it.
+HOMECAL_AUDIO_SINK=@DEFAULT_AUDIO_SINK@
 ENV
