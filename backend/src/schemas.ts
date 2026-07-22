@@ -137,6 +137,7 @@ export const VOICE_INTENT_NAMES = [
   'query_dinner', 'query_agenda',
   'timer_set', 'timer_query', 'timer_cancel', 'timer_extend',
   'ask_question', 'noise_play', 'joke_tell',
+  'volume_set',
   'unknown',
 ] as const;
 export type VoiceIntentName = (typeof VOICE_INTENT_NAMES)[number];

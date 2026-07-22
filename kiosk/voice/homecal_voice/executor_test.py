@@ -1164,3 +1164,57 @@ def test_event_add_backend_reject_logs_status(requests_mock):
     out = ex.apply(IntentResult("event_add", {"title": "x", "date": "2026-06-20", "time": "09:00"}, 0.7, ""))
     assert out["ok"] is False
     assert out.get("error") == "http_400"
+
+
+def _capture_volume_put(requests_mock):
+    """Register PUT /api/voice/volume, echoing the level like the real server."""
+    seen = {}
+
+    def cb(request, context):
+        body = request.json()
+        seen.update(body)
+        return {"ok": True, "volume": body["level"]}
+
+    requests_mock.put("http://api/api/voice/volume", json=cb)
+    return seen
+
+
+def test_volume_set_absolute_puts_level(requests_mock):
+    seen = _capture_volume_put(requests_mock)
+    ex = Executor(base="http://api", token="t")
+    out = ex.apply(IntentResult("volume_set", {"mode": "set", "value": 70}, 0.95, ""))
+    assert out["ok"] is True
+    assert seen == {"level": 70}
+    assert "70 percent" in out["spoken"]
+
+
+def test_volume_set_up_reads_current_then_adds_step(requests_mock):
+    requests_mock.get("http://api/api/voice/status", json={"volume": 50})
+    seen = _capture_volume_put(requests_mock)
+    ex = Executor(base="http://api", token="t")
+    out = ex.apply(IntentResult("volume_set", {"mode": "up", "value": 15}, 0.95, ""))
+    assert out["ok"] is True
+    assert seen == {"level": 65}
+
+
+def test_volume_set_down_defaults_step_10(requests_mock):
+    requests_mock.get("http://api/api/voice/status", json={"volume": 50})
+    seen = _capture_volume_put(requests_mock)
+    ex = Executor(base="http://api", token="t")
+    ex.apply(IntentResult("volume_set", {"mode": "down"}, 0.95, ""))
+    assert seen == {"level": 40}
+
+
+def test_volume_set_up_clamps_at_100(requests_mock):
+    requests_mock.get("http://api/api/voice/status", json={"volume": 95})
+    seen = _capture_volume_put(requests_mock)
+    ex = Executor(base="http://api", token="t")
+    ex.apply(IntentResult("volume_set", {"mode": "up", "value": 20}, 0.95, ""))
+    assert seen == {"level": 100}
+
+
+def test_volume_set_missing_value_soft_fails_without_http():
+    ex = Executor(base="http://api", token="t")
+    out = ex.apply(IntentResult("volume_set", {"mode": "set"}, 0.95, ""))
+    assert out["ok"] is False
+    assert out["error"] == "volume_no_value"

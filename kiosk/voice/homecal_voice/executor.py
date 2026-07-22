@@ -148,6 +148,7 @@ class Executor:
             "noise_play": self._noise_play,
             "joke_tell": self._joke_tell,
             "ask_question": self._ask_question,
+            "volume_set": self._volume_set,
         }
 
     def apply(self, r: IntentResult) -> dict:
@@ -166,6 +167,44 @@ class Executor:
         )
         r.raise_for_status()
         return {"ok": True, "spoken": f"Got it, {meal} for {self._humanise(f['date'])}."}
+
+    def _current_volume(self) -> "int | None":
+        """Read the current master volume (0-100) for relative up/down changes."""
+        try:
+            r = requests.get(f"{self.base}/api/voice/status", timeout=API_TIMEOUT_SEC)
+            r.raise_for_status()
+            return int(r.json().get("volume", 60))
+        except Exception:
+            return None
+
+    def _volume_set(self, f: dict) -> dict:
+        mode = f.get("mode", "set")
+        if mode == "set":
+            try:
+                target = int(f["value"])
+            except (KeyError, TypeError, ValueError):
+                return {"ok": False, "spoken": "What volume would you like?", "error": "volume_no_value"}
+        elif mode in ("up", "down"):
+            try:
+                step = int(f.get("value", 10))
+            except (TypeError, ValueError):
+                step = 10
+            current = self._current_volume()
+            if current is None:
+                return {"ok": False, "spoken": "I couldn't reach the speakers.", "error": "volume_unreachable"}
+            target = current + step if mode == "up" else current - step
+        else:
+            return {"ok": False, "spoken": "I didn't catch that.", "error": "volume_bad_mode"}
+        target = max(0, min(100, target))
+        r = requests.put(
+            f"{self.base}/api/voice/volume",
+            json={"level": target},
+            headers=self.headers,
+            timeout=API_TIMEOUT_SEC,
+        )
+        r.raise_for_status()
+        applied = int(r.json().get("volume", target))
+        return {"ok": True, "spoken": f"Okay, volume {applied} percent."}
 
     def _chore_complete(self, f: dict) -> dict:
         members = _unwrap(requests.get(f"{self.base}/api/family-members", timeout=API_TIMEOUT_SEC).json())
