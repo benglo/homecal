@@ -32,19 +32,20 @@ Everything is a variable at the top of `wall_housing.py`. Tagged `# MEASURE` /
 | `SPK_BAFFLE_DIA`, `SPK_SCREW_CIRCLE` | driver cutout + mount PCD | EST — from the AS3034 datasheet |
 | `REBATE_*` | frame rebate | measured (260×180×35) |
 
-## Current fit report (v1 estimates)
+## Current fit report (v2 — measured outline, down-firing speaker)
 
-- Watertight ✔, footprint **259×179 mm** (drops into the 260×180 rebate).
-- Depth **77 mm** → protrudes **~42 mm** past the frame back — dominated by the
-  45 mm speaker pod. Accepted ("stack pokes out the back"), but see caveats.
-- ~**440 g** PETG — not trivial at a print service; the caveats below cut it.
+- Watertight ✔ single body, panel plane **259×179 mm** (drops into 260×180).
+- **Down-firing sealed chin** below the frame: hangs **~58 mm** below the frame
+  bottom and sticks **~51 mm** past the frame back (a 3″ cone needs ~80 mm in
+  plan to fire down — that's the chin's size, not slack).
+- ~**505 g** PETG — chunky at a print service; thin walls / smaller driver cut it.
 
-## Known v1 caveats (the iteration list)
+## Known caveats (the iteration list)
 
-1. **Rear protrusion / material.** The 45 mm rear-firing pod drives most of the
-   depth + mass. Options: shallower pod (less bass), a **bottom-firing** pod
-   (fires toward the room, not the wall — acoustically better anyway), or a
-   ported slot. Firing direction is the main open acoustic decision.
+1. **Speaker bulk vs driver size.** Down-firing the 3″ AS3034 forces the
+   soundbar-style chin (58 mm drop / 51 mm rear). A **2″ driver** shrinks it a
+   lot (at some output), or forward-firing avoids the chin entirely. This is the
+   main size/acoustics trade to settle.
 2. **Board placement.** Amp/buck posts are on the rear-external face beside the
    Pi (the front cavity is only ~15 mm deep — too shallow for boards). Confirm
    against real board sizes; they may want their own shallow sub-tray.
