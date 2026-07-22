@@ -1,5 +1,28 @@
 # Wall-unit housing (3D-printable)
 
+## Current direction — two parts (screen case + wired soundbar)
+
+The screen enclosure is now **`Display_case.3mf`** (user-supplied — it already
+builds around the Pi on the panel back). The audio is a **separate, wired**
+down-firing **`soundbar.py`** that sits under the frame; only thin speaker wires
+run back to the amp/Pi. `wall_housing.py` (below) is the earlier all-in-one
+concept, kept for reference.
+
+**Extracted `Display_case.3mf` dimensions** (measured from the mesh):
+- Outer 153 × 245 mm, 63 mm deep; front bezel 2 mm border → window 149 × 241 mm.
+- 4 × M3 corner mounts at x=±66, y=±109 (132 × 218 rectangle).
+- Cable/port slot 25 × 10 mm at (18, −67), bottom edge — wire exit toward the Pi.
+- Central Pi/access opening ~88 × 128 mm; internal ribs 18–63 mm deep.
+
+**`soundbar.py`** — rounded down-firing soundbar, 245 × 66 × 90 mm, sealed,
+~261 g PETG. Driver fires down out the flat bottom; rear 6 mm grommet for wires;
+two M2.5 top holes to bracket under the frame. Params (driver cutout/PCD) are
+`# EST` until the AS3034 is in hand.
+
+---
+
+
+
 Parametric rear housing for the homecal wall unit — an **all-in-one** integrated
 shell holding the Waveshare 10.1″ DSI panel, the Pi (mounted on the panel back),
 the Class-D amp + buck (the shared-DC-bus audio), and a sealed speaker pod.
