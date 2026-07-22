@@ -173,6 +173,14 @@ export const voiceMuteBody = z.object({
   until: z.string().datetime().nullable(),
 });
 
+export const voiceVolumeBody = z.object({
+  level: z.number().int().min(0).max(100),
+});
+
+export const voiceAudioMuteBody = z.object({
+  muted: z.boolean(),
+});
+
 // Kitchen timer caps: 8h max because a longer one is almost certainly an
 // STT misparse ("eight hours" instead of "eight minutes"), and a "one second"
 // timer is useless — collapses straight into the expiry chime.

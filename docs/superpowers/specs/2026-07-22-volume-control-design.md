@@ -1,7 +1,37 @@
 # Volume control — design spec
 
 **Date:** 2026-07-22
-**Status:** approved (design), pending implementation
+**Status:** approved (design), in implementation
+
+## Review corrections (folded in after agent review — these override the body below where they conflict)
+
+- **Migration is v8, not v4** (v4–v7 already exist: source col, timers, kid-intent cols, TTS
+  provenance). Add `CHECK (volume BETWEEN 0 AND 100)` and `CHECK (audio_muted IN (0,1))`.
+- **Poke envelope is nested:** `broker.poke('voice', {kind:'volume_changed'})` yields
+  `{kind:'voice', payload:{kind:'volume_changed'}}`. Pi `classify_poke` must key off
+  **`payload.kind`**, inserted before the `return "mute"` fallthrough; widen `PokeAction` to include
+  `"volume"`. Keep the poke a **bare signal** — the Pi always re-fetches `/status` (single source of
+  truth); the frontend invalidates `['voice-status']` on any voice poke regardless of payload.
+- **Wire a new `"volume"` action into `main._start_mute_sse` AND add a net-new startup apply** (no
+  existing hook mirrors this).
+- **`wpctl` needs `XDG_RUNTIME_DIR=/run/user/1000` in the subprocess env** — the system service lacks
+  it by default. Add `wireplumber` to `voice-install.sh` for fresh-reimage safety.
+- **Configurable sink:** `HOMECAL_AUDIO_SINK` (default `@DEFAULT_AUDIO_SINK@`) — the USB speaker may
+  not be the PipeWire default sink.
+- **Schemas live in the single file `backend/src/schemas.ts`.** Add `voiceVolumeBody`,
+  `voiceAudioMuteBody`.
+- **Update the `VoiceStatus` TS interface** (`frontend/src/core/model/types.ts`) with
+  `volume: number; audio_muted: boolean`.
+- **Wall placement:** the ControlBar renders **`VoiceChip`**, not `MuteToggle` (which is now phone-only,
+  `PhoneLayout.tsx`). Put `VolumeControl` in the ControlBar beside `VoiceChip`, and on the phone Voice
+  section.
+- **`volume_set` needs three edits in `intent.py`:** `VALID_INTENTS`, `REQUIRED_FIELDS`, and the
+  `SYSTEM_TEMPLATE` schema (Haiku path gates on `VALID_INTENTS`).
+- **Applied-vs-desired (v1 limitation):** the wall shows desired state; the Pi re-fetch-on-poke +
+  startup apply make it self-healing, but if the voice service is down the slider won't reflect
+  reality. Degrade the `VolumeControl` glyph when `mic_online` is false; full applied-state echo is
+  deferred.
+
 **Related:** mirrors the voice **mute** feature (`voice_settings`, `PUT /api/voice/mute`,
 `broker.poke('voice')`, `MuteToggle.tsx`, Pi `poke_handlers.py`).
 

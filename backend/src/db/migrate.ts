@@ -179,6 +179,19 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE voice_utterances ADD COLUMN tts_latency_ms INTEGER;
     `);
   },
+  // v8 — master speaker volume + audio mute, applied Pi-side via wpctl on the
+  // default (or configured) PipeWire sink. Distinct from mute_until: that mutes
+  // voice LISTENING (the mic/wake); audio_muted mutes the SPEAKERS. Constant-
+  // literal defaults are required for a NOT NULL ADD COLUMN so the existing
+  // singleton row back-fills without a rewrite.
+  (db) => {
+    db.exec(`
+      ALTER TABLE voice_settings ADD COLUMN volume INTEGER NOT NULL DEFAULT 60
+        CHECK (volume BETWEEN 0 AND 100);
+      ALTER TABLE voice_settings ADD COLUMN audio_muted INTEGER NOT NULL DEFAULT 0
+        CHECK (audio_muted IN (0, 1));
+    `);
+  },
 ];
 
 /** Seed categories — idempotent, Okabe–Ito palette from the design system. */
