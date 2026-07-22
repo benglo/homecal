@@ -20,8 +20,9 @@ from typing import Callable, List
 log = logging.getLogger("homecal_voice.audio")
 
 WPCTL_TIMEOUT_SEC = 5
-# The user session that owns PipeWire. hbadmin = uid 1000 on the wall Pi;
-# overridable if the service ever runs under a different uid.
+# Fallback when XDG_RUNTIME_DIR is unset (systemd system services usually lack
+# it). PipeWire's socket lives under /run/user/<uid>; the first login user is
+# uid 1000, which is the wall Pi's case.
 _RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR") or "/run/user/1000"
 
 
@@ -31,7 +32,8 @@ def _wpctl_env() -> dict:
 
 def volume_argv(sink: str, level: int) -> List[str]:
     """wpctl set-volume argv. ``level`` is 0..100; wpctl takes a 0.0..1.0
-    fraction. Clamped to [0, 1.0] — never boost past unity on cheap speakers."""
+    fraction. Input clamped to 0..100 so the fraction never exceeds 1.0 — no
+    boosting cheap speakers past unity."""
     frac = max(0, min(100, int(level))) / 100
     return ["wpctl", "set-volume", sink, f"{frac:.2f}"]
 
@@ -60,6 +62,11 @@ def apply_audio(
         return True
     except FileNotFoundError:
         log.warning("wpctl not found; cannot set volume (install wireplumber)")
+    except subprocess.CalledProcessError as e:
+        # capture_output=True puts wpctl's real complaint (e.g. a bad sink name
+        # -> "Object not found", the likeliest failure) on stderr, not in str(e).
+        stderr = e.stderr.decode(errors="replace") if isinstance(e.stderr, bytes) else (e.stderr or "")
+        log.warning("wpctl failed on sink %s (rc=%s): %s", sink, e.returncode, stderr.strip())
     except Exception as e:  # noqa: BLE001 — deliberately swallow; audio is non-critical
-        log.warning("wpctl failed to apply volume/mute on sink %s: %s", sink, e)
+        log.warning("wpctl error applying volume=%s mute=%s on sink %s: %s", volume, muted, sink, e)
     return False

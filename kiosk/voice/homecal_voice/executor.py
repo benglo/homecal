@@ -174,7 +174,10 @@ class Executor:
             r = requests.get(f"{self.base}/api/voice/status", timeout=API_TIMEOUT_SEC)
             r.raise_for_status()
             return int(r.json().get("volume", 60))
-        except Exception:
+        except Exception as e:
+            # Log so a "volume up stopped working" report has something to grep
+            # in journalctl; the caller degrades to a spoken soft-failure.
+            log.warning("current volume fetch failed (%s); relative volume unavailable", e)
             return None
 
     def _volume_set(self, f: dict) -> dict:
@@ -196,13 +199,19 @@ class Executor:
         else:
             return {"ok": False, "spoken": "I didn't catch that.", "error": "volume_bad_mode"}
         target = max(0, min(100, target))
-        r = requests.put(
-            f"{self.base}/api/voice/volume",
-            json={"level": target},
-            headers=self.headers,
-            timeout=API_TIMEOUT_SEC,
-        )
-        r.raise_for_status()
+        try:
+            r = requests.put(
+                f"{self.base}/api/voice/volume",
+                json={"level": target},
+                headers=self.headers,
+                timeout=API_TIMEOUT_SEC,
+            )
+            r.raise_for_status()
+        except requests.RequestException as e:
+            # Own the failure here — otherwise it bubbles to the generic "couldn't
+            # reach the calendar" copy, which is a lie for a volume command.
+            log.warning("volume PUT failed: %s", e)
+            return {"ok": False, "spoken": "I couldn't change the volume.", "error": "volume_put_failed"}
         applied = int(r.json().get("volume", target))
         return {"ok": True, "spoken": f"Okay, volume {applied} percent."}
 

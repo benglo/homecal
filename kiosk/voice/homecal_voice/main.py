@@ -920,6 +920,12 @@ def _apply_audio_on_startup(cfg) -> None:
             if _shutdown or _fetch_and_apply_audio(cfg):
                 return
             time.sleep(STARTUP_AUDIO_RETRY_DELAY_SEC)
+        if not _shutdown:
+            log.warning(
+                "startup volume reconciliation gave up after %d attempts; sink "
+                "left at its power-on level until the next volume change",
+                STARTUP_AUDIO_RETRIES,
+            )
 
     threading.Thread(target=run, daemon=True).start()
 

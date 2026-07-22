@@ -1218,3 +1218,27 @@ def test_volume_set_missing_value_soft_fails_without_http():
     out = ex.apply(IntentResult("volume_set", {"mode": "set"}, 0.95, ""))
     assert out["ok"] is False
     assert out["error"] == "volume_no_value"
+
+
+def test_volume_set_bad_mode_soft_fails_without_http():
+    ex = Executor(base="http://api", token="t")
+    out = ex.apply(IntentResult("volume_set", {"mode": "toggle"}, 0.95, ""))
+    assert out["ok"] is False
+    assert out["error"] == "volume_bad_mode"
+
+
+def test_volume_set_relative_unreachable_speaks_soft_error(requests_mock):
+    # status fetch fails -> _current_volume None -> no PUT, spoken soft error
+    requests_mock.get("http://api/api/voice/status", status_code=500)
+    ex = Executor(base="http://api", token="t")
+    out = ex.apply(IntentResult("volume_set", {"mode": "up"}, 0.95, ""))
+    assert out["ok"] is False
+    assert out["error"] == "volume_unreachable"
+
+
+def test_volume_set_put_failure_speaks_soft_error(requests_mock):
+    requests_mock.put("http://api/api/voice/volume", status_code=500)
+    ex = Executor(base="http://api", token="t")
+    out = ex.apply(IntentResult("volume_set", {"mode": "set", "value": 50}, 0.95, ""))
+    assert out["ok"] is False
+    assert out["error"] == "volume_put_failed"

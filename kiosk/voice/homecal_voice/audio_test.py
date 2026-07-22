@@ -47,3 +47,13 @@ def test_apply_audio_swallows_wpctl_failure():
         raise RuntimeError("no such sink")
 
     assert apply_audio(50, False, "s", run=fake_run) is False
+
+
+def test_apply_audio_swallows_called_process_error():
+    import subprocess
+
+    def fake_run(argv, **kwargs):
+        raise subprocess.CalledProcessError(1, argv, stderr=b"Object not found")
+
+    # Bad sink name is the likeliest real failure; must not raise.
+    assert apply_audio(50, False, "badsink", run=fake_run) is False

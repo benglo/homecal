@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Volume2, Volume1, VolumeX } from 'lucide-react';
+import { ApiError } from '../../core/api/client';
 import { useVoiceStatus } from '../../core/hooks/useData';
 import { useSetVolume, useSetAudioMute } from '../../core/hooks/useMutations';
 import { TogglePill } from '../ui/TogglePill';
@@ -16,8 +17,12 @@ export function volumeGlyph(volume: number, audioMuted: boolean): VolumeGlyph {
 
 const ICONS = { muted: VolumeX, low: Volume1, high: Volume2 } as const;
 
-// Debounce PUTs while dragging the slider so a drag doesn't flood the API; the
-// trailing call always carries the release value.
+// Trailing-edge debounce: while the slider is being adjusted (pointer drag OR
+// arrow keys, both of which fire onChange), only the last value in a quiet
+// window is PUT — a drag can't flood the API. The same "interacting" window,
+// cleared when the debounce fires, keeps an SSE refetch from snapping the thumb
+// back mid-adjust. Driving off onChange (not pointerup) avoids a stuck flag if
+// the pointer is released off the element.
 const COMMIT_DEBOUNCE_MS = 150;
 
 export function VolumeControl() {
@@ -25,23 +30,40 @@ export function VolumeControl() {
   const setVolume = useSetVolume();
   const setAudioMute = useSetAudioMute();
   const [open, setOpen] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
   const serverVolume = status?.volume ?? 60;
   const audioMuted = !!status?.audio_muted;
   const online = status?.mic_online ?? false;
 
-  // Local value keeps the slider smooth mid-drag; re-sync from the server only
-  // when not actively dragging (SSE invalidation would otherwise fight the drag).
-  const [dragging, setDragging] = useState(false);
+  // Local value keeps the slider smooth while adjusting; re-sync from the
+  // server only when idle (an SSE invalidation would otherwise fight the drag).
+  const [interacting, setInteracting] = useState(false);
   const [local, setLocal] = useState(serverVolume);
   useEffect(() => {
-    if (!dragging) setLocal(serverVolume);
-  }, [serverVolume, dragging]);
+    if (!interacting) setLocal(serverVolume);
+  }, [serverVolume, interacting]);
 
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+
   const commit = (n: number) => {
+    setInteracting(true);
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => setVolume.mutate(n), COMMIT_DEBOUNCE_MS);
+    timer.current = setTimeout(() => {
+      setVolume.mutate(n, {
+        onError: (e) => setErr(e instanceof ApiError ? e.message : 'Could not set volume — try again.'),
+        onSuccess: () => setErr(null),
+      });
+      setInteracting(false);
+    }, COMMIT_DEBOUNCE_MS);
+  };
+
+  const toggleMute = () => {
+    setAudioMute.mutate(!audioMuted, {
+      onError: (e) => setErr(e instanceof ApiError ? e.message : 'Could not change mute — try again.'),
+      onSuccess: () => setErr(null),
+    });
   };
 
   const glyph = volumeGlyph(local, audioMuted);
@@ -84,8 +106,6 @@ export function VolumeControl() {
               step={1}
               value={local}
               aria-label="Speaker volume"
-              onPointerDown={() => setDragging(true)}
-              onPointerUp={() => setDragging(false)}
               onChange={(e) => {
                 const n = Number(e.target.value);
                 setLocal(n);
@@ -99,7 +119,7 @@ export function VolumeControl() {
           </div>
           <button
             role="menuitem"
-            onClick={() => setAudioMute.mutate(!audioMuted)}
+            onClick={toggleMute}
             style={{
               display: 'block',
               width: '100%',
@@ -116,6 +136,11 @@ export function VolumeControl() {
           >
             {audioMuted ? 'Unmute speakers' : 'Mute speakers'}
           </button>
+          {err && (
+            <div style={{ padding: '6px 14px 10px', fontSize: 12, color: 'var(--danger, #D55E00)' }}>
+              {err}
+            </div>
+          )}
           {!online && (
             <div style={{ padding: '6px 14px 10px', fontSize: 12, color: 'var(--text-faint)' }}>
               Speaker offline — changes apply when it reconnects.
