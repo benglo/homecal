@@ -296,3 +296,22 @@ def test_event_add_missing_title_downgraded_to_unknown():
     from homecal_voice.intent import parse_intent_response
     r = parse_intent_response('{"intent":"event_add","date":"2026-06-15","confidence":0.7}')
     assert r.intent == "unknown"
+
+
+def test_parse_volume_set_absolute():
+    r = parse_intent_response('{"intent":"volume_set","mode":"set","value":70,"confidence":0.95}')
+    assert r.intent == "volume_set"
+    assert r.fields["mode"] == "set"
+    assert r.fields["value"] == 70
+
+
+def test_parse_volume_set_relative_needs_no_value():
+    r = parse_intent_response('{"intent":"volume_set","mode":"up","confidence":0.9}')
+    assert r.intent == "volume_set"
+    assert r.fields["mode"] == "up"
+
+
+def test_parse_volume_set_missing_mode_rejected():
+    r = parse_intent_response('{"intent":"volume_set","value":50,"confidence":0.9}')
+    assert r.intent == "unknown"
+    assert "missing_fields" in r.fields["reason"]

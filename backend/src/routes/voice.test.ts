@@ -199,6 +199,88 @@ test('GET /api/voice/status includes last_tts_provider from most recent utteranc
   assert.equal(body.last_tts_provider, 'kokoro_lan');
 });
 
+test('GET /api/voice/status: volume defaults to 60, audio_muted false', async () => {
+  const r = await app.inject({ method: 'GET', url: '/api/voice/status' });
+  const body = r.json() as { volume: number; audio_muted: boolean };
+  assert.equal(body.volume, 60);
+  assert.equal(body.audio_muted, false);
+});
+
+test('PUT /api/voice/volume: stores + GET reflects + pokes broker', async () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let poked: any = null;
+  const unsub = broker.subscribe((p: unknown) => { poked = p; });
+  try {
+    const r = await app.inject({
+      method: 'PUT',
+      url: '/api/voice/volume',
+      payload: { level: 35 },
+    });
+    assert.equal(r.statusCode, 200);
+    assert.deepEqual(r.json(), { ok: true, volume: 35 });
+    assert.equal(poked?.kind, 'voice');
+    assert.deepEqual(poked?.payload, { kind: 'volume_changed' });
+
+    const status = await app.inject({ method: 'GET', url: '/api/voice/status' });
+    const body = status.json() as { volume: number };
+    assert.equal(body.volume, 35);
+  } finally {
+    unsub();
+  }
+});
+
+test('PUT /api/voice/volume: validation 400 on out-of-range', async () => {
+  const r = await app.inject({
+    method: 'PUT',
+    url: '/api/voice/volume',
+    payload: { level: 150 },
+  });
+  assert.equal(r.statusCode, 400);
+  const body = r.json() as Envelope;
+  assert.equal(body.error?.code, 'VALIDATION');
+});
+
+test('PUT /api/voice/volume: validation 400 on non-integer', async () => {
+  const r = await app.inject({
+    method: 'PUT',
+    url: '/api/voice/volume',
+    payload: { level: 42.5 },
+  });
+  assert.equal(r.statusCode, 400);
+});
+
+test('PUT /api/voice/audio-mute: stores + GET reflects + pokes broker', async () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let poked: any = null;
+  const unsub = broker.subscribe((p: unknown) => { poked = p; });
+  try {
+    const r = await app.inject({
+      method: 'PUT',
+      url: '/api/voice/audio-mute',
+      payload: { muted: true },
+    });
+    assert.equal(r.statusCode, 200);
+    assert.deepEqual(r.json(), { ok: true, audio_muted: true });
+    assert.equal(poked?.kind, 'voice');
+    assert.deepEqual(poked?.payload, { kind: 'audio_mute_changed' });
+
+    const status = await app.inject({ method: 'GET', url: '/api/voice/status' });
+    const body = status.json() as { audio_muted: boolean };
+    assert.equal(body.audio_muted, true);
+  } finally {
+    unsub();
+  }
+});
+
+test('setVolume clamps out-of-range values (repo belt-and-braces)', async () => {
+  const { setVolume, getVolume } = await import('../repos/voiceSettings');
+  setVolume(999);
+  assert.equal(getVolume(), 100);
+  setVolume(-5);
+  assert.equal(getVolume(), 0);
+  setVolume(50); // restore a sane value
+});
+
 // NO PI token header — the wall (browser, no token) calls this, mirroring the
 // unguarded PUT /api/voice/mute. The test must exercise the unauthenticated path.
 test('POST /api/voice/listen: pokes voice listen_request + 200 (no token)', async () => {

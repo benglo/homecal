@@ -2,9 +2,12 @@ import type { FastifyInstance } from 'fastify';
 import { parseBody } from './helpers';
 import {
   voiceStateBody, voiceAuditBody, voiceHeartbeatBody, voiceMuteBody,
+  voiceVolumeBody, voiceAudioMuteBody,
 } from '../schemas';
 import { insertUtterance, getLastTtsProvider } from '../repos/voiceUtterances';
-import { getMuteUntil, setMuteUntil } from '../repos/voiceSettings';
+import {
+  getMuteUntil, setMuteUntil, getVolume, setVolume, getAudioMuted, setAudioMuted,
+} from '../repos/voiceSettings';
 import { broker } from '../realtime';
 import { voiceState } from '../voice/state';
 import { requirePiToken } from '../voice/auth';
@@ -58,6 +61,8 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
       mute_until: mu,
       muted: !!mu && new Date(mu).getTime() > now.getTime(),
       last_tts_provider: getLastTtsProvider(),
+      volume: getVolume(),
+      audio_muted: getAudioMuted(),
     };
   });
 
@@ -67,6 +72,25 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
     setMuteUntil(body.until);
     broker.poke('voice', { kind: 'mute_changed', mute_until: body.until });
     return { ok: true, mute_until: body.until };
+  });
+
+  // Wall / phone / voice -> server: master speaker volume (0–100). State lives
+  // here; the Pi voice service re-fetches /status on the poke and applies it via
+  // wpctl (speakers are on the Pi, not in this container). Bare-signal poke —
+  // the Pi is the single reader of the applied value, so no payload data.
+  app.put('/api/voice/volume', async (req) => {
+    const body = parseBody(voiceVolumeBody, req.body);
+    setVolume(body.level);
+    broker.poke('voice', { kind: 'volume_changed' });
+    return { ok: true, volume: getVolume() };
+  });
+
+  // Speaker audio-mute (distinct from PUT /mute, which mutes voice listening).
+  app.put('/api/voice/audio-mute', async (req) => {
+    const body = parseBody(voiceAudioMuteBody, req.body);
+    setAudioMuted(body.muted);
+    broker.poke('voice', { kind: 'audio_mute_changed' });
+    return { ok: true, audio_muted: body.muted };
   });
 
   // Tap-to-talk: the wall (browser, NO Pi token) asks the Pi to start a listen

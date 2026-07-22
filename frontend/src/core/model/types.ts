@@ -198,6 +198,8 @@ export interface VoiceStatus {
   mute_until: string | null;
   muted: boolean;
   last_tts_provider: TtsProvider | null;
+  volume: number;
+  audio_muted: boolean;
 }
 
 export interface VoiceConcern {

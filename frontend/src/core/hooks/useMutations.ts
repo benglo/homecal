@@ -274,6 +274,22 @@ export function useMuteVoice() {
   });
 }
 
+export function useSetVolume() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (level: number) => api.setVoiceVolume(level),
+    onSettled: () => void qc.invalidateQueries({ queryKey: ['voice-status'] }),
+  });
+}
+
+export function useSetAudioMute() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (muted: boolean) => api.setVoiceAudioMute(muted),
+    onSettled: () => void qc.invalidateQueries({ queryKey: ['voice-status'] }),
+  });
+}
+
 /** Tap-to-talk: ask the Pi (via the backend poke) to start a listen cycle.
  *  Fire-and-forget; the resulting state changes arrive over the voice SSE. */
 export function useTriggerListen() {

@@ -14,6 +14,14 @@ def test_voice_state_echo_is_mute_refresh():
     assert classify_poke({"kind": "voice", "payload": {"kind": "applied"}}) == "mute"
 
 
+def test_volume_changed_is_a_volume_action():
+    assert classify_poke({"kind": "voice", "payload": {"kind": "volume_changed"}}) == "volume"
+
+
+def test_audio_mute_changed_is_a_volume_action():
+    assert classify_poke({"kind": "voice", "payload": {"kind": "audio_mute_changed"}}) == "volume"
+
+
 def test_non_voice_poke_ignored():
     assert classify_poke({"kind": "events"}) is None
     assert classify_poke({}) is None

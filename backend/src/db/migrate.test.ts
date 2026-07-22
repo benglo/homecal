@@ -19,7 +19,7 @@ test('v6 adds intent_name, answer, concern columns; no CHECK constraint on inten
   const row = db.prepare(`SELECT intent_name FROM voice_utterances WHERE id='t1'`).get() as { intent_name: string };
   assert.equal(row.intent_name, 'some_future_intent');
 
-  assert.equal(db.pragma('user_version', { simple: true }), 7);
+  assert.equal(db.pragma('user_version', { simple: true }), 8);
 });
 
 test('v7 adds tts_provider and tts_latency_ms columns to voice_utterances', () => {
@@ -38,5 +38,26 @@ test('v7 adds tts_provider and tts_latency_ms columns to voice_utterances', () =
   assert.equal(row.tts_provider, 'kokoro_lan');
   assert.equal(row.tts_latency_ms, 123);
 
-  assert.equal(db.pragma('user_version', { simple: true }), 7);
+  assert.equal(db.pragma('user_version', { simple: true }), 8);
+});
+
+test('v8 adds volume + audio_muted to voice_settings, back-filled with defaults', () => {
+  const db = new Database(':memory:');
+  runMigrations(db);
+  const cols = db.prepare("SELECT name, type FROM pragma_table_info('voice_settings')").all() as { name: string; type: string }[];
+  const byName = Object.fromEntries(cols.map(c => [c.name, c.type]));
+  assert.equal(byName.volume, 'INTEGER');
+  assert.equal(byName.audio_muted, 'INTEGER');
+
+  // The pre-existing singleton row is back-filled with the constant defaults.
+  const row = db.prepare(`SELECT volume, audio_muted FROM voice_settings WHERE id=1`).get() as { volume: number; audio_muted: number };
+  assert.equal(row.volume, 60);
+  assert.equal(row.audio_muted, 0);
+
+  // CHECK constraints reject out-of-range writes (Zod is the primary gate, but
+  // the CHECK is house style for bounded columns).
+  assert.throws(() => db.prepare(`UPDATE voice_settings SET volume = 150 WHERE id=1`).run());
+  assert.throws(() => db.prepare(`UPDATE voice_settings SET audio_muted = 2 WHERE id=1`).run());
+
+  assert.equal(db.pragma('user_version', { simple: true }), 8);
 });

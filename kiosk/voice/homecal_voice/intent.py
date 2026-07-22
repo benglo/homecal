@@ -14,6 +14,7 @@ VALID_INTENTS = {
     "dinner_set", "chore_complete", "query_dinner", "query_agenda",
     "event_add",
     "ask_question", "noise_play", "joke_tell",
+    "volume_set",
     "unknown",
 }
 
@@ -32,6 +33,9 @@ REQUIRED_FIELDS: dict[str, frozenset[str]] = {
     # boundary; executor returns soft failure on a malformed Haiku payload.
     "noise_play": frozenset(),
     "joke_tell": frozenset({"setup", "punchline"}),
+    # "value" is required only for mode="set"; up/down default the step. Gate on
+    # mode here and validate value at the executor branch (like noise_play).
+    "volume_set": frozenset({"mode"}),
     "unknown": frozenset({"reason"}),
 }
 
@@ -82,6 +86,7 @@ these schemas. Do not include any other text:
 {{"intent":"ask_question",   "answer":"string",   "confidence":0..1, "concern":false}}
 {{"intent":"noise_play",     "play_catalog":"name", "fallback_text":"string", "confidence":0..1}}
 {{"intent":"joke_tell",      "setup":"string", "punchline":"string", "confidence":0..1}}
+{{"intent":"volume_set",     "mode":"set|up|down", "value":70,       "confidence":0..1}}
 {{"intent":"unknown",        "reason":"string",                     "confidence":0..1}}
 
 Use ask_question when the user is asking a question (factual, trivial, or
@@ -107,6 +112,11 @@ soccer practice Thursday at 4pm", "put dentist on the 20th at 9am"). Rules:
 - "time": HH:MM 24h Brisbane local. OMIT time for an all-day event.
 - "duration_min": minutes; default 60 if the user didn't say. Omit for all-day.
 - "category": optionally the kind of event (sport, school, work); omit if unsure.
+
+Use volume_set when the user wants to change the speaker volume ("turn it up",
+"louder", "quieter", "set the volume to 70 percent", "volume down"). Rules:
+- "mode":"set" with "value" 0-100 for an absolute level ("volume to 30" → value:30).
+- "mode":"up" or "down" to adjust relative; "value" is the step (omit for default).
 
 For chore_complete:
 - "person" MUST be one of the family member names listed above.

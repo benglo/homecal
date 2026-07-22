@@ -137,6 +137,7 @@ export const VOICE_INTENT_NAMES = [
   'query_dinner', 'query_agenda',
   'timer_set', 'timer_query', 'timer_cancel', 'timer_extend',
   'ask_question', 'noise_play', 'joke_tell',
+  'volume_set',
   'unknown',
 ] as const;
 export type VoiceIntentName = (typeof VOICE_INTENT_NAMES)[number];
@@ -171,6 +172,14 @@ export const voiceHeartbeatBody = z.object({
 
 export const voiceMuteBody = z.object({
   until: z.string().datetime().nullable(),
+});
+
+export const voiceVolumeBody = z.object({
+  level: z.number().int().min(0).max(100),
+});
+
+export const voiceAudioMuteBody = z.object({
+  muted: z.boolean(),
 });
 
 // Kitchen timer caps: 8h max because a longer one is almost certainly an

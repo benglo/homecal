@@ -3,6 +3,7 @@ import type { DateTime } from 'luxon';
 import type { WallView } from '../../core/model/types';
 import { ZONE } from '../../core/util/time';
 import { VoiceChip } from './VoiceChip';
+import { VolumeControl } from './VolumeControl';
 import type { OverlayState } from '../voice/voiceState';
 
 interface Props {
@@ -88,6 +89,7 @@ export function ControlBar({ view, anchor, onView, onPrev, onNext, onToday, isTo
           Today
         </button>
         <VoiceChip state={voiceState} />
+        <VolumeControl />
         <button
           type="button"
           onClick={onQuickAdd}
