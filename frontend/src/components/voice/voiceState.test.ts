@@ -1,5 +1,21 @@
 import { describe, it, expect } from 'vitest';
-import { reduceOverlay, initialOverlay, pokeToAction } from './voiceState';
+import {
+  reduceOverlay, initialOverlay, pokeToAction,
+  autoFadeMs, APPLIED_AUTO_FADE_MS, FAILED_AUTO_FADE_MS,
+} from './voiceState';
+
+describe('autoFadeMs', () => {
+  it('fades both terminal states back to idle (failed must not stick)', () => {
+    expect(autoFadeMs('applied')).toBe(APPLIED_AUTO_FADE_MS);
+    expect(autoFadeMs('failed')).toBe(FAILED_AUTO_FADE_MS);
+  });
+
+  it('does not fade states that persist until the next poke', () => {
+    for (const k of ['idle', 'listening', 'thinking', 'confirming', 'mic_offline', 'voice_offline'] as const) {
+      expect(autoFadeMs(k)).toBeNull();
+    }
+  });
+});
 
 describe('reduceOverlay', () => {
   it('starts idle', () => {
