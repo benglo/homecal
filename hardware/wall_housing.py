@@ -27,10 +27,12 @@ from trimesh.boolean import union, difference
 # Picture-frame rebate (the well behind the picture) — MEASURED by user.
 REBATE_W, REBATE_H, REBATE_DEPTH = 260.0, 180.0, 35.0
 
-# Panel outer glass/PCB outline — the ONE number still to confirm with calipers.
-SCREEN_W, SCREEN_H = 233.0, 153.0          # EST — MEASURE outer outline (landscape)
+# Panel outer glass/PCB outline — MEASURED edge-to-edge (landscape: long edge
+# along the rebate width). Active area is ~216x135, so the short-axis bezel is
+# only ~6mm/side — keep BEZEL_OVERLAP under that or the lip clips the display.
+SCREEN_W, SCREEN_H = 240.0, 147.0          # MEASURED
 SCREEN_T = 10.8                            # Waveshare 10.1-DSI-TOUCH-A datasheet
-BEZEL_OVERLAP = 5.0                        # how far the front lip laps the bezel
+BEZEL_OVERLAP = 4.0                        # lip lap; <6mm short-axis bezel -> 2mm clear to active
 FIT_GAP = 0.8                              # clearance around the panel in its pocket
 
 # Shell
