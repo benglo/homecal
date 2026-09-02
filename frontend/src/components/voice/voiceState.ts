@@ -111,11 +111,29 @@ function isParsedIntent(v: unknown): v is ParsedIntent {
       return typeof o.setup === 'string' && typeof o.punchline === 'string';
     case 'event_add':
       return typeof o.title === 'string' && typeof o.date === 'string';
+    case 'volume_set':
+      // value is optional (relative up/down may omit it).
+      return typeof o.mode === 'string' && (o.value === undefined || typeof o.value === 'number');
     case 'unknown':
       return typeof o.reason === 'string';
     default:
       return false;
   }
+}
+
+/** Terminal overlay states fade back to idle after these delays (ms). `applied`
+ *  is a quick success flash; `failed` lingers a little longer so the error is
+ *  readable. Without a `failed` timer the "Didn't catch that" band stuck on
+ *  screen until the next utterance. */
+export const APPLIED_AUTO_FADE_MS = 2000;
+export const FAILED_AUTO_FADE_MS = 4000;
+
+/** How long a state stays before auto-fading to idle, or null for states that
+ *  persist until the next poke (listening/thinking/confirming/offline/idle). */
+export function autoFadeMs(kind: OverlayState['kind']): number | null {
+  if (kind === 'applied') return APPLIED_AUTO_FADE_MS;
+  if (kind === 'failed') return FAILED_AUTO_FADE_MS;
+  return null;
 }
 
 export function initialOverlay(): OverlayState {

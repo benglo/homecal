@@ -83,6 +83,7 @@ function appliedLabel(intent: ParsedIntent): string {
     case 'joke_tell': return '😄 joke';
     case 'noise_play': return '';  // no chip flash; the noise IS the feedback
     case 'event_add': return `added ${intent.title}`;
+    case 'volume_set': return intent.mode === 'set' && intent.value !== undefined ? `volume ${intent.value}%` : 'volume';
     case 'unknown': return "didn't catch that";
   }
 }

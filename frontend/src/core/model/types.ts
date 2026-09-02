@@ -184,6 +184,7 @@ export type ParsedIntent =
   | { intent: 'noise_play'; catalog_key?: string; play_catalog?: string; fallback_text?: string; confidence: number }
   | { intent: 'joke_tell'; joke_id?: string; setup: string; punchline: string; confidence: number }
   | { intent: 'event_add'; title: string; date: string; time?: string; duration_min?: number; category?: string; confidence: number }
+  | { intent: 'volume_set'; mode: string; value?: number; confidence: number }
   | { intent: 'unknown'; reason: string; confidence: number };
 
 export type VoiceOverlayKind =

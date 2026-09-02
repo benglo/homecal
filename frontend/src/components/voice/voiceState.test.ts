@@ -1,5 +1,43 @@
 import { describe, it, expect } from 'vitest';
-import { reduceOverlay, initialOverlay, pokeToAction } from './voiceState';
+import {
+  reduceOverlay, initialOverlay, pokeToAction,
+  autoFadeMs, APPLIED_AUTO_FADE_MS, FAILED_AUTO_FADE_MS,
+} from './voiceState';
+
+describe('volume_set intent (applied poke must not be dropped -> band stuck on thinking)', () => {
+  it('accepts an applied volume_set poke', () => {
+    const action = pokeToAction({
+      utterance_id: 'u1',
+      kind: 'applied',
+      payload: { intent: { intent: 'volume_set', mode: 'set', value: 100, confidence: 0.95 }, reply: 'Okay, volume 100 percent.' },
+    });
+    expect(action).not.toBeNull();
+    expect(action?.type === 'sse' && action.intent?.intent).toBe('volume_set');
+  });
+
+  it('accepts a relative volume_set with no value', () => {
+    const action = pokeToAction({
+      utterance_id: 'u2',
+      kind: 'confirming',
+      transcript: 'turn it up',
+      payload: { intent: { intent: 'volume_set', mode: 'up', confidence: 0.7 }, transcript: 'turn it up' },
+    });
+    expect(action).not.toBeNull();
+  });
+});
+
+describe('autoFadeMs', () => {
+  it('fades both terminal states back to idle (failed must not stick)', () => {
+    expect(autoFadeMs('applied')).toBe(APPLIED_AUTO_FADE_MS);
+    expect(autoFadeMs('failed')).toBe(FAILED_AUTO_FADE_MS);
+  });
+
+  it('does not fade states that persist until the next poke', () => {
+    for (const k of ['idle', 'listening', 'thinking', 'confirming', 'mic_offline', 'voice_offline'] as const) {
+      expect(autoFadeMs(k)).toBeNull();
+    }
+  });
+});
 
 describe('reduceOverlay', () => {
   it('starts idle', () => {

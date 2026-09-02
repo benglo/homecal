@@ -1,9 +1,7 @@
 import { useEffect } from 'react';
 import type { OverlayState, OverlayAction } from './voiceState';
+import { autoFadeMs } from './voiceState';
 import { ConfirmCard } from './ConfirmCard';
-
-/** How long the `applied` state stays on screen before fading back to idle. */
-const APPLIED_AUTO_FADE_MS = 2000;
 
 interface Props {
   state: OverlayState;
@@ -23,13 +21,14 @@ export function VoiceOverlay({ state, dispatch, onActiveChange }: Props) {
   }, [state.kind, onActiveChange]);
 
   // Per-utterance fade timer. utteranceId is in the dep array so a new
-  // utterance arriving while we're still showing `applied` resets the
+  // utterance arriving while we're still showing a terminal state resets the
   // timer (otherwise the second action would inherit the first's clock).
   const utteranceId = 'utterance_id' in state ? state.utterance_id : '';
 
   useEffect(() => {
-    if (state.kind !== 'applied') return;
-    const t = setTimeout(() => dispatch({ type: 'auto-fade' }), APPLIED_AUTO_FADE_MS);
+    const ms = autoFadeMs(state.kind);
+    if (ms === null) return;
+    const t = setTimeout(() => dispatch({ type: 'auto-fade' }), ms);
     return () => clearTimeout(t);
   }, [state.kind, dispatch, utteranceId]);
 

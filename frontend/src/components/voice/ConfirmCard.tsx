@@ -35,6 +35,11 @@ function describe(intent: ParsedIntent): string {
       const when = intent.time ? `${intent.date} ${intent.time}` : intent.date;
       return `Add "${intent.title}" — ${when}`;
     }
+    case 'volume_set':
+      if (intent.mode === 'set' && intent.value !== undefined) return `Set volume to ${intent.value}%`;
+      if (intent.mode === 'up') return 'Turn volume up';
+      if (intent.mode === 'down') return 'Turn volume down';
+      return 'Change volume';
     case 'unknown':
       return `(didn't parse: ${intent.reason})`;
   }
