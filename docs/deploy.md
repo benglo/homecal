@@ -18,13 +18,31 @@ docker buildx build --platform linux/arm64 -t homecal:latest .
 
 ### Configuration
 
-All config via environment in `docker-compose.yml`:
+Compose variables go in `.env` at the repo root (copy `.env.example`):
 
 | Variable | Default | Notes |
 |----------|---------|-------|
 | `HOMECAL_PORT` | `8787` | Host port mapping |
 | `HOMECAL_DATA_DIR` | `./data` | Host path for the SQLite data directory |
-| `LOG_LEVEL` | `warn` (prod) | Fastify log level (`info`, `warn`, `error`) |
+| `PI_API_TOKEN` | _(empty)_ | Shared secret with the Pi voice service + kokoro-tts. Empty = voice routes 503 |
+
+The full list of backend settings (weather station, photo cap, kiosk shutdown host, etc.) is in the
+README.
+
+### Kokoro TTS sidecar
+
+`docker-compose.yml` also defines `kokoro-tts` (port `8789`, `mem_limit: 1500m`, **linux/amd64
+only**). Its model files are gitignored, so fetch them once before the first build:
+
+```bash
+cd kokoro-tts && make pull-models && cd ..
+docker compose up -d --build
+curl http://localhost:8789/healthz
+```
+
+Without the models the build fails. To run the calendar alone, use `docker compose up -d --build calendar`.
+The Pi only uses the sidecar when `/etc/homecal-voice.env` has `TTS_BACKEND=lan` and
+`TTS_SERVER_URL=http://<server-ip>:8789`.
 
 ### Backups
 

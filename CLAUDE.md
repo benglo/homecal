@@ -1,8 +1,9 @@
 # CLAUDE.md — homecal
 
 Self-hosted family calendar: a wall-mounted Pi touchscreen kiosk + phone editor, **LAN-only, no cloud**.
-One Docker container on the home server serves the JSON API **and** the built frontend from a single
-origin, backed by local SQLite. Works with the internet unplugged.
+The `calendar` Docker container on the home server serves the JSON API **and** the built frontend from a
+single origin, backed by local SQLite. Works with the internet unplugged. Voice (Pi-side, optional) is the
+only WAN-dependent feature. An optional `kokoro-tts` container provides LAN speech synthesis.
 
 ## Source of truth (read these before changing behaviour)
 - `family-calendar-build-spec.md` — the build brief. **§0 "Post-Review Decisions (locked)"** is binding;
@@ -19,6 +20,12 @@ origin, backed by local SQLite. Works with the internet unplugged.
 - **Frontend** is read-mostly wall (`?mode=wall` → `WallLayout`) + phone editor (M3). TanStack Query is
   the state; SSE/poll → invalidate; service worker = never-blank. FullCalendar (MIT plugins) for
   week/month, custom `AgendaView` for the default wall view.
+- **`kiosk/voice/`** is a separate **Python** package (`homecal-voice`, pytest, `*_test.py` beside the
+  code) that runs on the Pi under systemd, configured by `/etc/homecal-voice.env`. It talks to the
+  backend over HTTP with the `X-Pi-Token` shared secret (`PI_API_TOKEN`) and receives pokes via SSE.
+- **`kokoro-tts/`** is a FastAPI sidecar (`/tts`, `/catalog/{noise,joke}/{key}`, `/healthz`), `linux/amd64`
+  only. Its `models/` dir is gitignored, so run `make pull-models` before `docker compose build`.
+- **`hardware/`** is the 3D-printable wall housing (build123d, Python). It's independent of the app.
 
 ## Locked decisions (don't relitigate — see spec §0)
 - **Timestamps:** stored TEXT, ISO-8601, **UTC**, `Z`-suffixed. Brisbane (fixed UTC+10, no DST) only at
@@ -43,8 +50,12 @@ npm run dev:backend                      # API on :8787 (writes ./data)
 npm run dev:frontend                     # Vite :5173, proxies /api -> :8787
 npm run build                            # frontend/dist + backend/dist
 STATIC_DIR=frontend/dist npm start       # prod single-origin path locally
-npm --workspace backend test             # recurrence truth-table (node:test + tsx)
-docker compose up -d --build             # the supported deploy path
+npm --workspace backend test             # node:test + tsx (POSIX shell — use Git Bash on Windows)
+npm --workspace frontend test            # Vitest
+(cd kiosk/voice && pytest)               # Pi voice service tests (venv with `pip install -e '.[dev]'`)
+(cd kokoro-tts && make pull-models)      # one-off before building the sidecar
+docker compose up -d --build             # the supported deploy path (calendar + kokoro-tts)
+docker compose up -d --build calendar    # calendar only (no models needed)
 bash kiosk/reload.sh                     # reload Pi kiosk browser via CDP (or /reload-kiosk)
 bash kiosk/voice-install.sh             # one-shot Pi-side install (whisper.cpp + systemd units)
 ssh hbadmin@192.168.1.135 'journalctl -u homecal-voice -f'   # tail Pi-side service logs
@@ -67,15 +78,19 @@ curl localhost:8787/api/voice/status    # mic_online + mute state
   ("peak ~3800/32768"), no narrative referencing past sessions or "the X saga". Research-log content goes
   in `docs/SESSION-LOG.md`; the code keeps the rule, not the story behind it.
 
-## Status (2026-06-04, post-voice v1 implementation)
+## Status (2026-11-11)
 - **M0** scaffold + container — done (`f419063`)
 - **M1** data + API — done (`24d7651`), recurrence tests
 - **M2** wall UI — done (`5b3d5ed`), all 3 views verified via screenshot
 - **M3** editing (phone + sheets + mutations + SSE) — done; hardened after a pre-M4 review.
 - **M4** deploy + kiosk + backup — done. Deploy guide in `docs/deploy.md`.
 - **M5** chores board — done. Family members + chores + tap-to-complete on wall.
-- **Voice v1** — backend + frontend + Pi service implemented on `feat/voice-v1`. Deploy to Pi pending; acceptance gate is 24h kitchen FP test + 10-utterance per-family-member accuracy ≥80%.
-- **Tests:** backend 145/145, frontend 33/33, build clean.
+- **Voice v1** — merged and deployed to the Pi.
+- **Voice follow-ups** — kid intents + joke/noise catalogs (PR #5), Kokoro LAN TTS sidecar,
+  calendar UI v2 + slot tap-to-create (PRs #6–#7), tap-to-talk + voice-band `event_add` (PR #8), volume control (PR #10, migration v8).
+- **Hardware** — wall housing v1→v3 integrated wedge shell + STEP export (PRs #12–#14).
+- **Tests (2026-11-11):** backend 208 (206 pass on Windows; the 2 backup-path tests assume `/`
+  separators and pass on Linux), frontend 121/121.
 
 ### Feature inventory (beyond core CRUD)
 - **Realtime** — in-process SSE broker (`GET /api/stream`); mutations `poke()`;
@@ -98,15 +113,21 @@ curl localhost:8787/api/voice/status    # mic_online + mute state
   tap-to-complete on wall with star-fly animation + chime (muted 8pm–7am),
   optimistic updates, SSE sync. Phone managers for family + chores. 3 new tables
   (`family_members`, `chores`, `chore_completions`). 38 backend + 4 frontend tests added.
-- **Voice (v1)** — Pi-side service `homecal-voice` (under `kiosk/voice/`). Wake = openWakeWord
-  `hey_luna` (custom-trained ONNX at `kiosk/voice/homecal_voice/wake_models/hey_luna.onnx`). STT = local
-  whisper.cpp `base.en-q5_1` via `whisper-server`. Intent = Haiku 4.5 + TTS = Gemini 3.1 Flash
-  TTS Preview, both via OpenRouter. v1 intents: dinner_set, chore_complete, query_dinner,
-  query_agenda. Confirmation card on the wall via existing SSE (mid-confidence intents listen
+- **Voice** — Pi-side service `homecal-voice` (under `kiosk/voice/`). Wake = openWakeWord
+  `hey_luna` (custom-trained ONNX at `kiosk/voice/homecal_voice/wake_models/hey_luna.onnx`) or
+  tap-to-talk. STT = Gemini 3 Flash via OpenRouter, falling back to local whisper.cpp `small.en-q5_1`
+  (`whisper-server`). Intent = local pattern matchers first (`patterns_v1/kid/timer`), then Haiku 4.5
+  via OpenRouter. TTS = `TTS_BACKEND=cloud` (Kokoro-82M via OpenRouter, default) or `lan`
+  (`kokoro-tts` sidecar, falling back to cloud). Intents: dinner_set, chore_complete, query_dinner,
+  query_agenda, event_add (always confirms), volume_set, timers, joke_tell, noise_play, ask_question
+  (tiered safety prompt). Full env reference: `kiosk/voice/README.md`. Confirmation card on the wall via existing SSE (mid-confidence intents listen
   briefly for yes/no/edit via `confirm_loop`). Mute toggle in ControlBar + phone Manage tab
   (instant via SSE poke; 5s polling backstop). Audit log at `voice_utterances`; mute state at
   `voice_settings` (migration v3). Voice is the only WAN-dependent feature — calendar stays
   offline-capable.
+- **Volume control** — `PUT /api/voice/volume` + `/api/voice/audio-mute` (migration v8),
+  VolumeControl popover on the wall ControlBar + phone Voice section. The Pi applies it via `wpctl` on
+  poke + at startup (`HOMECAL_AUDIO_SINK` pins the sink).
 
 ## Gotchas
 - `better-sqlite3` is native — compiled for the **server's** arch inside the Docker build; `.dockerignore`
@@ -115,6 +136,12 @@ curl localhost:8787/api/voice/status    # mic_online + mute state
   (`useScreensaver`). Independent — don't merge.
 - **SSE holds connections open** — use `waitUntil:'load'` (NOT `networkidle`) in any browser
   automation or `goto` times out.
+- **Windows dev:** the backend `test` script uses `$(find …)`, and README examples use `VAR=x cmd`.
+  Both need a POSIX shell (Git Bash). Two `backup.test.ts` cases assert `/`-separated paths and fail on
+  Windows only. npm ≥11 blocks install scripts, so after `npm ci` run
+  `npm rebuild better-sqlite3 esbuild sharp` if native modules fail to load.
+- `PI_API_TOKEN` must match on the server (`.env`), the Pi (`/etc/homecal-voice.env`) and kokoro-tts.
+  Empty on the server → voice routes 503.
 - The sandbox tool channel in this environment intermittently drops command output — re-run/verify rather
   than trusting silence. `docker compose` may need `dangerouslyDisableSandbox`.
 - Playwright MCP wants the `chrome` channel (needs sudo); use the cached chromium at
