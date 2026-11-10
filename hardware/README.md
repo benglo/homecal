@@ -1,88 +1,84 @@
 # Wall-unit housing (3D-printable)
 
-## Current direction — two parts (screen case + wired soundbar)
+## Current design — integrated wedge shell
 
-The screen enclosure is now **`Display_case.3mf`** (user-supplied — it already
-builds around the Pi on the panel back). The audio is a **separate, wired**
-down-firing **`soundbar.py`** that sits under the frame; only thin speaker wires
-run back to the amp/Pi. `wall_housing.py` (below) is the earlier all-in-one
-concept, kept for reference.
+A single Nest Hub-style wall-mount enclosure: screen flush in front,
+wedge-tapered body (thin at top, thick at bottom), rear-firing 3" speaker,
+Pi + amp + buck all inside.  No picture frame, no separate soundbar.
 
-**Extracted `Display_case.3mf` dimensions** (measured from the mesh):
-- Outer 153 × 245 mm, 63 mm deep; front bezel 2 mm border → window 149 × 241 mm.
-- 4 × M3 corner mounts at x=±66, y=±109 (132 × 218 rectangle).
-- Cable/port slot 25 × 10 mm at (18, −67), bottom edge — wire exit toward the Pi.
-- Central Pi/access opening ~88 × 128 mm; internal ribs 18–63 mm deep.
-
-**`soundbar.py`** — rounded down-firing soundbar, 245 × 66 × 90 mm, sealed,
-~261 g PETG. Driver fires down out the flat bottom; rear 6 mm grommet for wires;
-two M2.5 top holes to bracket under the frame. Params (driver cutout/PCD) are
-`# EST` until the AS3034 is in hand.
-
----
-
-
-
-Parametric rear housing for the homecal wall unit — an **all-in-one** integrated
-shell holding the Waveshare 10.1″ DSI panel, the Pi (mounted on the panel back),
-the Class-D amp + buck (the shared-DC-bus audio), and a sealed speaker pod.
-
-- **`wall_housing.py`** — the parametric model (CSG via `trimesh` + `manifold3d`).
-- **`render_preview.py`** — offscreen preview PNG (matplotlib, no display needed).
-- **`wall-housing.stl`** — exported solid (regenerate after any parameter change).
+- **`wall_housing.py`** — parametric model (build123d / Open CASCADE).
+- **`render_preview.py`** — offscreen preview PNG (matplotlib + trimesh).
+- **`wall-housing.stl`** + **`wall-housing.step`** — exported solids.
 - **`wall-housing-preview.png`** — current preview.
+
+### Shape
+
+- **Front:** 260 × 175 mm rounded rectangle (14 mm corner radius, 6 mm fillets).
+  Screen window 232 × 139 mm, 10 mm bezel all sides except 18 mm bottom.
+- **Profile:** Wedge taper — 22 mm deep at top, 50 mm at bottom.
+- **Speaker:** Rear-firing through the back wall (sound bounces off the wall).
+  Keyhole standoffs create a ~10 mm gap for sound to escape.
+- **Internals:** Panel pocket, Pi access hatch (pokes through back wall),
+  amp + buck on internal standoffs, DC barrel jack, bottom vent slots.
+- **Mounting:** Two keyhole slots on the upper back wall (160 mm span).
+
+### Fit report
+
+- Watertight (manifold) single body.
+- ~**334 g** PETG, **260 × 175 × 50 mm** bounding box.
+- Front-face fillets applied; back edges left sharp (taper geometry).
 
 ## Regenerate
 
 ```bash
+cd hardware
 uv venv .venv && . .venv/bin/activate
-uv pip install manifold3d trimesh numpy matplotlib
-python wall_housing.py        # -> wall-housing.stl + fit report
+uv pip install build123d trimesh numpy matplotlib
+python wall_housing.py        # -> wall-housing.stl + wall-housing.step + fit report
 python render_preview.py      # -> wall-housing-preview.png
 ```
 
 ## Parameters to confirm before printing
 
-Everything is a variable at the top of `wall_housing.py`. Tagged `# MEASURE` /
-`# EST` are the ones that need real numbers:
+Everything is a variable at the top of `wall_housing.py`.  Tagged `# MEAS`
+(confirmed) or `# EST` (needs real numbers):
 
 | Var | Meaning | Status |
 |-----|---------|--------|
-| `SCREEN_W`, `SCREEN_H` | panel **outer** outline (landscape) | **EST 233×153 — measure with calipers** |
-| `PI_CX`, `PI_CY` | Pi centre on the panel back | EST — confirm from the real unit |
-| `PI_PORT_W/H` | USB+Ethernet stack footprint / which edge | EST |
-| `AMP_*`, `BUCK_*` | amp/buck board footprints + positions | EST — set from the boards you buy |
-| `SPK_BAFFLE_DIA`, `SPK_SCREW_CIRCLE` | driver cutout + mount PCD | EST — from the AS3034 datasheet |
-| `REBATE_*` | frame rebate | measured (260×180×35) |
+| `SCREEN_W`, `SCREEN_H` | panel outer outline (landscape) | MEAS 240 × 147 |
+| `PI_W`, `PI_H` | Pi bounding box incl. clearance | EST |
+| `PI_PORT_W/H` | USB+Ethernet stack footprint | EST |
+| `AMP_*`, `BUCK_*` | board footprints + positions | EST — set from real boards |
+| `SPK_DIA`, `SPK_PCD` | driver cutout + mount PCD | EST — from AS3034 datasheet |
+| `DC_CX`, `DC_CY` | barrel jack position on back wall | EST |
 
-## Current fit report (v2 — measured outline, down-firing speaker)
+## Known caveats
 
-- Watertight ✔ single body, panel plane **259×179 mm** (drops into 260×180).
-- **Down-firing sealed chin** below the frame: hangs **~58 mm** below the frame
-  bottom and sticks **~51 mm** past the frame back (a 3″ cone needs ~80 mm in
-  plan to fire down — that's the chin's size, not slack).
-- ~**505 g** PETG — chunky at a print service; thin walls / smaller driver cut it.
+1. **Back-edge fillets** — front-face edges fillet cleanly; the Z-running edges
+   on the tapered back fail (radius too large for the short edges at the top).
+   Could be fixed with a smaller radius or edge-specific selection.
+2. **Speaker sealed volume** — the driver fires through the back wall with no
+   dedicated sealed chamber partition.  Adding an internal wall between the
+   speaker zone and electronics bay is a v2 improvement.
+3. **Panel retention** — the lip laps the bezel by 4 mm; verify it doesn't clip
+   the active area once `SCREEN_W/H` is confirmed with calipers.
+4. **Acoustics** — rear-firing depends on a consistent wall gap (~10 mm from
+   keyhole standoffs).  If mounted flush, sound will be muffled.
 
-## Known caveats (the iteration list)
+## BOM (audio — shared-DC-bus)
 
-1. **Speaker bulk vs driver size.** Down-firing the 3″ AS3034 forces the
-   soundbar-style chin (58 mm drop / 51 mm rear). A **2″ driver** shrinks it a
-   lot (at some output), or forward-firing avoids the chin entirely. This is the
-   main size/acoustics trade to settle.
-2. **Board placement.** Amp/buck posts are on the rear-external face beside the
-   Pi (the front cavity is only ~15 mm deep — too shallow for boards). Confirm
-   against real board sizes; they may want their own shallow sub-tray.
-3. **Panel retention** assumes a lip lapping the bezel by `BEZEL_OVERLAP` with
-   the panel dropped in from behind and the mat taped to the glass front. Verify
-   the lap doesn't clip the active area once `SCREEN_W/H` is real.
-4. **No fillets yet** — sharp outer corners (prints fine; round later for feel).
-5. **Frame fixing** — currently relies on the frame's own back clips; add screw
-   tabs if the frame has none.
-
-## BOM (audio — shared-DC-bus all-in-one)
-
-- 24 V DC supply (one wall plug) → into the housing
+- 24 V DC supply, ≥ 4 A (one wall plug) → barrel jack
 - TPA3116 bare amp board (fed from 24 V)
-- 24 V→5 V/5 A buck module (powers Pi + panel)
-- Jaycar AS3034 3″ full-range driver (in the sealed pod)
-- barrel jack (bottom wall)
+- 24 V→5.1 V buck, **≥ 8 A** (Pi 5 alone needs 5 A; panel + USB mic on top).
+  Set the output to 5.1–5.2 V under load — the Pi browns out below ~4.8 V.
+- Pi fed via a short, thick USB-C pigtail (or the 5 V/GND header pins).
+  A buck can't do USB-PD, so the Pi assumes a 3 A supply and caps USB at
+  600 mA unless the EEPROM is told otherwise:
+  `sudo rpi-eeprom-config --edit` → `PSU_MAX_CURRENT=5000`
+- Jaycar AS3034 3" full-range driver (rear-firing through back wall)
+- DC barrel jack (5.5 × 2.1 mm)
+
+## Legacy files
+
+- `soundbar.py` — standalone down-firing soundbar (superseded by integrated shell).
+- `Display_case.3mf` — earlier hand-modelled display case (superseded).

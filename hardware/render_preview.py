@@ -37,14 +37,20 @@ def ghost(ax, sx, sy, sz, cx, cy, cz, col):
 
 
 fig = plt.figure(figsize=(15, 7))
-for i, (elev, azim, title) in enumerate([(22, -60, "rear 3/4 — pod, Pi hatch, board posts"),
-                                         (18, 120, "front 3/4 — retaining lip + window")]):
+pocket_z = wh.LIP + wh.SCREEN_T / 2
+pi_z = wh.depth_at(wh.PI_CY)
+
+for i, (elev, azim, title) in enumerate([
+    (22, -60, "rear 3/4 — wedge taper, Pi hatch, speaker"),
+    (18, 120, "front 3/4 — screen window + fillets"),
+]):
     ax = fig.add_subplot(1, 2, i + 1, projection="3d")
     pc = Poly3DCollection(tris, facecolors=colors, edgecolors=(0, 0, 0, 0.06), linewidths=0.2)
     ax.add_collection3d(pc)
-    # Ghosts: panel (front), Pi (poking out back), driver disc (on pod rear)
-    ghost(ax, wh.SCREEN_W, wh.SCREEN_H, wh.SCREEN_T, 0, 0, wh.LIP + wh.SCREEN_T / 2, "#e6a100")
-    ghost(ax, wh.PI_W, wh.PI_H, 20, wh.PI_CX, wh.PI_CY, wh.BODY_D + 4, "#d55e00")
+    ghost(ax, wh.SCREEN_W, wh.SCREEN_H, wh.SCREEN_T,
+          0, wh.SCREEN_CY, pocket_z, "#e6a100")
+    ghost(ax, wh.PI_W, wh.PI_H, 20,
+          wh.PI_CX, wh.PI_CY, pi_z + 4, "#d55e00")
     b = m.bounds
     ctr = (b[0] + b[1]) / 2
     span = (b[1] - b[0]).max() / 2 * 1.05
@@ -56,7 +62,7 @@ for i, (elev, azim, title) in enumerate([(22, -60, "rear 3/4 — pod, Pi hatch, 
     ax.set_title(title, fontsize=11)
     ax.set_xlabel("X (W)"); ax.set_ylabel("Y (H)"); ax.set_zlabel("Z (depth)")
 
-fig.suptitle("homecal wall housing — v1 parametric (orange = panel, red = Pi)", fontsize=13)
+fig.suptitle("homecal wall housing — integrated wedge (orange = panel, red = Pi)", fontsize=13)
 fig.tight_layout()
 fig.savefig("wall-housing-preview.png", dpi=110)
 print("wrote wall-housing-preview.png")
