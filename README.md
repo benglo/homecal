@@ -1,8 +1,8 @@
 # Family Calendar (homecal)
 
 A self-hosted, **LAN-only** family calendar — a wall-mounted touchscreen kiosk plus a phone editor,
-backed by a single Docker container on your home server. No cloud, no accounts; the calendar works
-with the internet unplugged.
+backed by Docker on your home server. No cloud, no accounts; the calendar works with the internet
+unplugged (voice is the one optional feature that uses the WAN).
 
 - **Backend:** Node + TypeScript (Fastify, CommonJS), SQLite via `better-sqlite3` (WAL). Serves the
   JSON API **and** the built frontend from one origin (no CORS).
@@ -10,7 +10,10 @@ with the internet unplugged.
   editor, switched by `?mode=wall` (not viewport width). TanStack Query for state; SSE + poll for
   realtime; a service worker so the wall never goes blank.
 - **Kiosk:** Raspberry Pi 5 running only Chromium pointed at the server URL, on a Waveshare 10.1"
-  DSI touchscreen.
+  DSI touchscreen, plus the Python `homecal-voice` service.
+- **Kokoro TTS sidecar:** optional second container (FastAPI + kokoro-onnx) for LAN-local speech
+  synthesis, so voice replies don't need a cloud TTS call.
+- **Hardware:** a parametric, 3D-printable wall housing for the screen, Pi and speaker (`hardware/`).
 
 See `family-calendar-build-spec.md` (build brief — §0 decisions are binding), `docs/frontend-design.md`
 (visual system), `docs/frontend-components.md` (component architecture), `docs/deploy.md`
@@ -40,13 +43,22 @@ See `family-calendar-build-spec.md` (build brief — §0 decisions are binding),
 - Family members + chores (daily/weekly frequency), **tap-to-complete** on the wall with a star-fly
   animation and chime (muted 8pm–7am). Optimistic updates, SSE sync. Phone managers for both.
 
-**Voice (v1)**
-- Pi-side `homecal-voice` service: **"hey luna"** wake word (openWakeWord), local **whisper.cpp**
-  STT, intent parsing (Haiku 4.5) and TTS (Gemini Flash) via OpenRouter.
-- Intents: set dinner, complete a chore, query dinner, query agenda, and add an event from the wall
-  **voice band**. Mid-confidence intents show a confirmation card and briefly listen for yes/no/edit.
-- Mute toggle (ControlBar + phone), audit log (`voice_utterances`). The only WAN-dependent feature —
-  the rest of the calendar stays fully offline-capable.
+**Voice**
+- Pi-side `homecal-voice` service: **"hey luna"** wake word (custom openWakeWord model) or
+  **tap-to-talk** on the wall, silero-vad endpointing.
+- **STT:** Gemini Flash via OpenRouter by default, with local **whisper.cpp** (`whisper-server`) as
+  the offline fallback. **Intent parsing:** Haiku 4.5 via OpenRouter.
+- **TTS:** `TTS_BACKEND=cloud` (Kokoro-82M via OpenRouter, the default) or `lan` (the local
+  `kokoro-tts` sidecar, which falls back to cloud on timeout).
+- **Intents:** set/query dinner, complete a chore, query the agenda, add an event (always confirmed),
+  set volume (absolute or relative), timers, and kid-friendly intents: jokes, animal/fun noises
+  (pre-rendered catalogs) and general questions behind a tiered safety prompt.
+- The wall **voice band** shows transcript → thinking → reply. Mid-confidence intents show a
+  confirmation card and briefly listen for yes/no/edit.
+- **Volume control:** popover on the wall ControlBar and in the phone Voice section. The Pi applies
+  master volume/mute through PipeWire (`wpctl`).
+- Mic mute toggle (ControlBar + phone), audit log (`voice_utterances`), daily request cap. Voice is the
+  only WAN-dependent feature; the rest of the calendar stays fully offline-capable.
 
 **Photos & feeds**
 - **Photo screensaver:** upload/serve/delete (sharp resize), dual-buffer Ken Burns crossfade after
@@ -71,7 +83,9 @@ See `family-calendar-build-spec.md` (build brief — §0 decisions are binding),
 2. A **host directory for the SQLite volume**, covered by your server's backups (defaults to `./data`).
 3. A stable way for the Pi + phones to reach the server (mDNS hostname or reserved IP),
    e.g. `http://server.local:8787`.
-4. (Voice only) an **OpenRouter API key** and a mic + speaker on the Pi.
+4. (Voice only) an **OpenRouter API key**, a mic + speaker on the Pi, and a shared
+   **`PI_API_TOKEN`** secret (any long random string) known to both the server and the Pi.
+5. (Kokoro sidecar only) an **x86-64** server with ~1.5 GB RAM spare. The image is `linux/amd64` only.
 
 ---
 
@@ -79,21 +93,45 @@ See `family-calendar-build-spec.md` (build brief — §0 decisions are binding),
 
 ```bash
 # from the repo root, on the server
-docker compose up -d --build
+cp .env.example .env                        # then set PI_API_TOKEN (needed for voice)
+(cd kokoro-tts && make pull-models)         # one-off: downloads the Kokoro model + voices files
+docker compose up -d --build                # starts `calendar` (:8787) + `kokoro-tts` (:8789)
+
+# no voice / no sidecar? start just the calendar and skip the steps above:
+docker compose up -d --build calendar
 
 # then from any device on the LAN:
 #   http://<server-ip>:8787/             -> the wall (add ?mode=wall) / phone editor
 #   http://<server-ip>:8787/api/health   -> { ok: true, db: "ok", schemaVersion: ... }
 ```
 
-Configure via env (optional):
+> The `kokoro-tts` build copies `kokoro-tts/models/`, which is gitignored. On a fresh clone,
+> `docker compose up --build` fails until you run `make pull-models` (or use the `calendar`-only
+> command above).
+
+Configure via `.env` (compose reads it from the repo root; see `.env.example`):
 
 | Var | Default | Meaning |
 |-----|---------|---------|
 | `HOMECAL_PORT` | `8787` | host port published on the LAN |
 | `HOMECAL_DATA_DIR` | `./data` | host directory bind-mounted to `/data` (the SQLite DB lives here) |
+| `PI_API_TOKEN` | _(empty)_ | shared secret with the Pi voice service and the Kokoro sidecar. Empty = voice routes return 503 |
+
+Backend settings read by the server process (`backend/src/config.ts`). Compose sets
+`PORT`/`HOST`/`DATA_DIR`/`STATIC_DIR`. Pass any others through `environment:` in
+`docker-compose.yml`, or set them in your shell for local dev:
+
+| Var | Default | Meaning |
+|-----|---------|---------|
+| `PORT` / `HOST` | `8787` / `0.0.0.0` | listen address |
+| `DATA_DIR` | `./data` | SQLite + photos directory |
+| `DB_FILENAME` | `calendar.db` | database file name inside `DATA_DIR` |
+| `STATIC_DIR` | _(unset)_ | serve the built frontend from here (single-origin mode) |
 | `LOG_LEVEL` | `warn` | Fastify log level (`info`, `warn`, `error`) |
 | `BOM_STATION_CODE` / `BOM_STATION_ID` / `BOM_STATION_NAME` | Brisbane | weather station for the BOM proxy |
+| `WEATHER_CACHE_TTL_MS` | `900000` | weather cache lifetime (15 min) |
+| `MAX_PHOTO_COUNT` | `500` | cap on uploaded screensaver photos |
+| `KIOSK_HOST` / `KIOSK_PORT` | _(empty)_ / `8788` | Pi shutdown listener for `POST /api/kiosk/shutdown` |
 
 **DB persistence:** the SQLite files (`.db`, `-wal`, `-shm`) live in the bind-mounted **directory** —
 they survive image rebuilds. Back up that directory.
@@ -127,7 +165,16 @@ Run the tests:
 ```bash
 npm --workspace backend test        # recurrence truth-table + API (node:test + tsx)
 npm --workspace frontend test       # component/view-model tests (Vitest)
+
+# Python services (pytest), each in its own venv:
+cd kiosk/voice && pip install -e '.[dev]' && pytest
+cd kokoro-tts  && pip install -r requirements.txt pytest httpx && pytest
 ```
+
+**On Windows:** the commands above assume a POSIX shell. `STATIC_DIR=… npm start` is bash syntax
+(in PowerShell, use `$env:STATIC_DIR='frontend/dist'; npm start`). The backend `test` script uses
+`$(find …)`, so run it from Git Bash. Two backup-path tests assert `/`-separated paths and fail
+on Windows; they pass on Linux/macOS and in Docker.
 
 ---
 
@@ -142,6 +189,18 @@ bash kiosk/reload.sh        # reload the Pi browser via CDP (or the /reload-kios
 bash kiosk/voice-install.sh # one-shot Pi-side voice install (whisper.cpp + systemd units)
 ```
 
+After `voice-install.sh`, fill in **`/etc/homecal-voice.env`** on the Pi (the script prints a
+template) and start the service: `sudo systemctl start homecal-voice`. Required keys:
+`OPENROUTER_API_KEY`, `HOMECAL_API_BASE` (e.g. `http://<server-ip>:8787`) and `PI_API_TOKEN`
+(must match the server's). All optional tuning keys (wake threshold, mic gain, TTS backend, audio
+sink…) are listed in **`kiosk/voice/README.md`**.
+
+## Hardware
+
+`hardware/` holds a parametric, 3D-printable wall housing (build123d): screen flush in front, a
+wedge-tapered body, a rear-firing 3" speaker, and the Pi + amp inside. STL/STEP exports and the
+regenerate steps are in **`hardware/README.md`**.
+
 ---
 
 ## Layout
@@ -149,21 +208,27 @@ bash kiosk/voice-install.sh # one-shot Pi-side voice install (whisper.cpp + syst
 ```
 backend/      Fastify API + static server, SQLite (WAL) + append-only migration runner
 frontend/     Vite + React + TS app (wall + phone layouts)
-kiosk/        Pi launcher/reload/shutdown scripts + the homecal-voice service
-docs/         build spec, design system, deploy guide, session log, specs/plans
+kiosk/        Pi launcher/reload/shutdown scripts + systemd units
+kiosk/voice/  homecal-voice (Python): wake word, STT, intents, TTS, catalogs
+kokoro-tts/   LAN TTS sidecar (FastAPI + kokoro-onnx, linux/amd64)
+hardware/     3D-printable wall housing (build123d model, STL/STEP)
+docs/         design system, deploy guide, session log, superpowers/ specs + plans
 Dockerfile    multi-stage build (frontend + backend, native compile, lean runtime)
-docker-compose.yml
+docker-compose.yml   calendar + kokoro-tts services
+.env.example  compose variables (copy to .env)
 ```
 
 ---
 
 ## Status
 
-**M0–M5 complete and merged**, plus **Voice v1**:
+**M0–M5 complete and merged**, plus voice and hardware:
 
 - **M0** scaffold + container · **M1** data + API (recurrence tests) · **M2** wall UI (3 views)
 - **M3** editing (phone + sheets + mutations + SSE) · **M4** deploy + kiosk + backup · **M5** chores board
-- **Voice v1** — wake word + local STT + intent/TTS, wall voice band, mute + audit log
+- **Voice** — v1 (wake word, STT, intents, mute, audit log), kid intents + catalogs, Kokoro LAN TTS
+  sidecar, tap-to-talk + voice-band event add, slot tap-to-create, volume control
+- **Hardware** — v3 integrated wedge wall housing (STL + STEP)
 
 Conventions: locale `en-au` (day-first dates), many small files, immutable patterns, no secrets
 (LAN, no auth in v1). New schema is added as append-only migrations in `backend/src/db/migrate.ts`.
