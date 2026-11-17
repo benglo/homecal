@@ -228,7 +228,7 @@ test('routine settings: defaults, partial update, validation, and in the day pla
   const put = await app.inject({
     method: 'PUT',
     url: '/api/routine-settings',
-    payload: { bathLocks: false, morningsOffUntil: MONDAY, nightEnd: '06:30' },
+    payload: { bathLocks: false, morningsOffUntil: MONDAY, lockEnds: '20:00' },
   });
   assert.equal(put.statusCode, 200, put.body);
   const u = put.json() as Record<string, unknown>;
@@ -236,21 +236,21 @@ test('routine settings: defaults, partial update, validation, and in the day pla
   assert.equal(u.warnMinutes, 10); // untouched
   assert.ok(pokes.some((p) => p.kind === 'routines'));
 
-  for (const payload of [{ warnMinutes: 61 }, { nightEnd: '13:00' }, { morningWindowMinutes: 10 }, {}]) {
+  for (const payload of [{ warnMinutes: 61 }, { lockEnds: '24:00' }, { lockEnds: '8pm' }, { morningWindowMinutes: 10 }, {}]) {
     const bad = await app.inject({ method: 'PUT', url: '/api/routine-settings', payload });
     assert.equal(bad.statusCode, 400, JSON.stringify(payload));
   }
 
-  type Extra = { morningsOff: boolean; settings: { nightEnd: string } };
+  type Extra = { morningsOff: boolean; settings: { lockEnds: string } };
   assert.equal(((await plan(SUNDAY)) as unknown as Extra).morningsOff, true); // on/before the date
   const tue = (await plan('2026-11-17')) as unknown as Extra;
   assert.equal(tue.morningsOff, false);
-  assert.equal(tue.settings.nightEnd, '06:30');
+  assert.equal(tue.settings.lockEnds, '20:00');
 
   // Restore defaults for any later test
   await app.inject({
     method: 'PUT',
     url: '/api/routine-settings',
-    payload: { morningsOffUntil: null, bathLocks: true, nightEnd: '05:00' },
+    payload: { morningsOffUntil: null, bathLocks: true, lockEnds: '05:00' },
   });
 });

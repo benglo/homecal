@@ -239,6 +239,34 @@ const MIGRATIONS: Migration[] = [
       INSERT INTO routine_settings (id) VALUES (1);
     `);
   },
+
+  // v10 — night_end becomes lock_ends: when the bath/bed lock lifts. A morning time
+  // (<= 12:00) holds the lock overnight until then; an evening time lifts it that
+  // evening (grown-ups' TV after the kids are in bed). Rebuild to relax the CHECK;
+  // the singleton has no dependants, so copy-drop-rename is safe.
+  (db) => {
+    db.exec(`
+      CREATE TABLE routine_settings_v10 (
+        id                     INTEGER PRIMARY KEY CHECK (id = 1),
+        warn_minutes           INTEGER NOT NULL DEFAULT 10  CHECK (warn_minutes BETWEEN 0 AND 60),
+        grace_minutes          INTEGER NOT NULL DEFAULT 15  CHECK (grace_minutes BETWEEN 0 AND 60),
+        morning_window_minutes INTEGER NOT NULL DEFAULT 240 CHECK (morning_window_minutes BETWEEN 30 AND 720),
+        lock_ends              TEXT    NOT NULL DEFAULT '05:00'
+                               CHECK (lock_ends GLOB '[0-2][0-9]:[0-5][0-9]' AND lock_ends <= '23:59'),
+        bath_locks             INTEGER NOT NULL DEFAULT 1 CHECK (bath_locks IN (0, 1)),
+        dinner_reminder        INTEGER NOT NULL DEFAULT 1 CHECK (dinner_reminder IN (0, 1)),
+        mornings_off_until     TEXT CHECK (mornings_off_until IS NULL OR
+                               mornings_off_until GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+        updated_at             TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+      );
+      INSERT INTO routine_settings_v10 (id, warn_minutes, grace_minutes, morning_window_minutes, lock_ends,
+                                        bath_locks, dinner_reminder, mornings_off_until, updated_at)
+        SELECT id, warn_minutes, grace_minutes, morning_window_minutes, night_end,
+               bath_locks, dinner_reminder, mornings_off_until, updated_at FROM routine_settings;
+      DROP TABLE routine_settings;
+      ALTER TABLE routine_settings_v10 RENAME TO routine_settings;
+    `);
+  },
 ];
 
 /** Seed categories — idempotent, Okabe–Ito palette from the design system. */

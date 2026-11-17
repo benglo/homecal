@@ -153,9 +153,9 @@ export const routineSettingsUpdate = z
     warnMinutes: z.number().int().min(0).max(60).optional(),
     graceMinutes: z.number().int().min(0).max(60).optional(),
     morningWindowMinutes: z.number().int().min(30).max(720).optional(),
-    nightEnd: z
+    lockEnds: z
       .string()
-      .regex(/^((0[0-9]|1[01]):[0-5][0-9]|12:00)$/, 'nightEnd must be HH:MM between 00:00 and 12:00')
+      .regex(/^([01][0-9]|2[0-3]):[0-5][0-9]$/, 'lockEnds must be HH:MM')
       .optional(),
     bathLocks: z.boolean().optional(),
     dinnerReminder: z.boolean().optional(),

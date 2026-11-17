@@ -248,7 +248,7 @@ export interface RoutineSettings {
   warnMinutes: number;
   graceMinutes: number;
   morningWindowMinutes: number;
-  nightEnd: string; // 'HH:MM'
+  lockEnds: string; // 'HH:MM': morning = overnight, evening = lifts that evening
   bathLocks: boolean;
   dinnerReminder: boolean;
   morningsOffUntil: string | null; // 'YYYY-MM-DD' inclusive

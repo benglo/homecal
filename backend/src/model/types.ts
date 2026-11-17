@@ -171,7 +171,7 @@ export interface RoutineSettings {
   warnMinutes: number; // heads-up before dinner/bath/bed; 0 = none
   graceMinutes: number; // how long a show may run past bath/bed
   morningWindowMinutes: number; // morning gate opens this long before the "ready by" time
-  nightEnd: string; // 'HH:MM': bedtime holds after midnight until this time
+  lockEnds: string; // 'HH:MM' the bath/bed lock lifts: morning = holds overnight, evening = lifts that evening
   bathLocks: boolean; // false = bath only reminds; bed still locks
   dinnerReminder: boolean; // scheduled reminder; the "Dinner's ready" call always works
   morningsOffUntil: string | null; // 'YYYY-MM-DD' inclusive: holidays, sick days

@@ -169,16 +169,22 @@ export function RoutineSettingsPanel() {
         <span style={{ fontSize: 14 }}>before</span>
       </Row>
 
-      <Row label="Bedtime lasts until" hint="The TV stays off overnight until this time.">
+      <Row
+        label="TV unlocks again at"
+        hint={
+          s.lockEnds > '12:00'
+            ? 'Evening: the bath/bed lock lifts at this time (grown-ups\' TV).'
+            : 'Morning: the bath/bed lock holds overnight until this time.'
+        }
+      >
         <input
           type="time"
-          aria-label="Bedtime ends"
-          defaultValue={s.nightEnd}
-          key={s.nightEnd}
-          max="12:00"
+          aria-label="TV unlocks at"
+          defaultValue={s.lockEnds}
+          key={s.lockEnds}
           onBlur={(e) => {
             const v = e.target.value;
-            if (v && v !== s.nightEnd && v <= '12:00') save({ nightEnd: v });
+            if (v && v !== s.lockEnds) save({ lockEnds: v });
           }}
           style={{ ...fieldStyle, width: 120 }}
         />
