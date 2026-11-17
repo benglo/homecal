@@ -50,7 +50,11 @@ export function ChoreRow({
 }: Props) {
   const frequencyLabel =
     chore.frequency === 'daily'
-      ? 'Daily'
+      ? chore.days == null || chore.days === 127
+        ? 'Daily'
+        : chore.days === 62
+          ? 'Mon–Fri'
+          : 'Some days'
       : chore.dayOfWeek != null
         ? DOW_SHORT[chore.dayOfWeek]
         : 'Weekly';
@@ -85,6 +89,11 @@ export function ChoreRow({
           >
             {frequencyLabel}
           </span>
+          {chore.routine && (
+            <span className="text-text-muted" style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+              {chore.routine === 'morning' ? '☀️ Morning' : '🌙 Bedtime'}
+            </span>
+          )}
         </>
       }
       actions={

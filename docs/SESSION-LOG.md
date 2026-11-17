@@ -4,6 +4,45 @@ Running log of work per session. Newest first. Pair with `git log` for exact dif
 
 ---
 
+## 2026-11-17 — Routines + day plan for the family TV launcher
+
+Branch `feat/tv-routines` (off `master`). The TV launcher project (`tvlauncher`, separate repo) now
+reads Homecal for school-morning checklists, bath/bed times and dinner. Homecal is the source of
+truth; the TV only follows it.
+
+### What shipped
+- **Migration v9** — `chores.days` (weekday bitmask, `strftime('%w')` order, Mon–Fri = 62, NULL =
+  every day; narrows *daily* chores only) and `chores.routine` (`morning` | `bedtime`). ADD COLUMN
+  only — a table rebuild would fire the `chore_completions` cascade and wipe stars (test proves
+  completions survive v8→v9). New tables `routines` (kind morning/dinner/bath/bed, 'HH:MM' Brisbane,
+  days mask, optional member) and `dinner_calls`.
+- **API** — `/api/routines` CRUD (poke `routines`); `POST /api/dinner-calls` (poke `dinner-call`
+  with the call); `GET /api/day-plan?date=` = one read for glanceable clients: members + routine
+  checklists due that day (reuses `getBoard`, so "due today" has one definition), routine instants
+  in UTC, dinner, latest dinner call that day. Chore board honours `days`.
+- **Phone** — chore form: Daily / Mon–Fri / Weekly + "Routine checklist" (None/Morning/Bedtime);
+  rows show Mon–Fri + routine badges. New Routines section (save-on-change rows) and a
+  "Dinner's ready" button at the top of Manage.
+- Routine times are a table, not RRULE events: events must be bounded (spec §0) and these are
+  standing household settings.
+
+### Verification
+- backend on **Node 20** (Docker, the supported runtime): **221/221 pass** — includes the new
+  migrate v9 ×2, days ×3, routines/day-plan routes ×8, and the chores/backup suites.
+- On this Windows dev box (Node 24) `repos/chores.test.ts` and `voiceUtterances.test.ts` crash at
+  process exit in better-sqlite3's native cleanup hook (same on `master`) — use Node 20 / Docker.
+- frontend 121/121, `tsc` clean. Branch image run on a throwaway volume: schema 9, day-plan correct,
+  phone Manage tab screenshot-checked, TV launcher end-to-end (tick on TV → completion in Homecal →
+  gate lifts). "Add routine" uses a draft + Save (a stray past bath/bed time would lock the TV).
+
+### Not done / next
+- Not deployed. Deploying runs migration v9 on the family DB → `POST /api/backup` first.
+- Wall has no "Dinner's ready" button yet (phone only).
+- No auth (v1): anything on the LAN can tick chores or call dinner (and so pop a message on the TV).
+- Mon–Fri ignores school holidays; the TV's parent PIN skip covers it for now.
+
+---
+
 ## 2026-06-15 — P2 voice band + tap-to-talk + event_add (calendar UI v2, phase 2 of 3)
 
 Branch `feat/voice-p2` (off `master` after P1 + the wall touchscreen fixes landed). Spec `docs/superpowers/specs/2026-06-11-ui-slot-create-voice-desktop-design.md` (P2 section); plan `docs/superpowers/plans/2026-06-14-p2-voice-band-event-add.md`. Plan was put through a 5-persona review (factual/senior/security/consistency/redundancy) before implementation — caught an auth bug, a layout-reflow bug, a mid-cycle-tap race, and missing input validation, all folded into the plan first.

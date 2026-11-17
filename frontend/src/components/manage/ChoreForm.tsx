@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Plus, Minus } from 'lucide-react';
-import type { ChoreInput, FamilyMember } from '../../core/model/types';
+import type { ChoreInput, ChoreRoutine, FamilyMember } from '../../core/model/types';
 import { Button } from '../primitives/Button';
 import { TextInput } from '../sheets/fields';
 import { TogglePillGroup } from '../ui/TogglePill';
@@ -16,12 +16,19 @@ const DOW_OPTIONS: ReadonlyArray<{ label: string; value: number }> = [
   { label: 'Sun', value: 0 },
 ];
 
+/** Mon–Fri as a weekday bitmask (bit 0 = Sunday). */
+const SCHOOL_DAYS = 62;
+
+type Schedule = 'daily' | 'school' | 'weekly';
+
 export interface ChoreFormInitial {
   title: string;
   icon: string;
   stars: number;
   frequency: 'daily' | 'weekly';
   dayOfWeek: number | null;
+  days: number | null;
+  routine: ChoreRoutine | null;
   assignedTo: string;
 }
 
@@ -55,7 +62,15 @@ export function ChoreForm({
   const [title, setTitle] = useState(initial.title);
   const [icon, setIcon] = useState(initial.icon);
   const [stars, setStars] = useState(initial.stars);
-  const [frequency, setFrequency] = useState<'daily' | 'weekly'>(initial.frequency);
+  const [schedule, setSchedule] = useState<Schedule>(
+    initial.frequency === 'weekly' ? 'weekly' : initial.days === SCHOOL_DAYS ? 'school' : 'daily'
+  );
+  const frequency: 'daily' | 'weekly' = schedule === 'weekly' ? 'weekly' : 'daily';
+  // Masks other than Mon–Fri can be set via the API; keep them unless the user changes schedule.
+  const [customDays] = useState<number | null>(
+    initial.days != null && initial.days !== SCHOOL_DAYS ? initial.days : null
+  );
+  const [routine, setRoutine] = useState<ChoreRoutine | 'none'>(initial.routine ?? 'none');
   const [dayOfWeek, setDayOfWeek] = useState<number | null>(initial.dayOfWeek);
   const [assignedTo, setAssignedTo] = useState(initial.assignedTo);
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -90,6 +105,8 @@ export function ChoreForm({
       stars: Math.max(1, Math.min(5, stars)),
       frequency,
       dayOfWeek: frequency === 'weekly' ? dayOfWeek : null,
+      days: schedule === 'school' ? SCHOOL_DAYS : schedule === 'daily' ? customDays : null,
+      routine: routine === 'none' ? null : routine,
       assignedTo,
     });
   };
@@ -158,20 +175,42 @@ export function ChoreForm({
         <span className="font-medium text-text-muted" style={labelStyle}>
           Frequency
         </span>
-        <TogglePillGroup
+        <TogglePillGroup<Schedule>
           options={[
             { value: 'daily', label: 'Daily' },
+            { value: 'school', label: 'Mon–Fri' },
             { value: 'weekly', label: 'Weekly' },
           ]}
-          value={frequency}
+          value={schedule}
           onChange={(opt) => {
-            setFrequency(opt);
-            if (opt === 'daily') setDayOfWeek(null);
+            setSchedule(opt);
+            if (opt !== 'weekly') setDayOfWeek(null);
           }}
           ariaLabel="Frequency"
           pillStyle={{ flex: 1, fontSize: 15 }}
           className="flex gap-2"
         />
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <span className="font-medium text-text-muted" style={labelStyle}>
+          Routine checklist
+        </span>
+        <TogglePillGroup<ChoreRoutine | 'none'>
+          options={[
+            { value: 'none', label: 'None' },
+            { value: 'morning', label: 'Morning' },
+            { value: 'bedtime', label: 'Bedtime' },
+          ]}
+          value={routine}
+          onChange={setRoutine}
+          ariaLabel="Routine checklist"
+          pillStyle={{ flex: 1, fontSize: 15 }}
+          className="flex gap-2"
+        />
+        <span className="text-text-faint" style={{ fontSize: 12 }}>
+          Morning steps must be ticked before the TV unlocks.
+        </span>
       </div>
 
       {frequency === 'weekly' && (

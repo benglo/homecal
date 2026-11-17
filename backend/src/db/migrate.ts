@@ -192,6 +192,53 @@ const MIGRATIONS: Migration[] = [
         CHECK (audio_muted IN (0, 1));
     `);
   },
+  // v9 — family routines (TV launcher + anything else that wants them).
+  // ADD COLUMN only on chores: a create-copy-drop rebuild would fire the
+  // chore_completions ON DELETE CASCADE (FKs are on inside the migration
+  // transaction) and wipe every child's stars.
+  // `days` is a weekday bitmask in strftime('%w') order (bit 0 = Sunday; Mon–Fri = 62),
+  // NULL = every day. It narrows a *daily* chore; weekly chores keep day_of_week.
+  (db) => {
+    db.exec(`
+      ALTER TABLE chores ADD COLUMN days INTEGER
+        CHECK (days IS NULL OR days BETWEEN 1 AND 127);
+      ALTER TABLE chores ADD COLUMN routine TEXT
+        CHECK (routine IS NULL OR routine IN ('morning', 'bedtime'));
+
+      CREATE TABLE routines (
+        id         TEXT PRIMARY KEY,
+        kind       TEXT NOT NULL CHECK (kind IN ('morning', 'dinner', 'bath', 'bed')),
+        time       TEXT NOT NULL CHECK (time GLOB '[0-2][0-9]:[0-5][0-9]' AND time <= '23:59'),
+        days       INTEGER NOT NULL DEFAULT 127 CHECK (days BETWEEN 1 AND 127),
+        member_id  TEXT REFERENCES family_members(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+      );
+      CREATE INDEX idx_routines_member ON routines(member_id);
+
+      CREATE TABLE dinner_calls (
+        id        TEXT PRIMARY KEY,
+        called_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_dinner_calls_called_at ON dinner_calls(called_at);
+
+      -- Singleton: how the TV applies the routines. Parents edit it on the phone.
+      CREATE TABLE routine_settings (
+        id                     INTEGER PRIMARY KEY CHECK (id = 1),
+        warn_minutes           INTEGER NOT NULL DEFAULT 10  CHECK (warn_minutes BETWEEN 0 AND 60),
+        grace_minutes          INTEGER NOT NULL DEFAULT 15  CHECK (grace_minutes BETWEEN 0 AND 60),
+        morning_window_minutes INTEGER NOT NULL DEFAULT 240 CHECK (morning_window_minutes BETWEEN 30 AND 720),
+        night_end              TEXT    NOT NULL DEFAULT '05:00'
+                               CHECK (night_end GLOB '[0-2][0-9]:[0-5][0-9]' AND night_end <= '12:00'),
+        bath_locks             INTEGER NOT NULL DEFAULT 1 CHECK (bath_locks IN (0, 1)),
+        dinner_reminder        INTEGER NOT NULL DEFAULT 1 CHECK (dinner_reminder IN (0, 1)),
+        mornings_off_until     TEXT CHECK (mornings_off_until IS NULL OR
+                               mornings_off_until GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+        updated_at             TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+      );
+      INSERT INTO routine_settings (id) VALUES (1);
+    `);
+  },
 ];
 
 /** Seed categories — idempotent, Okabe–Ito palette from the design system. */
@@ -211,9 +258,10 @@ function seedCategories(db: Database.Database): void {
   for (const s of seeds) insert.run(s);
 }
 
-export function runMigrations(db: Database.Database): void {
+/** `upTo` exists so tests can stop at an older version, seed data, then migrate forward. */
+export function runMigrations(db: Database.Database, upTo: number = MIGRATIONS.length): void {
   const current = db.pragma('user_version', { simple: true }) as number;
-  for (let v = current; v < MIGRATIONS.length; v++) {
+  for (let v = current; v < Math.min(upTo, MIGRATIONS.length); v++) {
     const migrate = MIGRATIONS[v];
     const tx = db.transaction(() => {
       migrate(db);

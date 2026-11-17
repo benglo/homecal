@@ -10,6 +10,7 @@ import type {
   BoardMember,
   BoardChore,
   ChoreFrequency,
+  ChoreRoutine,
 } from '../model/types';
 import type { ChoreCreate, ChoreUpdate } from '../schemas';
 
@@ -20,6 +21,8 @@ interface ChoreRow {
   stars: number;
   frequency: string;
   day_of_week: number | null;
+  days: number | null;
+  routine: string | null;
   assigned_to: string;
   position: number;
   updated_at: string;
@@ -32,6 +35,8 @@ const toChore = (r: ChoreRow): Chore => ({
   stars: r.stars,
   frequency: r.frequency as ChoreFrequency,
   dayOfWeek: r.day_of_week,
+  days: r.days,
+  routine: r.routine as ChoreRoutine | null,
   assignedTo: r.assigned_to,
   position: r.position,
   updatedAt: r.updated_at,
@@ -61,8 +66,8 @@ export function createChore(input: ChoreCreate): Chore {
   const id = newId();
   const ts = nowIso();
   db.prepare(
-    `INSERT INTO chores (id, title, icon, stars, frequency, day_of_week, assigned_to, position, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO chores (id, title, icon, stars, frequency, day_of_week, days, routine, assigned_to, position, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     input.title,
@@ -70,6 +75,8 @@ export function createChore(input: ChoreCreate): Chore {
     input.stars,
     input.frequency,
     input.dayOfWeek ?? null,
+    input.days ?? null,
+    input.routine ?? null,
     input.assignedTo,
     input.position,
     ts,
@@ -85,13 +92,18 @@ export function updateChore(id: string, patch: ChoreUpdate): Chore {
   if (patch.assignedTo && !familyMemberExists(db, patch.assignedTo)) {
     throw httpError(400, 'INVALID_MEMBER', 'Family member does not exist');
   }
+  const frequency = patch.frequency ?? existing.frequency;
   const next = {
     title: patch.title ?? existing.title,
     icon: patch.icon ?? existing.icon,
     stars: patch.stars ?? existing.stars,
-    frequency: patch.frequency ?? existing.frequency,
+    frequency,
     dayOfWeek:
       patch.dayOfWeek !== undefined ? patch.dayOfWeek : existing.dayOfWeek,
+    // Switching to weekly drops a stale day mask rather than rejecting the edit.
+    days:
+      patch.days !== undefined ? patch.days : frequency === 'weekly' ? null : existing.days,
+    routine: patch.routine !== undefined ? patch.routine : existing.routine,
     assignedTo: patch.assignedTo ?? existing.assignedTo,
     position: patch.position ?? existing.position,
   };
@@ -108,8 +120,11 @@ export function updateChore(id: string, patch: ChoreUpdate): Chore {
       'weekly chores require dayOfWeek (0-6); daily chores must not have dayOfWeek'
     );
   }
+  if (next.frequency === 'weekly' && next.days != null) {
+    throw httpError(400, 'INVALID_DAYS', 'days only narrows daily chores; weekly chores use dayOfWeek');
+  }
   db.prepare(
-    `UPDATE chores SET title=?, icon=?, stars=?, frequency=?, day_of_week=?, assigned_to=?, position=?, updated_at=?
+    `UPDATE chores SET title=?, icon=?, stars=?, frequency=?, day_of_week=?, days=?, routine=?, assigned_to=?, position=?, updated_at=?
      WHERE id=?`
   ).run(
     next.title,
@@ -117,6 +132,8 @@ export function updateChore(id: string, patch: ChoreUpdate): Chore {
     next.stars,
     next.frequency,
     next.dayOfWeek,
+    next.days,
+    next.routine,
     next.assignedTo,
     next.position,
     nowIso(),
@@ -186,11 +203,12 @@ export function getBoard(date: string): ChoreBoard {
       `SELECT c.*, cc.completed_date, cc.completed_at
        FROM chores c
        LEFT JOIN chore_completions cc ON cc.chore_id = c.id AND cc.completed_date = ?
-       WHERE c.frequency = 'daily'
+       WHERE (c.frequency = 'daily'
+              AND (c.days IS NULL OR ((c.days >> CAST(strftime('%w', ?) AS INTEGER)) & 1) = 1))
           OR (c.frequency = 'weekly' AND c.day_of_week = CAST(strftime('%w', ?) AS INTEGER))
        ORDER BY c.assigned_to, c.position, c.title`
     )
-    .all(date, date) as Array<
+    .all(date, date, date) as Array<
     ChoreRow & { completed_date: string | null; completed_at: string | null }
   >;
 
@@ -215,6 +233,7 @@ export function getBoard(date: string): ChoreBoard {
       stars: r.stars,
       completed: r.completed_date !== null,
       completedAt: r.completed_at,
+      routine: r.routine as ChoreRoutine | null,
     });
     choresByMember.set(r.assigned_to, list);
   }

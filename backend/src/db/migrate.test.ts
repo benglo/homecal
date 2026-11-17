@@ -19,7 +19,7 @@ test('v6 adds intent_name, answer, concern columns; no CHECK constraint on inten
   const row = db.prepare(`SELECT intent_name FROM voice_utterances WHERE id='t1'`).get() as { intent_name: string };
   assert.equal(row.intent_name, 'some_future_intent');
 
-  assert.equal(db.pragma('user_version', { simple: true }), 8);
+  assert.equal(db.pragma('user_version', { simple: true }), 9);
 });
 
 test('v7 adds tts_provider and tts_latency_ms columns to voice_utterances', () => {
@@ -38,7 +38,7 @@ test('v7 adds tts_provider and tts_latency_ms columns to voice_utterances', () =
   assert.equal(row.tts_provider, 'kokoro_lan');
   assert.equal(row.tts_latency_ms, 123);
 
-  assert.equal(db.pragma('user_version', { simple: true }), 8);
+  assert.equal(db.pragma('user_version', { simple: true }), 9);
 });
 
 test('v8 adds volume + audio_muted to voice_settings, back-filled with defaults', () => {
@@ -59,5 +59,49 @@ test('v8 adds volume + audio_muted to voice_settings, back-filled with defaults'
   assert.throws(() => db.prepare(`UPDATE voice_settings SET volume = 150 WHERE id=1`).run());
   assert.throws(() => db.prepare(`UPDATE voice_settings SET audio_muted = 2 WHERE id=1`).run());
 
-  assert.equal(db.pragma('user_version', { simple: true }), 8);
+  assert.equal(db.pragma('user_version', { simple: true }), 9);
+});
+
+test('v9 keeps existing chores and their completions (stars survive the upgrade)', () => {
+  const db = new Database(':memory:');
+  db.pragma('foreign_keys = ON');
+  runMigrations(db, 8);
+  db.prepare(`INSERT INTO family_members (id, name, icon) VALUES ('m1', 'Kid', 'star')`).run();
+  db.prepare(`INSERT INTO chores (id, title, icon, stars, frequency, assigned_to)
+    VALUES ('c1', 'Teeth', 'tooth', 2, 'daily', 'm1')`).run();
+  db.prepare(`INSERT INTO chore_completions (chore_id, completed_date, completed_at)
+    VALUES ('c1', '2026-11-16', '2026-11-16T21:00:00Z')`).run();
+
+  runMigrations(db);
+
+  assert.equal(db.pragma('user_version', { simple: true }), 9);
+  const chore = db.prepare(`SELECT title, days, routine FROM chores WHERE id='c1'`).get() as
+    { title: string; days: number | null; routine: string | null };
+  assert.deepEqual(chore, { title: 'Teeth', days: null, routine: null });
+  const n = db.prepare(`SELECT COUNT(*) AS n FROM chore_completions WHERE chore_id='c1'`).get() as { n: number };
+  assert.equal(n.n, 1);
+});
+
+test('v9 CHECKs reject bad day masks, routines and times', () => {
+  const db = new Database(':memory:');
+  runMigrations(db);
+  db.prepare(`INSERT INTO family_members (id, name, icon) VALUES ('m1', 'Kid', 'star')`).run();
+  assert.throws(() => db.prepare(`INSERT INTO chores (id, title, icon, frequency, assigned_to, days)
+    VALUES ('c1', 't', 'i', 'daily', 'm1', 0)`).run());
+  assert.throws(() => db.prepare(`INSERT INTO chores (id, title, icon, frequency, assigned_to, routine)
+    VALUES ('c2', 't', 'i', 'daily', 'm1', 'lunch')`).run());
+  assert.throws(() => db.prepare(`INSERT INTO routines (id, kind, time) VALUES ('r1', 'bed', '25:00')`).run());
+  assert.throws(() => db.prepare(`INSERT INTO routines (id, kind, time) VALUES ('r2', 'nap', '13:00')`).run());
+  db.prepare(`INSERT INTO routines (id, kind, time, days) VALUES ('r3', 'bed', '19:30', 62)`).run();
+});
+
+test('v9 seeds the routine_settings singleton with defaults', () => {
+  const db = new Database(':memory:');
+  runMigrations(db);
+  const row = db.prepare('SELECT * FROM routine_settings').all() as Array<Record<string, unknown>>;
+  assert.equal(row.length, 1);
+  assert.equal(row[0].warn_minutes, 10);
+  assert.equal(row[0].night_end, '05:00');
+  assert.throws(() => db.prepare("INSERT INTO routine_settings (id) VALUES (2)").run());
+  assert.throws(() => db.prepare("UPDATE routine_settings SET night_end = '13:00'").run());
 });

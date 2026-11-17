@@ -10,7 +10,9 @@ export type PokeKind =
   | 'chores'
   | 'family-members'
   | 'voice'
-  | 'timers';
+  | 'timers'
+  | 'routines'
+  | 'dinner-call';
 
 export interface Poke {
   kind: PokeKind;

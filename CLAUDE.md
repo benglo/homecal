@@ -125,6 +125,10 @@ curl localhost:8787/api/voice/status    # mic_online + mute state
   (instant via SSE poke; 5s polling backstop). Audit log at `voice_utterances`; mute state at
   `voice_settings` (migration v3). Voice is the only WAN-dependent feature — calendar stays
   offline-capable.
+- **Routines (TV launcher)** — migration v9: chore `days` mask (Mon–Fri) + `routine`
+  (morning/bedtime checklists), `routines` table (morning/dinner/bath/bed times),
+  `dinner_calls`. `GET /api/day-plan` is the single read the TV uses; `POST /api/dinner-calls`
+  pokes `dinner-call`. Phone: Mon–Fri + checklist in ChoreForm, RoutineManager, DinnerReadyButton.
 - **Volume control** — `PUT /api/voice/volume` + `/api/voice/audio-mute` (migration v8),
   VolumeControl popover on the wall ControlBar + phone Voice section. The Pi applies it via `wpctl` on
   poke + at startup (`HOMECAL_AUDIO_SINK` pins the sink).

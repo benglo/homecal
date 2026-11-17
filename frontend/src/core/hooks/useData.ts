@@ -1,6 +1,8 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type {
+  Routine,
+  RoutineSettings,
   Category,
   Chore,
   ChoreBoard,
@@ -78,6 +80,23 @@ export function useFamilyMembers() {
   return useQuery<FamilyMember[]>({
     queryKey: ['family-members'],
     queryFn: api.familyMembers,
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useRoutines() {
+  return useQuery<Routine[]>({
+    queryKey: ['routines'],
+    queryFn: api.routines,
+    staleTime: 5 * 60_000,
+  });
+}
+
+/** Under ['routines'] so the routines SSE poke refreshes it too. */
+export function useRoutineSettings() {
+  return useQuery<RoutineSettings>({
+    queryKey: ['routines', 'settings'],
+    queryFn: api.routineSettings,
     staleTime: 5 * 60_000,
   });
 }

@@ -90,6 +90,9 @@ export interface Chore {
   stars: number;
   frequency: 'daily' | 'weekly';
   dayOfWeek: number | null;
+  /** Weekday bitmask narrowing a daily chore (bit 0 = Sunday, Mon–Fri = 62); null = every day. */
+  days: number | null;
+  routine: ChoreRoutine | null;
   assignedTo: string;
   position: number;
   updatedAt: string;
@@ -134,6 +137,8 @@ export interface ChoreInput {
   stars?: number;
   frequency: 'daily' | 'weekly';
   dayOfWeek?: number | null;
+  days?: number | null;
+  routine?: ChoreRoutine | null;
   assignedTo: string;
   position?: number;
 }
@@ -210,3 +215,44 @@ export interface VoiceConcern {
   answer: string | null;
   intentName: string | null;
 }
+
+/** A chore on a routine checklist (the TV's morning gate / bedtime list). */
+export type ChoreRoutine = 'morning' | 'bedtime';
+
+export type RoutineKind = 'morning' | 'dinner' | 'bath' | 'bed';
+
+/** Recurring household time, Brisbane wall-clock. 'morning' = checklist done-by time. */
+export interface Routine {
+  id: string;
+  kind: RoutineKind;
+  time: string; // 'HH:MM'
+  days: number; // weekday bitmask, bit 0 = Sunday
+  memberId: string | null;
+  updatedAt: string;
+}
+
+export interface RoutineInput {
+  kind: RoutineKind;
+  time: string;
+  days?: number;
+  memberId?: string | null;
+}
+
+export interface DinnerCall {
+  id: string;
+  calledAt: string;
+}
+
+/** How the TV applies routines (singleton, /api/routine-settings). */
+export interface RoutineSettings {
+  warnMinutes: number;
+  graceMinutes: number;
+  morningWindowMinutes: number;
+  nightEnd: string; // 'HH:MM'
+  bathLocks: boolean;
+  dinnerReminder: boolean;
+  morningsOffUntil: string | null; // 'YYYY-MM-DD' inclusive
+  updatedAt: string;
+}
+
+export type RoutineSettingsInput = Partial<Omit<RoutineSettings, 'updatedAt'>>;

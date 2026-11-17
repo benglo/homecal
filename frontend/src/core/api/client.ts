@@ -1,4 +1,9 @@
 import type {
+  Routine,
+  RoutineInput,
+  RoutineSettings,
+  RoutineSettingsInput,
+  DinnerCall,
   Category,
   CategoryInput,
   Chore,
@@ -144,6 +149,16 @@ export const api = {
   setVoiceAudioMute: (muted: boolean) =>
     send<{ ok: true; audio_muted: boolean }>('PUT', '/api/voice/audio-mute', { muted }),
   triggerListen: () => send<{ ok: true }>('POST', '/api/voice/listen'),
+
+  // routines + dinner call (consumed by the TV launcher via /api/day-plan)
+  routines: () => get<Routine[]>('/api/routines'),
+  createRoutine: (body: RoutineInput) => send<Routine>('POST', '/api/routines', body),
+  updateRoutine: (id: string, body: Partial<RoutineInput>) => send<Routine>('PUT', `/api/routines/${id}`, body),
+  deleteRoutine: (id: string) => send<void>('DELETE', `/api/routines/${id}`),
+  callDinner: () => send<DinnerCall>('POST', '/api/dinner-calls'),
+  routineSettings: () => get<RoutineSettings>('/api/routine-settings'),
+  updateRoutineSettings: (body: RoutineSettingsInput) =>
+    send<RoutineSettings>('PUT', '/api/routine-settings', body),
 
   // timers
   timers: () => get<Timer[]>('/api/timers'),

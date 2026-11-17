@@ -66,6 +66,8 @@ export interface FamilyMember {
 }
 
 export type ChoreFrequency = 'daily' | 'weekly';
+/** A chore tagged with a routine shows on that routine's checklist (e.g. the TV's morning gate). */
+export type ChoreRoutine = 'morning' | 'bedtime';
 
 export interface Chore {
   id: string;
@@ -74,6 +76,9 @@ export interface Chore {
   stars: number;
   frequency: ChoreFrequency;
   dayOfWeek: number | null;
+  /** Weekday bitmask narrowing a daily chore (bit 0 = Sunday); null = every day. */
+  days: number | null;
+  routine: ChoreRoutine | null;
   assignedTo: string;
   position: number;
   updatedAt: string;
@@ -92,6 +97,7 @@ export interface BoardChore {
   stars: number;
   completed: boolean;
   completedAt: string | null;
+  routine: ChoreRoutine | null;
 }
 
 export interface BoardMember {
@@ -117,4 +123,69 @@ export interface Timer {
   expiresAt: string;
   acknowledgedAt: string | null;
   updatedAt: string;
+}
+
+export type RoutineKind = 'morning' | 'dinner' | 'bath' | 'bed';
+
+/** A recurring household time. `time` is Brisbane wall-clock 'HH:MM'.
+ *  'morning' = the time by which the morning checklist should be done. */
+export interface Routine {
+  id: string;
+  kind: RoutineKind;
+  time: string;
+  days: number;
+  memberId: string | null;
+  updatedAt: string;
+}
+
+export interface DinnerCall {
+  id: string;
+  calledAt: string;
+}
+
+export interface DayPlanChore {
+  id: string;
+  title: string;
+  icon: string;
+  stars: number;
+  done: boolean;
+}
+
+export interface DayPlanMember {
+  id: string;
+  name: string;
+  icon: string;
+  checklists: Record<ChoreRoutine, DayPlanChore[]>;
+}
+
+export interface DayPlanRoutine {
+  id: string;
+  kind: RoutineKind;
+  /** The routine's instant on this date, UTC ISO-8601. */
+  at: string;
+  memberId: string | null;
+}
+
+/** How the TV applies routines (singleton). */
+export interface RoutineSettings {
+  warnMinutes: number; // heads-up before dinner/bath/bed; 0 = none
+  graceMinutes: number; // how long a show may run past bath/bed
+  morningWindowMinutes: number; // morning gate opens this long before the "ready by" time
+  nightEnd: string; // 'HH:MM': bedtime holds after midnight until this time
+  bathLocks: boolean; // false = bath only reminds; bed still locks
+  dinnerReminder: boolean; // scheduled reminder; the "Dinner's ready" call always works
+  morningsOffUntil: string | null; // 'YYYY-MM-DD' inclusive: holidays, sick days
+  updatedAt: string;
+}
+
+/** Everything a glanceable client (the TV launcher) needs for one day, in one read. */
+export interface DayPlan {
+  date: string;
+  members: DayPlanMember[];
+  routines: DayPlanRoutine[];
+  dinner: { meal: string } | null;
+  dinnerCall: DinnerCall | null;
+  settings: RoutineSettings;
+  /** True when the morning checklist is switched off for this date (morningsOffUntil). */
+  morningsOff: boolean;
 }

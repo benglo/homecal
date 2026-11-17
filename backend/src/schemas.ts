@@ -93,6 +93,8 @@ export const choreCreate = z
     stars: z.number().int().min(1).max(5).default(1),
     frequency: z.enum(['daily', 'weekly']),
     dayOfWeek: z.number().int().min(0).max(6).nullable().optional(),
+    days: z.number().int().min(1).max(127).nullable().optional(),
+    routine: z.enum(['morning', 'bedtime']).nullable().optional(),
     assignedTo: z.string().min(1),
     position: z.number().int().min(0).default(0),
   })
@@ -102,7 +104,11 @@ export const choreCreate = z
         ? o.dayOfWeek == null
         : o.dayOfWeek != null && o.dayOfWeek >= 0 && o.dayOfWeek <= 6,
     { message: 'weekly chores require dayOfWeek (0-6); daily chores must not have dayOfWeek', path: ['dayOfWeek'] }
-  );
+  )
+  .refine((o) => o.frequency === 'daily' || o.days == null, {
+    message: 'days only narrows daily chores; weekly chores use dayOfWeek',
+    path: ['days'],
+  });
 
 export const choreUpdate = z
   .object({
@@ -111,6 +117,8 @@ export const choreUpdate = z
     stars: z.number().int().min(1).max(5).optional(),
     frequency: z.enum(['daily', 'weekly']).optional(),
     dayOfWeek: z.number().int().min(0).max(6).nullable().optional(),
+    days: z.number().int().min(1).max(127).nullable().optional(),
+    routine: z.enum(['morning', 'bedtime']).nullable().optional(),
     assignedTo: z.string().min(1).optional(),
     position: z.number().int().min(0).optional(),
   })
@@ -120,6 +128,45 @@ export const choreCompleteBody = z.object({
   date: dateParam,
 });
 
+const HHMM = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
+
+export const routineCreate = z.object({
+  kind: z.enum(['morning', 'dinner', 'bath', 'bed']),
+  time: z.string().regex(HHMM, 'time must be HH:MM (24h)'),
+  days: z.number().int().min(1).max(127).default(127),
+  memberId: z.string().min(1).nullable().default(null),
+});
+
+export const routineUpdate = z
+  .object({
+    kind: z.enum(['morning', 'dinner', 'bath', 'bed']).optional(),
+    time: z.string().regex(HHMM, 'time must be HH:MM (24h)').optional(),
+    days: z.number().int().min(1).max(127).optional(),
+    memberId: z.string().min(1).nullable().optional(),
+  })
+  .refine((o) => Object.keys(o).length > 0, { message: 'no fields to update' });
+
+export const dayPlanQuery = z.object({ date: dateParam.optional() });
+
+export const routineSettingsUpdate = z
+  .object({
+    warnMinutes: z.number().int().min(0).max(60).optional(),
+    graceMinutes: z.number().int().min(0).max(60).optional(),
+    morningWindowMinutes: z.number().int().min(30).max(720).optional(),
+    nightEnd: z
+      .string()
+      .regex(/^((0[0-9]|1[01]):[0-5][0-9]|12:00)$/, 'nightEnd must be HH:MM between 00:00 and 12:00')
+      .optional(),
+    bathLocks: z.boolean().optional(),
+    dinnerReminder: z.boolean().optional(),
+    morningsOffUntil: dateParam.nullable().optional(),
+  })
+  .refine((o) => Object.keys(o).length > 0, { message: 'no fields to update' });
+
+export type RoutineSettingsUpdate = z.infer<typeof routineSettingsUpdate>;
+
+export type RoutineCreate = z.output<typeof routineCreate>;
+export type RoutineUpdate = z.infer<typeof routineUpdate>;
 export type FamilyMemberCreate = z.infer<typeof familyMemberCreate>;
 export type ChoreCreate = z.output<typeof choreCreate>;
 export type ChoreUpdate = z.infer<typeof choreUpdate>;

@@ -147,6 +147,8 @@ export function ChoreManager() {
                             stars: c.stars,
                             frequency: c.frequency,
                             dayOfWeek: c.dayOfWeek,
+                            days: c.days ?? null,
+                            routine: c.routine ?? null,
                             assignedTo: c.assignedTo,
                           }}
                           submitLabel="Save"
@@ -212,6 +214,8 @@ export function ChoreManager() {
                     stars: 1,
                     frequency: 'daily',
                     dayOfWeek: null,
+                    days: null,
+                    routine: null,
                     assignedTo: member.id,
                   }}
                   submitLabel="Add"

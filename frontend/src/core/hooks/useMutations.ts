@@ -2,6 +2,8 @@ import { useMutation, useQueryClient, type QueryClient } from '@tanstack/react-q
 import { api } from '../api/client';
 import { optimisticPatch } from './optimisticPatch';
 import type {
+  RoutineInput,
+  RoutineSettingsInput,
   CategoryInput,
   ChoreBoard,
   ChoreInput,
@@ -294,4 +296,39 @@ export function useSetAudioMute() {
  *  Fire-and-forget; the resulting state changes arrive over the voice SSE. */
 export function useTriggerListen() {
   return useMutation({ mutationFn: () => api.triggerListen() });
+}
+
+/** Routine CRUD. Settle invalidates the routines list. */
+export function useRoutineMutations() {
+  const qc = useQueryClient();
+  const settle = () => void qc.invalidateQueries({ queryKey: ['routines'] });
+
+  const create = useMutation({
+    mutationFn: (body: RoutineInput) => api.createRoutine(body),
+    onSettled: settle,
+  });
+  const update = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Partial<RoutineInput> }) => api.updateRoutine(id, body),
+    onSettled: settle,
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => api.deleteRoutine(id),
+    onSettled: settle,
+  });
+  return { create, update, remove };
+}
+
+/** Patch the TV routine settings; the response replaces the cached copy. */
+export function useUpdateRoutineSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: RoutineSettingsInput) => api.updateRoutineSettings(body),
+    onSuccess: (s) => qc.setQueryData(['routines', 'settings'], s),
+    onSettled: () => void qc.invalidateQueries({ queryKey: ['routines', 'settings'] }),
+  });
+}
+
+/** "Dinner's ready" — a one-shot signal; the server pokes every client (TV, wall). */
+export function useCallDinner() {
+  return useMutation({ mutationFn: () => api.callDinner() });
 }

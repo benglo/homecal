@@ -15,6 +15,8 @@ import { MuteToggle } from '../components/controls/MuteToggle';
 import { VolumeControl } from '../components/controls/VolumeControl';
 import { CategoryManager } from '../components/manage/CategoryManager';
 import { ChoreManager } from '../components/manage/ChoreManager';
+import { RoutineManager } from '../components/manage/RoutineManager';
+import { DinnerReadyButton } from '../components/manage/DinnerReadyButton';
 import { FamilyMemberManager } from '../components/manage/FamilyMemberManager';
 import { DinnerWeekEditor } from '../components/manage/DinnerWeekEditor';
 import { PhotoManager } from '../components/manage/PhotoManager';
@@ -109,6 +111,7 @@ export function PhoneLayout() {
 
         {tab === 'manage' && (
           <div className="flex-1 overflow-y-auto" style={{ padding: '16px' }}>
+            <DinnerReadyButton />
             <DinnerWeekEditor
               weekDays={week.days}
               dinners={dinners}
@@ -117,6 +120,7 @@ export function PhoneLayout() {
             />
             <FamilyMemberManager />
             <ChoreManager />
+            <RoutineManager />
             <CategoryManager categories={categories} onEdit={(cat) => setCategoryTarget({ cat })} />
             <PhotoManager />
             <section style={{ marginTop: 24 }}>
